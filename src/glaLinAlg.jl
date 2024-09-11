@@ -23,7 +23,14 @@ function Base.adjoint(opr::GlaOpr)::GlaOpr
 	trgVol, srcVol, mixInf, dimInf, egoFur, fftPlnFwd, fftPlnRev, phzInf = 
 		memCpy.trgVol, memCpy.srcVol, memCpy.mixInf, memCpy.dimInf, 
 		memCpy.egoFur, memCpy.fftPlnFwd, memCpy.fftPlnRev, memCpy.phzInf
-	adjMem = GlaOprMem(adjOpt, srcVol, trgVol, mixInf, dimInf, egoFur, 
+	# To take the adjoint, we take the conjugate transpose
+	# To take the transpose, we simply swap the source and target volumes
+	trgVol, srcVol = srcVol, trgVol
+	# To take the conjugate, we simply take the conjugate of the Fourier
+	# coefficients
+	egoFur = collect(map(arr -> conj.(arr), egoFur))
+
+	adjMem = GlaOprMem(adjOpt, trgVol, srcVol, mixInf, dimInf, egoFur, 
 		fftPlnFwd, fftPlnRev, phzInf)
 	return GlaOpr(adjMem)
 end
