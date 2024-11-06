@@ -231,7 +231,7 @@ function GlaOprPrp(egoFur::AbstractArray{<:AbstractArray{T}}, trgVol::GlaVol,
 	# computation of phase transformation
 	for itr ∈ eachindex(1:lvls)
 		# allows calculation odd coefficient numbers
-		phzInf[itr] = setTyp.([exp(-im * pi * k / brnSze[itr]) for 
+		phzInf[itr] = setTyp.([cis(-pi * k / brnSze[itr]) for 
 			k ∈ 0:(brnSze[itr] - 1)])
 		# active GPU
 		if cmpInf.devMod == true 		

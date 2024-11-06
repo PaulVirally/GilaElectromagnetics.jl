@@ -59,7 +59,7 @@ Green function operator assembly and kernel operation options.
 - `numTrd::Union{Tuple{},NTuple{3,Integer}}`: Number of threads to use when running GPU kernels.
 - `numBlk::Union{Tuple{},NTuple{3,Integer}}`: Number of threads to use when running GPU kernels.
 """
-struct GlaKerOpt
+mutable struct GlaKerOpt
 
 	frqPhz::Number
 	intOrd::Integer
@@ -90,7 +90,7 @@ Storage structure for a Green's function operator.
 - `fftPlnRev::AbstractArray{<:AbstractFFTs.ScaledPlan,1}`: Reverse Fourier transform plans.
 - `phzInf::AbstractArray{<:AbstractArray{T},1}`: Phase vector for splitting Fourier transforms.
 """
-struct GlaOprMem
+mutable struct GlaOprMem
 	
 	cmpInf::GlaKerOpt
 	trgVol::GlaVol
@@ -100,7 +100,7 @@ struct GlaOprMem
 	egoFur::AbstractArray{<:AbstractArray{T},1} where 
 	T<:Union{ComplexF64,ComplexF32}
 	fftPlnFwd::AbstractArray{<:AbstractFFTs.Plan,1}
-	fftPlnRev::AbstractArray{<:AbstractFFTs.ScaledPlan,1}
+	fftPlnRev::AbstractArray{<:AbstractFFTs.Plan,1}
 	phzInf::AbstractArray{<:AbstractArray{T},1} where 
 	T<:Union{ComplexF64,ComplexF32}
 end
