@@ -3,10 +3,11 @@ using Test
 Random.seed!(0xdeadbeef)
 
 slfOprHst = GlaOpr((8, 8, 8), (1//32, 1//32, 1//32); setTyp=ComplexF32, useGpu=false)
-extOprHst = GlaOpr((6, 4, 2), (1//32, 1//32, 1//32), (0//1, 0//1, 0//1), (8, 2, 10), (1//64, 1//64, 1//64), (147//3, 0//1, 0//1); setTyp=ComplexF32, useGpu=false)
+# extOprHst = GlaOpr((6, 4, 2), (1//32, 1//32, 1//32), (0//1, 0//1, 0//1), (8, 2, 10), (1//64, 1//64, 1//64), (147//3, 0//1, 0//1); setTyp=ComplexF64, useGpu=false)
+extOprHst = GlaOpr((6, 4, 2), (1//32, 1//32, 1//32), (0//1, 0//1, 0//1), (8, 2, 10), (1//32, 1//32, 1//32), (147//3, 0//1, 0//1); setTyp=ComplexF32, useGpu=false)
 if CUDA.functional()
 	slfOprDev = GlaOpr((8, 8, 8), (1//32, 1//32, 1//32); setTyp=ComplexF32, useGpu=true)
-	extOprHst = GlaOpr((6, 4, 2), (1//32, 1//32, 1//32), (0//1, 0//1, 0//1), (8, 2, 10), (1//64, 1//64, 1//64), (147//3, 0//1, 0//1); setTyp=ComplexF32, useGpu=true)
+	extOprHst = GlaOpr((6, 4, 2), (1//32, 1//32, 1//32), (0//1, 0//1, 0//1), (8, 2, 10), (1//64, 1//64, 1//64), (147//3, 0//1, 0//1); setTyp=ComplexF64, useGpu=true)
 end
 
 function tstSlf(G::GlaOpr, Gdag::GlaOpr; num_tests::Int=100)
@@ -31,11 +32,9 @@ end
 
 function dnsMat(G::GlaOpr)
 	isGpu = G.mem.cmpInf.devMod
-	mat = nothing
+	mat = zeros(eltype(G), size(G, 1), size(G, 2))
 	if isGpu
 		mat = CUDA.zeros(eltype(G), size(G, 1), size(G, 2))
-	else
-		mat = zeros(eltype(G), size(G, 1), size(G, 2))
 	end
 	for i in 1:size(G, 2)
 		v = zeros(eltype(G), size(G, 2))

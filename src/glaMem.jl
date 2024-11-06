@@ -36,7 +36,7 @@ Information for mapping between general source and target volumes.
 - `trgPar::CartesianIndices`: Identification of volume partition with grid offsets in target volume.
 - `srcPar::CartesianIndices`: Identification of volume partition with grid offsets in source volume.
 """
-struct GlaExtInf
+mutable struct GlaExtInf
 
 	minScl::NTuple{3,Rational}
 	trgDiv::NTuple{3,Integer}
@@ -87,7 +87,9 @@ Storage structure for a Green's function operator.
 - `dimInf::NTuple{3,Integer}`: Dimension information for Green function volumes, host side.
 - `egoFur::AbstractArray{<:AbstractArray{T},1}`: Unique Fourier transform data for circulant Green function.
 - `fftPlnFwd::AbstractArray{<:AbstractFFTs.Plan,1}`: Forward Fourier transform plans.
-- `fftPlnRev::AbstractArray{<:AbstractFFTs.ScaledPlan,1}`: Reverse Fourier transform plans.
+- `fftPlnRev::AbstractArray{<:AbstractFFTs.Plan,1}`: Reverse Fourier transform plans.
+- `adjFftPlnFwd::AbstractArray{<:AbstractFFTs.Plan,1}`: Forward Fourier transform plans for adjoint.
+- `adjFftPlnRev::AbstractArray{<:AbstractFFTs.Plan,1}`: Reverse Fourier transform plans for adjoint.
 - `phzInf::AbstractArray{<:AbstractArray{T},1}`: Phase vector for splitting Fourier transforms.
 """
 mutable struct GlaOprMem
@@ -101,6 +103,8 @@ mutable struct GlaOprMem
 	T<:Union{ComplexF64,ComplexF32}
 	fftPlnFwd::AbstractArray{<:AbstractFFTs.Plan,1}
 	fftPlnRev::AbstractArray{<:AbstractFFTs.Plan,1}
+	adjFftPlnFwd::AbstractArray{<:AbstractFFTs.Plan,1}
+	adjFftPlnRev::AbstractArray{<:AbstractFFTs.Plan,1}
 	phzInf::AbstractArray{<:AbstractArray{T},1} where 
 	T<:Union{ComplexF64,ComplexF32}
 end

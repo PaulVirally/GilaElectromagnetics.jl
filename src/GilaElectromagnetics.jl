@@ -94,7 +94,7 @@ notable internal definitions
 ----------------------------
 =#
 include("glaAct.jl")
-export egoOpr!, GlaOpr, glaSze, isadjoint, isselfoperator, isexternaloperator 
+export egoOpr!, GlaOpr, glaSze, isadjoint, isselfoperator, isexternaloperator, adjoint!
 #=
 glaEgoMat provides direct computation of the dense matrix defined by the 
 electromagnetic Green function in free space. The code is only written for self 

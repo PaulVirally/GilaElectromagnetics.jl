@@ -4,7 +4,7 @@ Random, GilaElectromagnetics, Test, Serialization, Scratch
 include("preamble.jl")
 ###SETTINGS
 # type for tests
-useTyp = ComplexF32
+useTyp = ComplexF64
 # number of cells in each volume 
 # to run external operator test, celU should be the union of celA and celB
 celB = (16, 16, 16)
@@ -113,13 +113,13 @@ println("Green function construction completed.")
 # include("posDefTest.jl")
 # println("Semi-definiteness test completed.")
 ## test external Green function using self Green function
-# println("External operator test started.")
-# include("extSlfTest.jl")
-# println("External operator test completed.")
+println("External operator test started.")
+include("extSlfTest.jl")
+println("External operator test completed.")
 #test the GreensOperator structs
-# println("GlaOpr test started.")
-# include("oprTest.jl")
-# println("GlaOpr test completed.")
+println("GlaOpr test started.")
+include("oprTest.jl")
+println("GlaOpr test completed.")
 println("Adjoint test starteed.")
 include("adjTest.jl")
 println("Adjoint test completed.")

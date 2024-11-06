@@ -85,7 +85,11 @@ function egoBrnHst!(egoMem::GlaOprMem, lvl::Integer, bId::Integer,
 	if lvl > 0
 		# forward FFT
 		# possibility of changing vector size accounted for in FFT plans
-		egoMem.fftPlnFwd[lvl] * orgVec
+		if egoMem.cmpInf.adjMod
+			egoMem.adjFftPlnFwd[lvl] * orgVec
+		else
+			egoMem.fftPlnFwd[lvl] * orgVec
+		end
 	end 
 	# split branch
 	if lvl < length(egoMem.dimInf)	
@@ -167,7 +171,11 @@ function egoBrnHst!(egoMem::GlaOprMem, lvl::Integer, bId::Integer,
 	if lvl > 0
 		# inverse FFT
 		# possibility of changing vector size accounted for in FFT plans
-		egoMem.fftPlnRev[lvl] * retVec
+		if egoMem.cmpInf.adjMod
+			egoMem.adjFftPlnRev[lvl] * retVec
+		else
+			egoMem.fftPlnRev[lvl] * retVec
+		end
 	end
 	# terminate task and return control to previous level 
 	# zero level return
@@ -213,7 +221,11 @@ function egoBrnDev!(egoMem::GlaOprMem, lvl::Integer, bId::Integer,
 	if lvl > 0
 		# forward FFT
 		# possibility of changing vector size accounted for in FFT plans
-		egoMem.fftPlnFwd[lvl] * orgVec
+		if egoMem.cmpInf.adjMod
+			egoMem.adjFftPlnFwd[lvl] * orgVec
+		else
+			egoMem.fftPlnFwd[lvl] * orgVec
+		end
 		# wait for completion of FFT
 		CUDA.synchronize(CUDA.stream())
 	end 
@@ -303,7 +315,11 @@ function egoBrnDev!(egoMem::GlaOprMem, lvl::Integer, bId::Integer,
 	if lvl > 0
 		# inverse FFT
 		# possibility of changing vector size accounted for in FFT plans
-		egoMem.fftPlnRev[lvl] * retVec
+		if egoMem.cmpInf.adjMod
+			egoMem.adjFftPlnRev[lvl] * retVec
+		else
+			egoMem.fftPlnRev[lvl] * retVec
+		end
 		CUDA.synchronize(CUDA.stream())
 	end
 	# terminate task and return control to previous level 

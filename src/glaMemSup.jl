@@ -191,11 +191,15 @@ function GlaOprPrp(egoFur::AbstractArray{<:AbstractArray{T}}, trgVol::GlaVol,
 	if cmpInf.devMod == true
 		egoFurDev = Array{CuArray{setTyp}}(undef, eoDim)
 		phzInfDev = Array{CuArray{setTyp}}(undef, lvls)
-		fftPlnFwdDev = Array{CUDA.CUFFT.cCuFFTPlan}(undef, lvls)
-		fftPlnRevDev = Array{AbstractFFTs.ScaledPlan}(undef, lvls)
+		fftPlnFwdDev = Array{AbstractFFTs.Plan}(undef, lvls)
+		fftPlnRevDev = Array{AbstractFFTs.Plan}(undef, lvls)
+		adjFftPlnFwdDev = Array{AbstractFFTs.Plan}(undef, lvls)
+		adjFftPlnRevDev = Array{AbstractFFTs.Plan}(undef, lvls)
 	else
-		fftPlnFwd = Array{FFTW.cFFTWPlan}(undef, lvls)
-		fftPlnRev = Array{FFTW.ScaledPlan}(undef, lvls)
+		fftPlnFwd = Array{AbstractFFTs.Plan}(undef, lvls)
+		fftPlnRev = Array{AbstractFFTs.Plan}(undef, lvls)
+		adjFftPlnFwd = Array{AbstractFFTs.Plan}(undef, lvls)
+		adjFftPlnRev = Array{AbstractFFTs.Plan}(undef, lvls)
 	end
 	###MEMORY PREPARATION
 	# initialize Fourier transform plans
@@ -212,6 +216,8 @@ function GlaOprPrp(egoFur::AbstractArray{<:AbstractArray{T}}, trgVol::GlaVol,
 			# create Fourier transform plans
 			@CUDA.sync fftPlnFwdDev[dir] =  plan_fft!(fftWrkFwdDev, [dir])
 			@CUDA.sync fftPlnRevDev[dir] =  plan_ifft!(fftWrkRevDev, [dir])
+			@CUDA.sync adjFftPlnFwdDev[dir] =  plan_fft!(fftWrkRevDev, [dir])
+			@CUDA.sync adjFftPlnRevDev[dir] =  plan_ifft!(fftWrkFwdDev, [dir])
 		end
 	else
 		for dir ∈ eachindex(1:lvls)
@@ -226,6 +232,8 @@ function GlaOprPrp(egoFur::AbstractArray{<:AbstractArray{T}}, trgVol::GlaVol,
 			# create Fourier transform plans
 			fftPlnFwd[dir] = plan_fft!(fftWrkFwd, [dir]; flags = FFTW.MEASURE)
 			fftPlnRev[dir] = plan_ifft!(fftWrkRev, [dir]; flags = FFTW.MEASURE)
+			adjFftPlnFwd[dir] = plan_fft!(fftWrkRev, [dir]; flags = FFTW.MEASURE)
+			adjFftPlnRev[dir] = plan_ifft!(fftWrkFwd, [dir]; flags = FFTW.MEASURE)
 		end
 	end
 	# computation of phase transformation
@@ -261,10 +269,10 @@ function GlaOprPrp(egoFur::AbstractArray{<:AbstractArray{T}}, trgVol::GlaVol,
 	if cmpInf.devMod == true 
 		CUDA.synchronize(CUDA.stream())
 		GlaOprMem(cmpInf, trgVol, srcVol, mixInf, brnSze, egoFurDev,
-			fftPlnFwdDev, fftPlnRevDev, phzInfDev)
+			fftPlnFwdDev, fftPlnRevDev, adjFftPlnFwd, adjFftPlnRev, phzInfDev)
 	else
 		return GlaOprMem(cmpInf, trgVol, srcVol, mixInf, brnSze, egoFur,
-			fftPlnFwd, fftPlnRev, phzInf)
+			fftPlnFwd, fftPlnRev, adjFftPlnFwd, adjFftPlnRev, phzInf)
 	end
 end
 #=

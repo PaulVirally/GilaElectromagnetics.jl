@@ -11,63 +11,24 @@ LinearAlgebra.isposdef(::GlaOpr) = false
 LinearAlgebra.ishermitian(::GlaOpr) = false
 LinearAlgebra.isdiag(::GlaOpr) = false
 #=
+In-place adjoint operator.
+=#
+function adjoint!(opr::GlaOpr)
+	# Mark the adjoint
+	opr.mem.cmpInf.adjMod = !opr.mem.cmpInf.adjMod
+
+	# Swap source and target volumes (transpose)
+	opr.mem.trgVol, opr.mem.srcVol = opr.mem.srcVol, opr.mem.trgVol
+	opr.mem.mixInf = GlaExtInf(opr.mem.trgVol, opr.mem.srcVol)
+
+	# Take the conjugate of the Fourier coefficients (conjugate transpose)
+	opr.mem.egoFur = collect(map(arr -> conj.(arr), opr.mem.egoFur))
+	return opr
+end
+#=
 Create operator adjoint.
 =#
-function Base.adjoint(opr::GlaOpr)::GlaOpr
-	memCpy = deepcopy(opr.mem)
-	trgVol, srcVol, mixInf, dimInf, egoFur, fftPlnFwd, fftPlnRev, phzInf = 
-		memCpy.trgVol, memCpy.srcVol, memCpy.mixInf, memCpy.dimInf, 
-		memCpy.egoFur, memCpy.fftPlnFwd, memCpy.fftPlnRev, memCpy.phzInf
-	cmpInfCpy = deepcopy(memCpy.cmpInf)
-	frqPhz, intOrd, adjMod, devMod, numTrd, numBlk = cmpInfCpy.frqPhz, 
-		cmpInfCpy.intOrd, cmpInfCpy.adjMod, cmpInfCpy.devMod, cmpInfCpy.numTrd, 
-		cmpInfCpy.numBlk
-
-	adjMod = !adjMod # Flag for adjoint
-	adjOpt = GlaKerOpt(frqPhz, intOrd, adjMod, devMod, numTrd, numBlk)
-
-	# To take the adjoint, we take the conjugate transpose
-	# To take the transpose, we swap the source and target volumes
-	trgVol, srcVol = srcVol, trgVol
-
-	# ???
-	if isexternaloperator(opr)
-		fftPlnFwd, fftPlnRev = fftPlnRev, fftPlnFwd
-		newFftPlnFwd = nothing
-		newFftPlnRev = nothing
-		if opr.mem.cmpInf.devMod
-			newFftPlnFwd = Array{CUDA.CUFFT.cCuFFTPlan}(undef, length(fftPlnFwd))
-			newFftPlnRev = Array{AbstractFFTs.ScaledPlan}(undef, length(fftPlnRev))
-		else
-			newFftPlnFwd = Array{FFTW.cFFTWPlan}(undef, length(fftPlnFwd))
-			newFftPlnRev = Array{FFTW.ScaledPlan}(undef, length(fftPlnRev))
-		end
-		for (i, (fwdPln, revPln)) in enumerate(zip(fftPlnFwd, fftPlnRev))
-			if opr.mem.cmpInf.devMod
-				fwdArr = CuArray{eltype(eltype(egoFur))}(undef, size(fwdPln))
-				revArr = CuArray{eltype(eltype(egoFur))}(undef, size(revPln))
-				newFftPlnFwd[i] = plan_fft!(fwdArr, [i])
-				newFftPlnRev[i] = plan_ifft!(revArr, [i])
-			else
-				fwdArr = Array{eltype(eltype(egoFur))}(undef, size(fwdPln))
-				revArr = Array{eltype(eltype(egoFur))}(undef, size(revPln))
-				newFftPlnFwd[i] = plan_fft!(fwdArr, [i]; flags=FFTW.MEASURE)
-				newFftPlnRev[i] = plan_ifft!(revArr, [i]; flags=FFTW.MEASURE)
-			end
-		end
-		fftPlnFwd, fftPlnRev = newFftPlnFwd, newFftPlnRev
-		mixInf = GlaExtInf(trgVol, srcVol)
-		# (G.mem.mixInf.trgCel .+ G.mem.mixInf.srcCel) .>> 1
-	end
-
-	# To take the conjugate, we simply take the conjugate of the Fourier
-	# coefficients
-	egoFur = collect(map(arr -> conj.(arr), egoFur))
-
-	adjMem = GlaOprMem(adjOpt, trgVol, srcVol, mixInf, dimInf, egoFur, 
-		fftPlnFwd, fftPlnRev, phzInf)
-	return GlaOpr(adjMem)
-end
+Base.adjoint(opr::GlaOpr)::GlaOpr = adjoint!(deepcopy(opr))
 #=
 Call egoOpr! via * symbol, tensor definition of input vector.
 =#
