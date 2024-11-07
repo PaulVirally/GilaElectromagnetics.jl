@@ -1,5 +1,5 @@
 """
-  GlaVol
+    GlaVol
 
 Basic spatial memory structure for a volume.
 
@@ -47,7 +47,7 @@ mutable struct GlaExtInf
 	srcPar::CartesianIndices
 end
 """
-  GlaKerOpt
+    GlaKerOpt
 
 Green function operator assembly and kernel operation options.
 
@@ -75,7 +75,7 @@ It may be prudent to create the associated GlaKerOpt with higher order.
 =#
 
 """
-  GlaOprMem
+    GlaOprMem
 
 Storage structure for a Green's function operator.
 
@@ -183,7 +183,7 @@ end
 Internal constructor for external pair information, treating grid mismatch. 
 =#
 """
-  GlaExtInf(trgVol::GlaVol, srcVol::GlaVol)::GlaExtInf
+    GlaExtInf(trgVol::GlaVol, srcVol::GlaVol)::GlaExtInf
 
 Constructor for `GlaExtInf, a memory structure for translating between distinct grid layouts. Treats grid mismatch.
 
@@ -220,7 +220,7 @@ function GlaExtInf(trgVol::GlaVol, srcVol::GlaVol)::GlaExtInf
 end
 
 """
-  GlaKerOpt(devStt::Bool)
+    GlaKerOpt(devStt::Bool)
 
 Simplified GlaKerOpt constructor where default parameters are given depending on the GPU activation.
 
