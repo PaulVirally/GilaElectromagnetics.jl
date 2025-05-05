@@ -69,6 +69,10 @@ function GlaVol(cel::Union{Array{<:Integer,1},NTuple{3,Integer}},
     return GlaVol(Tuple(cel), celScl, org, [grd...])
 end
 
+function Base.:(==)(a::GlaVol, b::GlaVol)
+    return a.cel == b.cel && a.scl == b.scl && a.org == b.org && a.grd == b.grd
+end
+
 """
     genVolEve(glaVol::GlaVol)
 
