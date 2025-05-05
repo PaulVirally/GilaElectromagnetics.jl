@@ -145,14 +145,16 @@ function GlaVacOprMem(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol=trgVol)
     # number of multiplication branches     
     eoDim = 2^lvl
     # final Fourier coefficients for a given branch
-    egoFur = Array{Array{ComplexF64}}(undef, eoDim)
+    egoFur = Array{arrTyp(cmpInf)}(undef, eoDim)
+    # egoFur = Array{Array{ComplexF64}}(undef, eoDim)
     # intermediate storage
     egoFurInt = Array{ComplexF64}(undef, max.(div.(totCelCrc, 2), (2,2,2))..., 
         ddDim, totParSrc, totParTrg)
     # only one one eighth of the green function is unique 
     for eoItr ∈ 0:(eoDim - 1)
         # odd / even branch extraction
-        egoFur[eoItr + 1] = Array{ComplexF64}(undef, truInf..., ddDim, totParSrc, totParTrg)
+        # egoFur[eoItr + 1] = Array{ComplexF64}(undef, truInf..., ddDim, totParSrc, totParTrg)
+        egoFur[eoItr + 1] = arrTyp(cmpInf)(undef, truInf..., ddDim, totParSrc, totParTrg)
         # first division is along smallest stride -> largest binary division
         egoFurInt .= ComplexF64.(egoFurPrp[(1 + 
             mod(div(eoItr, 4), 2)):2:(end - 1 + mod(div(eoItr, 4), 2)), 

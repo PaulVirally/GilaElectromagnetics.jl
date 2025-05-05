@@ -20,7 +20,7 @@ using Test, GilaElectromagnetics, CUDA
         volObj = GlaVol(volDim, sclArr, orgSrc)
         oprMemCpu = GlaVacOprMem(CPUKerOpt(), volObj)
         randVecCpu = rand(ComplexF64, oprMemCpu.srcVol.cel..., 3)
-        outVecCpu = egoOpr!(oprMemCpu, randVecCpu)
+        outVecCpu = egoOpr!(oprMemCpu, deepcopy(randVecCpu))
 
         if CUDA.functional()
             println("Running GPU consistency tests for self Green's function...")
@@ -45,7 +45,7 @@ using Test, GilaElectromagnetics, CUDA
         volTrg = GlaVol(volDim, sclArr, orgTrg)
         oprMemExtCpu = GlaVacOprMem(CPUKerOpt(), volTrg, volObj)
         randVecExtCpu = rand(ComplexF64, oprMemExtCpu.srcVol.cel..., 3)
-        outVecExtCpu = egoOpr!(oprMemExtCpu, randVecExtCpu)
+        outVecExtCpu = egoOpr!(oprMemExtCpu, deepcopy(randVecExtCpu))
 
         if CUDA.functional()
             println("Running GPU consistency tests for external Green's function...")

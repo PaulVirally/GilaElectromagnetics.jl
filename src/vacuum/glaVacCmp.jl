@@ -100,6 +100,19 @@ Get the CPU backend from a CPU kernel options object.
 bckEnd(opt::CPUKerOpt) = opt.bckEnd
 
 """
+    arrTyp(opt::CPUKerOpt)
+
+Get the array type from a CPU kernel options object.
+
+# Arguments
+- `opt::CPUKerOpt`: The CPU kernel options object
+
+# Returns
+- `Type`: Array{ComplexF64}
+"""
+arrTyp(::CPUKerOpt) = Array{ComplexF64}
+
+"""
     GPUKerOpt <: GlaKerOpt
 
 Options for GPU computation of the Green's function operator.
@@ -208,6 +221,19 @@ Get the GPU backend from a GPU kernel options object.
 - `GPU`: The GPU backend
 """
 bckEnd(opt::GPUKerOpt) = opt.bckEnd
+
+"""
+    arrTyp(opt::GPUKerOpt)
+
+Get the array type from a GPU kernel options object.
+
+# Arguments
+- `opt::GPUKerOpt`: The GPU kernel options object
+
+# Returns
+- `Type`: CuArray{ComplexF64}
+"""
+arrTyp(::GPUKerOpt) = CuArray{ComplexF64}
 
 # Add serialization support for GlaKerOpt
 function Serialization.serialize(io::IO, opt::CPUKerOpt)
