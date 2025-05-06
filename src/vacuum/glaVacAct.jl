@@ -179,8 +179,8 @@ function mulBrn!(mixInf::GlaExtInf, bId::Integer, prdVec::AbstractArray{ComplexF
 	# zero if branch is even in that direction, one if branch is odd
     brnSym = isodd.(bId .>> (2:-1:0))
 	# declare memory 
-    dimInf = similar(prdVec, Int32, 3, 8)
-    dirSym = similar(prdVec, Float32, 3, 8)
+    dimInf = Array{Int32}(undef, 3, 8)
+    dirSym = Array{Float32}(undef, 3, 8)
 	# selection ranges for Green function and vector
 	modRng = Array{StepRange}(undef, 3, 8)
 	vecRng = Array{StepRange}(undef, 3, 8)
@@ -252,16 +252,16 @@ function mulBrn!(mixInf::GlaExtInf, bId::Integer, prdVec::AbstractArray{ComplexF
                     getproperty.(modRng[:,divItr + 1], :start) .+ 1)
                 # symmetry information
 				copyto!(view(dirSym, :, divItr + 1), 
-					eltype(dirSym).([symSgn[1,divItr + 1] * 
-					symSgn[2,divItr + 1], symSgn[1,divItr + 1] * 
-					symSgn[3,divItr + 1], symSgn[2,divItr + 1] * 
-					symSgn[3,divItr + 1]]))
+					eltype(dirSym).(
+                    [symSgn[1,divItr + 1] * symSgn[2,divItr + 1],
+                     symSgn[1,divItr + 1] * symSgn[3,divItr + 1],
+                     symSgn[2,divItr + 1] * symSgn[3,divItr + 1]]))
                 # perform Hadamard product
                 krn = mulKer!(bckEnd(cmpInf))
-                krn(view(prdVec, vecRng[:,divItr + 1]..., :),
-                    view(vecMod, modRng[:,divItr + 1]..., :),
-                    view(orgVec, vecRng[:,divItr + 1]..., :),
-                    view(dirSym, :, divItr + 1),
+                krn(view(prdVec, vecRng[1, divItr + 1], vecRng[2, divItr + 1], vecRng[3, divItr + 1], :),
+                    view(vecMod, modRng[1, divItr + 1], modRng[2, divItr + 1], modRng[3, divItr + 1], :),
+                    view(orgVec, vecRng[1, divItr + 1], vecRng[2, divItr + 1], vecRng[3, divItr + 1], :),
+                    Tuple(dirSym[:, divItr + 1]);
                     ndrange=tuple(dimInf[:, divItr + 1]...))
 			end
 		end
@@ -269,7 +269,7 @@ function mulBrn!(mixInf::GlaExtInf, bId::Integer, prdVec::AbstractArray{ComplexF
     memCln!(dimInf, dirSym)
 	return nothing
 end
-@kernel function mulKer!(prdVec::AbstractArray{ComplexF64, 4}, vecMod::AbstractArray{ComplexF64, 4}, orgVec::AbstractArray{ComplexF64}, dirSym::AbstractArray{<:AbstractFloat})
+@kernel function mulKer!(prdVec::AbstractArray{ComplexF64, 4}, vecMod::AbstractArray{ComplexF64, 4}, orgVec::AbstractArray{ComplexF64, 4}, dirSym::NTuple{3, Float32})
     # Linear index
     itr = @index(Global)
     

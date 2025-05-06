@@ -14,7 +14,7 @@ using Test, GilaElectromagnetics, CUDA
     orgTrg = (1//1, 1//1, 1//1)  # Ensure non-overlapping target volume
 
     for volDim in volSizes
-        println("Testing volume size: ", volDim)
+        # println("Testing volume size: ", volDim)
 
         # Self Green's function
         volObj = GlaVol(volDim, sclArr, orgSrc)
@@ -23,7 +23,7 @@ using Test, GilaElectromagnetics, CUDA
         outVecCpu = egoOpr!(oprMemCpu, deepcopy(randVecCpu))
 
         if CUDA.functional()
-            println("Running GPU consistency tests for self Green's function...")
+            # println("Running GPU consistency tests for self Green's function...")
 
             oprMemGpu = GlaVacOprMem(GPUKerOpt(), volObj)
             randVecGpu = CUDA.zeros(ComplexF64, oprMemGpu.srcVol.cel..., 3)
@@ -35,10 +35,10 @@ using Test, GilaElectromagnetics, CUDA
 
             # Compute the maximum difference between CPU and GPU results
             diff = maximum(abs.(outVecCpu .- outVecGpuCpu))
-            println("Maximum difference for self Green's function: ", diff)
+            # println("Maximum difference for self Green's function: ", diff)
             @test diff < 1e-6
         else
-            println("CUDA is not functional. Skipping GPU consistency tests for self Green's function.")
+            # println("CUDA is not functional. Skipping GPU consistency tests for self Green's function.")
         end
 
         # External Green's function
@@ -48,7 +48,7 @@ using Test, GilaElectromagnetics, CUDA
         outVecExtCpu = egoOpr!(oprMemExtCpu, deepcopy(randVecExtCpu))
 
         if CUDA.functional()
-            println("Running GPU consistency tests for external Green's function...")
+            # println("Running GPU consistency tests for external Green's function...")
 
             oprMemExtGpu = GlaVacOprMem(GPUKerOpt(), volTrg, volObj)
             randVecExtGpu = CUDA.zeros(ComplexF64, oprMemExtGpu.srcVol.cel..., 3)
@@ -60,10 +60,10 @@ using Test, GilaElectromagnetics, CUDA
 
             # Compute the maximum difference between CPU and GPU results
             diffExt = maximum(abs.(outVecExtCpu .- outVecExtGpuCpu))
-            println("Maximum difference for external Green's function: ", diffExt)
+            # println("Maximum difference for external Green's function: ", diffExt)
             @test diffExt < 1e-6
         else
-            println("CUDA is not functional. Skipping GPU consistency tests for external Green's function.")
+            # println("CUDA is not functional. Skipping GPU consistency tests for external Green's function.")
         end
     end
 end

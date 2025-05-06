@@ -25,7 +25,7 @@ end
 @testset "Gila Operator Tests" begin
     @testset "GlaOprVac Tests" begin
         for volDim in volSizes
-            println("Testing simple GlaOprVac functionality for volume size: $(volDim)")
+            # println("Testing simple GlaOprVac functionality for volume size: $(volDim)")
             volObj = GlaVol(volDim, sclArr, (0//1, 0//1, 0//1))
 
             # Test self Green's function operator
@@ -52,7 +52,7 @@ end
 
     @testset "Operator Consistency Tests" begin
         for volDim in volSizes
-            println("Testing operator consistency for volume size: $(volDim)")
+            # println("Testing operator consistency for volume size: $(volDim)")
             volObj = GlaVol(volDim, sclArr, (0//1, 0//1, 0//1))
             vac = zeros(ComplexF64, volDim...)  # Zero susceptibility
             sus = ones(ComplexF64, volDim...) * (0.5 + 0.05im)  # Non-zero susceptibility
@@ -80,6 +80,7 @@ end
 
             # Test GPU operators if CUDA is functional
             if CUDA.functional()
+                sus = CuArray(sus)
                 glaOprGpu = GlaOpr(volObj, sus; useGpu=true)
                 glaOprVacGpu = GlaOprVac(volObj; useGpu=true)
                 vecOnesGpu = CUDA.ones(ComplexF64, prod(volDim) * 3)
@@ -107,7 +108,7 @@ end
 
     @testset "Operator Consistency and Repeated Application Tests" begin
         for volDim in volSizes
-            println("Testing repeated operator use for volume size: $(volDim)")
+            # println("Testing repeated operator use for volume size: $(volDim)")
             volObj = GlaVol(volDim, sclArr, (0//1, 0//1, 0//1))
             sus = ones(ComplexF64, volDim...) * (0.5 + 0.05im)  # Non-zero susceptibility
             vecOnes = ones(ComplexF64, prod(volDim) * 3)  # Vector of ones
@@ -142,6 +143,7 @@ end
 
             # Test GPU operators if CUDA is functional
             if CUDA.functional()
+                sus = CuArray(sus)
                 vecOnesGpu = CUDA.ones(ComplexF64, prod(volDim) * 3)
 
                 # Test GlaOprVac on GPU
@@ -177,7 +179,7 @@ end
 
     @testset "Solver Tests" begin
         for volDim in volSizes
-            println("Testing solvers for volume size: $(volDim)")
+            # println("Testing solvers for volume size: $(volDim)")
             volObj = GlaVol(volDim, sclArr, (0//1, 0//1, 0//1))
             oprSlf = GlaOprVac(volObj)
 

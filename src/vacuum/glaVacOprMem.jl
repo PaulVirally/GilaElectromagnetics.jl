@@ -138,15 +138,12 @@ function GlaVacOprMem(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol=trgVol)
         # genVolEve enforces that number of cells is even 
         truInf[dirItr] = totCelCrc[dirItr] ÷ 2
     end
-    # information copy indices
-    cpyRng = tuple(map(UnitRange, ones(Int,3), truInf)...)
     # branching depth of multiplication
     lvl = 3
     # number of multiplication branches     
     eoDim = 2^lvl
     # final Fourier coefficients for a given branch
     egoFur = Array{arrTyp(cmpInf)}(undef, eoDim)
-    # egoFur = Array{Array{ComplexF64}}(undef, eoDim)
     # intermediate storage
     egoFurInt = Array{ComplexF64}(undef, max.(div.(totCelCrc, 2), (2,2,2))..., 
         ddDim, totParSrc, totParTrg)
@@ -160,10 +157,8 @@ function GlaVacOprMem(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol=trgVol)
             mod(div(eoItr, 4), 2)):2:(end - 1 + mod(div(eoItr, 4), 2)), 
             (1 + mod(div(eoItr, 2), 2)):2:(end - 1 + mod(div(eoItr, 2), 2)),
             (1 + mod(eoItr, 2)):2:(end - 1 + mod(eoItr, 2)),:,:,:])
-        # extract unique information
-        @threads for cpyItr ∈ CartesianIndices(cpyRng)
-            egoFur[eoItr + 1][cpyItr,:,:,:] .= egoFurInt[cpyItr,:,:,:]
-        end
+        itr = CartesianIndices(egoFur[eoItr + 1])
+        copyto!(egoFur[eoItr + 1], itr, egoFurInt, itr)
     end
     return GlaVacOprMem(cmpInf, egoFur, trgVol, srcVol)
 end
@@ -250,10 +245,15 @@ isadjoint(vacOprMem::GlaVacOprMem) = adjMod(vacOprMem.cmpInf)
 
 # Add serialization support for GlaVacOprMem
 function Serialization.serialize(io::IO, mem::GlaVacOprMem)
-    # Save only essential data
-    serialize(io, mem.egoFur)
-    # Save whether it's CPU or GPU
-    serialize(io, mem.cmpInf isa GPUKerOpt)
+    if mem.cmpInf isa GPUKerOpt
+        # If GPU, convert to CPU for serialization
+        egoFur = collect(map(Array, mem.egoFur))
+        serialize(io, egoFur)
+    else
+        # If CPU, save directly
+        serialize(io, mem.egoFur)
+    end
+    serialize(io, mem.cmpInf isa GPUKerOpt) # Save whether it's CPU or GPU so we can deserialize correctly
     serialize(io, mem.cmpInf)
     serialize(io, mem.trgVol)
     serialize(io, mem.srcVol)
@@ -261,10 +261,8 @@ function Serialization.serialize(io::IO, mem::GlaVacOprMem)
 end
 
 function Serialization.deserialize(io::IO, ::Type{GlaVacOprMem})
-    # Load essential data
     egoFur = deserialize(io)
-    # Check if it was GPU
-    useGpu = deserialize(io)
+    useGpu = deserialize(io) # Check if it was GPU
     cmpInf = deserialize(io, useGpu ? GPUKerOpt : CPUKerOpt)
     trgVol = deserialize(io)
     srcVol = deserialize(io)
@@ -272,7 +270,7 @@ function Serialization.deserialize(io::IO, ::Type{GlaVacOprMem})
     
     # If we're deserializing to GPU, convert arrays
     if useGpu
-        egoFur = map(CuArray, egoFur)
+        egoFur = collect(map(CuArray, egoFur))
     end
     
     # Reconstruct the full operator

@@ -25,7 +25,7 @@ asym(mat::AbstractMatrix{<:Complex}) = (mat - adjoint(mat)) / 2im
     sclArr = (1//32, 1//32, 1//32)
 
     for volDim in volSizes
-        println("Testing volume size: ", volDim)
+        # println("Testing volume size: ", volDim)
         volObj = GlaVol(volDim, sclArr, (0//1, 0//1, 0//1))
         oprMem = GlaVacOprMem(CPUKerOpt(), volObj)
 
