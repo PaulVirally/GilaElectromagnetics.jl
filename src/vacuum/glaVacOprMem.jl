@@ -197,7 +197,7 @@ function glaOprPrp(egoFur::AbstractVector{<:AbstractArray{ComplexF64}}, trgVol::
     # sum of source and target volumes being divisible by 2 is guaranteed by 
     # genVolEve in GlaVacOprMem
     brnSze = div.(mixInf.trgCel .+ mixInf.srcCel, 2)
-    phzInf = Array{eltype(egoFur)}(undef, lvls)
+    phzInf = Array{arrTyp(cmpInf)}(undef, lvls)
     # Fourier transform plans
     fftPlnFwd = Array{AbstractFFTs.Plan}(undef, lvls)
     fftPlnRev = Array{AbstractFFTs.Plan}(undef, lvls)

@@ -1,6 +1,6 @@
 using Test
 using Serialization
-using GilaElectromagnetics.GilaVacuum
+using GilaElectromagnetics
 using CUDA
 
 @testset "Serialization Tests" begin
