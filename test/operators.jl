@@ -80,8 +80,9 @@ end
 
             # Test GPU operators if CUDA is functional
             if CUDA.functional()
+                vac = CuArray(vac)
                 sus = CuArray(sus)
-                glaOprGpu = GlaOpr(volObj, sus; useGpu=true)
+                glaOprGpu = GlaOpr(volObj, vac; useGpu=true)
                 glaOprVacGpu = GlaOprVac(volObj; useGpu=true)
                 vecOnesGpu = CUDA.ones(ComplexF64, prod(volDim) * 3)
 

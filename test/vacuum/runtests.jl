@@ -1,6 +1,6 @@
 using Test
 
-println("Running vacuum test suite...")
+# println("Running vacuum test suite...")
 
 @testset "Vacuum Tests" begin
     include("intConTest.jl")
@@ -11,4 +11,4 @@ println("Running vacuum test suite...")
     include("serializationTest.jl")
 end
 
-println("Vacuum test suite completed.")
+# println("Vacuum test suite completed.")
