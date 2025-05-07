@@ -302,11 +302,13 @@ end
 # Add serialization support for GlaVacOprMem
 function Serialization.serialize(io::IO, mem::GlaVacOprMem)
     wasGpu = false
+    egoFur = mem.egoFur
     if mem.cmpInf isa GPUKerOpt
         wasGpu = true
         useCpu!(mem) # Convert to CPU for serialization
+        egoFur = collect(map(Array, mem.egoFur))
     end
-    serialize(io, mem.egoFur)
+    serialize(io, egoFur)
     serialize(io, mem.cmpInf)
     serialize(io, mem.trgVol)
     serialize(io, mem.srcVol)
