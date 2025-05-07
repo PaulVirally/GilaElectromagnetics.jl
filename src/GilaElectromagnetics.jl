@@ -18,7 +18,7 @@ export GlaVol
 
 include("vacuum/glaVac.jl")
 using .GilaVacuum
-export GlaKerOpt, CPUKerOpt, GPUKerOpt, GlaVacOprMem, egoOpr!
+export GlaKerOpt, CPUKerOpt, GPUKerOpt, GlaVacOprMem, egoOpr!, useCpu!, useGpu!
 
 include("glaSlv.jl")
 using .GilaSolvers

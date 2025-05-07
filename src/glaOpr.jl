@@ -25,6 +25,8 @@ using ..GilaTypes
 using ..GilaSolvers
 using CUDA
 
+import ..GilaVacuum: useCpu!, useGpu!
+
 export GlaOprVac, InvSctOpr, SctOpr, GlaOpr
 export VacuumGreensOperator, InverseScatteringOperator, ScatteringOperator, GreensOperator
 export isadjoint, isselfoperator, isexternaloperator, adjoint!, glaSze
