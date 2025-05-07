@@ -1,6 +1,10 @@
 using Test, GilaElectromagnetics, CUDA
 
 @testset "CPU-GPU Consistency Tests for Green's Operator" begin
+    if !CUDA.functional()
+        # println("CUDA is not functional. Skipping GPU consistency tests.")
+        return
+    end
     volSizes = [
         (2, 2, 2),
         (4, 4, 4),
@@ -14,32 +18,23 @@ using Test, GilaElectromagnetics, CUDA
     orgTrg = (1//1, 1//1, 1//1)  # Ensure non-overlapping target volume
 
     for volDim in volSizes
-        # println("Testing volume size: ", volDim)
-
         # Self Green's function
         volObj = GlaVol(volDim, sclArr, orgSrc)
         oprMemCpu = GlaVacOprMem(CPUKerOpt(), volObj)
         randVecCpu = rand(ComplexF64, oprMemCpu.srcVol.cel..., 3)
         outVecCpu = egoOpr!(oprMemCpu, deepcopy(randVecCpu))
 
-        if CUDA.functional()
-            # println("Running GPU consistency tests for self Green's function...")
+        oprMemGpu = GlaVacOprMem(GPUKerOpt(), volObj)
+        randVecGpu = CUDA.zeros(ComplexF64, oprMemGpu.srcVol.cel..., 3)
+        copyto!(randVecGpu, randVecCpu)
+        outVecGpu = egoOpr!(oprMemGpu, randVecGpu)
 
-            oprMemGpu = GlaVacOprMem(GPUKerOpt(), volObj)
-            randVecGpu = CUDA.zeros(ComplexF64, oprMemGpu.srcVol.cel..., 3)
-            copyto!(randVecGpu, randVecCpu)
-            outVecGpu = egoOpr!(oprMemGpu, randVecGpu)
+        # Transfer GPU result back to CPU for comparison
+        outVecGpuCpu = Array(outVecGpu)
 
-            # Transfer GPU result back to CPU for comparison
-            outVecGpuCpu = Array(outVecGpu)
-
-            # Compute the maximum difference between CPU and GPU results
-            diff = maximum(abs.(outVecCpu .- outVecGpuCpu))
-            # println("Maximum difference for self Green's function: ", diff)
-            @test diff < 1e-6
-        else
-            # println("CUDA is not functional. Skipping GPU consistency tests for self Green's function.")
-        end
+        # Compute the maximum difference between CPU and GPU results
+        diff = maximum(abs.(outVecCpu .- outVecGpuCpu))
+        @test diff < 1e-6
 
         # External Green's function
         volTrg = GlaVol(volDim, sclArr, orgTrg)
@@ -47,23 +42,53 @@ using Test, GilaElectromagnetics, CUDA
         randVecExtCpu = rand(ComplexF64, oprMemExtCpu.srcVol.cel..., 3)
         outVecExtCpu = egoOpr!(oprMemExtCpu, deepcopy(randVecExtCpu))
 
-        if CUDA.functional()
-            # println("Running GPU consistency tests for external Green's function...")
+        oprMemExtGpu = GlaVacOprMem(GPUKerOpt(), volTrg, volObj)
+        randVecExtGpu = CUDA.zeros(ComplexF64, oprMemExtGpu.srcVol.cel..., 3)
+        copyto!(randVecExtGpu, randVecExtCpu)
+        outVecExtGpu = egoOpr!(oprMemExtGpu, randVecExtGpu)
 
-            oprMemExtGpu = GlaVacOprMem(GPUKerOpt(), volTrg, volObj)
-            randVecExtGpu = CUDA.zeros(ComplexF64, oprMemExtGpu.srcVol.cel..., 3)
-            copyto!(randVecExtGpu, randVecExtCpu)
-            outVecExtGpu = egoOpr!(oprMemExtGpu, randVecExtGpu)
+        # Transfer GPU result back to CPU for comparison
+        outVecExtGpuCpu = Array(outVecExtGpu)
 
-            # Transfer GPU result back to CPU for comparison
-            outVecExtGpuCpu = Array(outVecExtGpu)
-
-            # Compute the maximum difference between CPU and GPU results
-            diffExt = maximum(abs.(outVecExtCpu .- outVecExtGpuCpu))
-            # println("Maximum difference for external Green's function: ", diffExt)
-            @test diffExt < 1e-6
-        else
-            # println("CUDA is not functional. Skipping GPU consistency tests for external Green's function.")
-        end
+        # Compute the maximum difference between CPU and GPU results
+        diffExt = maximum(abs.(outVecExtCpu .- outVecExtGpuCpu))
+        @test diffExt < 1e-6
     end
+end
+
+@testset "CPU-GPU Conversion Tests" begin
+    if !CUDA.functional()
+        # println("CUDA is not functional. Skipping CPU-GPU conversion tests.")
+        return
+    end
+    volSize = (4, 4, 4)
+    sclArr = (1//32, 1//32, 1//32)
+    org = (0//1, 0//1, 0//1)
+    orgTrg = (1//1, 1//1, 1//1)  # Ensure non-overlapping target volume
+
+    volObj = GlaVol(volSize, sclArr, org)
+    oprMemCpu = GlaVacOprMem(CPUKerOpt(), volObj)
+    oprMemGpu = GlaVacOprMem(GPUKerOpt(), volObj)
+
+    cpuVec = ones(ComplexF64, oprMemCpu.srcVol.cel..., 3)
+    gpuVec = CUDA.ones(ComplexF64, oprMemGpu.srcVol.cel..., 3)
+
+    # Make sure the CPU and GPU computations are consistent
+    cpuOut = egoOpr!(oprMemCpu, deepcopy(cpuVec))
+    gpuOut = egoOpr!(oprMemGpu, gpuVec)
+    @test cpuOut ≈ Array(gpuOut)
+
+    # Test GPU to CPU conversion
+    useCpu!(oprMemGpu)
+    useCpu!(oprMemCpu) # Should be a no-op
+    cpuOut = egoOpr!(oprMemCpu, deepcopy(cpuVec))
+    gpuOut = egoOpr!(oprMemGpu, deepcopy(gpuVec))
+    @test cpuOut ≈ Array(gpuOut)
+
+    # Test CPU to GPU conversion
+    useGpu!(oprMemCpu)
+    useGpu!(oprMemGpu) # Should be a no-op
+    cpuOut = egoOpr!(oprMemCpu, deepcopy(cpuVec))
+    gpuOut = egoOpr!(oprMemGpu, deepcopy(gpuVec))
+    @test cpuOut ≈ Array(gpuOut)
 end

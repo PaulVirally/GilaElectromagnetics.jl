@@ -243,36 +243,87 @@ end
 
 isadjoint(vacOprMem::GlaVacOprMem) = adjMod(vacOprMem.cmpInf)
 
+function useCpu!(mem::GlaVacOprMem)
+    if mem.cmpInf isa CPUKerOpt
+        return
+    end
+
+    # Convert to CPU
+    mem.egoFur = collect(map(Array, mem.egoFur))
+    useCpu!(mem.cmpInf)
+    fwdPln = AbstractFFTs.Plan[](undef, 3)
+    revPln = AbstractFFTs.Plan[](undef, 3)
+    ajdFwdPln = AbstractFFTs.Plan[](undef, 3)
+    ajdRevPln = AbstractFFTs.Plan[](undef, 3)
+    for dir in 1:3
+        pln = fftPlnGen(size(mem.fftPlnFwd[dir]), size(mem.fftPlnRev[dir]), dir, CPUKerOpt())
+        fwdPln[dir] = pln[1]
+        revPln[dir] = pln[2]
+        ajdFwdPln[dir] = pln[3]
+        ajdRevPln[dir] = pln[4]
+    end
+    mem.fftPlnFwd = fwdPln
+    mem.fftPlnRev = revPln
+    mem.adjFftPlnFwd = ajdFwdPln
+    mem.adjFftPlnRev = ajdRevPln
+    mem.phzInf = collect(map(Array, mem.phzInf))
+
+    return mem
+end
+
+function useGpu!(mem::GlaVacOprMem)
+    if mem.cmpInf isa GPUKerOpt
+        return
+    end
+
+    # Convert to GPU
+    mem.egoFur = collect(map(CuArray, mem.egoFur))
+    useGpu!(mem.cmpInf)
+    fwdPln = AbstractFFTs.Plan[](undef, 3)
+    revPln = AbstractFFTs.Plan[](undef, 3)
+    ajdFwdPln = AbstractFFTs.Plan[](undef, 3)
+    ajdRevPln = AbstractFFTs.Plan[](undef, 3)
+    for dir in 1:3
+        pln = fftPlnGen(size(mem.fftPlnFwd[dir]), size(mem.fftPlnRev[dir]), dir, GPUKerOpt())
+        fwdPln[dir] = pln[1]
+        revPln[dir] = pln[2]
+        ajdFwdPln[dir] = pln[3]
+        ajdRevPln[dir] = pln[4]
+    end
+    mem.fftPlnFwd = fwdPln
+    mem.fftPlnRev = revPln
+    mem.adjFftPlnFwd = ajdFwdPln
+    mem.adjFftPlnRev = ajdRevPln
+    mem.phzInf = collect(map(CuArray, mem.phzInf))
+
+    return mem
+end
+
 # Add serialization support for GlaVacOprMem
 function Serialization.serialize(io::IO, mem::GlaVacOprMem)
+    wasGpu = false
     if mem.cmpInf isa GPUKerOpt
-        # If GPU, convert to CPU for serialization
-        egoFur = collect(map(Array, mem.egoFur))
-        serialize(io, egoFur)
-    else
-        # If CPU, save directly
-        serialize(io, mem.egoFur)
+        wasGpu = true
+        useCpu!(mem) # Convert to CPU for serialization
     end
-    serialize(io, mem.cmpInf isa GPUKerOpt) # Save whether it's CPU or GPU so we can deserialize correctly
+    serialize(io, mem.egoFur)
     serialize(io, mem.cmpInf)
     serialize(io, mem.trgVol)
     serialize(io, mem.srcVol)
     serialize(io, mem.mixInf)
+
+    if wasGpu
+        useGpu!(mem) # Convert back to GPU after serialization
+    end
 end
 
 function Serialization.deserialize(io::IO, ::Type{GlaVacOprMem})
     egoFur = deserialize(io)
-    useGpu = deserialize(io) # Check if it was GPU
-    cmpInf = deserialize(io, useGpu ? GPUKerOpt : CPUKerOpt)
+    cmpInf = deserialize(io, CPUKerOpt)
     trgVol = deserialize(io)
     srcVol = deserialize(io)
     mixInf = deserialize(io)
-    
-    # If we're deserializing to GPU, convert arrays
-    if useGpu
-        egoFur = collect(map(CuArray, egoFur))
-    end
-    
+     
     # Reconstruct the full operator
     return glaOprPrp(egoFur, trgVol, srcVol, mixInf, cmpInf)
 end

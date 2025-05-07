@@ -227,3 +227,55 @@ end
         end
     end
 end
+
+@testset "CPU-GPU Conversion Tests" begin
+    if !CUDA.functional()
+        # println("CUDA is not functional. Skipping CPU-GPU conversion tests.")
+        return
+    end
+    volSize = (4, 4, 4)
+    sclArr = (1//32, 1//32, 1//32)
+    org = (0//1, 0//1, 0//1)
+    orgTrg = (1//1, 1//1, 1//1) # Ensure non-overlapping target volume
+    volObj = GlaVol(volSize, sclArr, org)
+    sus = ones(ComplexF64, volSize...) * (0.5 + 0.05im)  # Non-zero susceptibility
+    susGpu = CUDA.ones(ComplexF64, volSize...) * (0.5 + 0.05im)
+    vecOnes = ones(ComplexF64, prod(volSize) * 3)
+    vecOnesGpu = CUDA.ones(ComplexF64, prod(volSize) * 3)
+
+    glaOprVacCpu = GlaOprVac(volObj)
+    glaOprVacGpu = GlaOprVac(volObj; useGpu=true)
+    
+    invSctOprCpu = InvSctOpr(volObj, sus)
+    invSctOprGpu = InvSctOpr(volObj, susGpu; useGpu=true)
+
+    sctOprCpu = SctOpr(volObj, sus)
+    sctOprGpu = SctOpr(volObj, susGpu; useGpu=true)
+
+    glaOprCpu = GlaOpr(volObj, sus)
+    glaOprGpu = GlaOpr(volObj, susGpu; useGpu=true)
+
+    cpuOprs = [glaOprVacCpu, invSctOprCpu, sctOprCpu, glaOprCpu]
+    gpuOprs = [glaOprVacGpu, invSctOprGpu, sctOprGpu, glaOprGpu]
+
+    for (cpuOpr, gpuOpr) in zip(cpuOprs, gpuOprs)
+        # Make sure the CPU and GPU computations are consistent
+        cpuOut = cpuOpr * vecOnes
+        gpuOut = gpuOpr * vecOnesGpu
+        @test cpuOut ≈ Array(gpuOut)
+
+        # Test CPU to GPU conversion
+        useGpu!(cpuOpr)
+        useGpu!(gpuOpr) # Should be a no-op
+        cpuOut = cpuOpr * vecOnes
+        gpuOut = gpuOpr * vecOnesGpu
+        @test cpuOut ≈ Array(gpuOut)
+
+        # Test GPU to CPU conversion
+        useCpu!(gpuOpr)
+        useCpu!(cpuOpr) # Should be a no-op
+        cpuOut = cpuOpr * vecOnes
+        gpuOut = gpuOpr * vecOnesGpu
+        @test cpuOut ≈ Array(gpuOut)
+    end
+end

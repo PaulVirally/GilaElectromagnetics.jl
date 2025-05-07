@@ -23,6 +23,7 @@ using ..GilaVolumes
 using ..GilaVacuum
 using ..GilaTypes
 using ..GilaSolvers
+using CUDA
 
 export GlaOprVac, InvSctOpr, SctOpr, GlaOpr
 export VacuumGreensOperator, InverseScatteringOperator, ScatteringOperator, GreensOperator
@@ -274,6 +275,48 @@ This constructor creates an external full Green's function operator that combine
 function GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
     sctOpr = SctOpr(trgVol, srcVol, sus; useGpu=useGpu, slv=slv)
     return GlaOpr(sctOpr)
+end
+
+function useCpu!(opr::GlaOprVac)
+    useCpu!(opr.mem)
+    return opr
+end
+
+function useGpu!(opr::GlaOprVac)
+    useGpu!(opr.mem)
+    return opr
+end
+
+function useCpu!(opr::InvSctOpr)
+    useCpu!(opr.oprVac)
+    opr.sus = Array(opr.sus)
+    return opr
+end
+
+function useGpu!(opr::InvSctOpr)
+    useGpu!(opr.oprVac)
+    opr.sus = CuArray(opr.sus)
+    return opr
+end
+
+function useCpu!(opr::SctOpr)
+    useCpu!(opr.invSctOpr)
+    return opr
+end
+
+function useGpu!(opr::SctOpr)
+    useGpu!(opr.invSctOpr)
+    return opr
+end
+
+function useCpu!(opr::GlaOpr)
+    useCpu!(opr.sctOpr)
+    return opr
+end
+
+function useGpu!(opr::GlaOpr)
+    useGpu!(opr.sctOpr)
+    return opr
 end
 
 include("glaLinAlg.jl")

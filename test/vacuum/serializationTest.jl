@@ -63,6 +63,7 @@ using CUDA
         desOprGpu = open(tmpFilGpu, "r") do io
             deserialize(io, GlaVacOprMem)
         end
+        useGpu!(desOprGpu)
 
         # Verify all fields for GPU-based object
         @test desOprGpu.cmpInf.intOrd == oprMemGpu.cmpInf.intOrd

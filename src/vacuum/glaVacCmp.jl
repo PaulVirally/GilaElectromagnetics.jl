@@ -113,6 +113,39 @@ Get the array type from a CPU kernel options object.
 arrTyp(::CPUKerOpt) = Array{ComplexF64}
 
 """
+    useCpu!(opt::CPUKerOpt)
+
+Does nothing. This function is a placeholder for consistency with the GPU version.
+
+# Arguments
+- `opt::CPUKerOpt`: The CPU kernel options object
+
+# Returns
+- `CPUKerOpt`: The same CPU kernel options object
+"""
+useCpu!(opt::CPUKerOpt) = opt
+
+"""
+    useGpu!(opt::CPUKerOpt)
+
+Switch to GPU computation for the given CPU kernel options object.
+
+Creates a new `GPUKerOpt` object with the same phase factor and integration order as the original `CPUKerOpt`, but with default thread and block counts for GPU computation. The adjoint mode flag is also preserved.
+
+# Arguments
+- `opt::CPUKerOpt`: The CPU kernel options object
+
+# Returns
+- `GPUKerOpt`: A new GPU kernel options object with:
+  - Phase factor of `opt.frqPhz`
+  - Integration order of `opt.intOrd`
+  - Default thread and block counts for GPU computation
+  - Adjoint mode flag from `opt`
+  - Default CUDA backend
+"""
+useGpu!(opt::CPUKerOpt) = GPUKerOpt(opt.frqPhz, opt.intOrd, 128, 256, opt.adjMod, CUDABackend())
+
+"""
     GPUKerOpt <: GlaKerOpt
 
 Options for GPU computation of the Green's function operator.
@@ -234,6 +267,39 @@ Get the array type from a GPU kernel options object.
 - `Type`: CuArray{ComplexF64}
 """
 arrTyp(::GPUKerOpt) = CuArray{ComplexF64}
+
+
+"""
+    useCpu!(opt::GPUKerOpt)
+
+Switch to CPU computation for the given GPU kernel options object.
+
+Creates a new `CPUKerOpt` object with the same phase factor and integration order as the original `GPUKerOpt`, but with default values for CPU computation. The thread and block counts are ignored in this case. The adjoint mode flag is also preserved.
+
+# Arguments
+- `opt::GPUKerOpt`: The GPU kernel options object
+
+# Returns
+- `CPUKerOpt`: A new CPU kernel options object with:
+  - Phase factor of `opt.frqPhz`
+  - Integration order of `opt.intOrd`
+  - Adjoint mode flag from `opt`
+  - Default CPU backend
+"""
+useCpu!(opt::GPUKerOpt) = CPUKerOpt(opt.frqPhz, opt.intOrd, opt.adjMod, CPU())
+
+"""
+    useGpu!(opt::GPUKerOpt)
+
+Does nothing. This function is a placeholder for consistency with the CPU version.
+
+# Arguments
+- `opt::GPUKerOpt`: The GPU kernel options object
+
+# Returns
+- `GPUKerOpt`: The same GPU kernel options object
+"""
+useGpu!(opt::GPUKerOpt) = opt
 
 # Add serialization support for GlaKerOpt
 function Serialization.serialize(io::IO, opt::CPUKerOpt)
