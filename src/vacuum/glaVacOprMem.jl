@@ -251,10 +251,10 @@ function useCpu!(mem::GlaVacOprMem)
     # Convert to CPU
     mem.egoFur = collect(map(Array, mem.egoFur))
     useCpu!(mem.cmpInf)
-    fwdPln = AbstractFFTs.Plan[](undef, 3)
-    revPln = AbstractFFTs.Plan[](undef, 3)
-    ajdFwdPln = AbstractFFTs.Plan[](undef, 3)
-    ajdRevPln = AbstractFFTs.Plan[](undef, 3)
+    fwdPln = Array{AbstractFFTs.Plan}(undef, 3)
+    revPln = Array{AbstractFFTs.Plan}(undef, 3)
+    ajdFwdPln = Array{AbstractFFTs.Plan}(undef, 3)
+    ajdRevPln = Array{AbstractFFTs.Plan}(undef, 3)
     for dir in 1:3
         pln = fftPlnGen(size(mem.fftPlnFwd[dir]), size(mem.fftPlnRev[dir]), dir, CPUKerOpt())
         fwdPln[dir] = pln[1]
@@ -279,10 +279,10 @@ function useGpu!(mem::GlaVacOprMem)
     # Convert to GPU
     mem.egoFur = collect(map(CuArray, mem.egoFur))
     useGpu!(mem.cmpInf)
-    fwdPln = AbstractFFTs.Plan[](undef, 3)
-    revPln = AbstractFFTs.Plan[](undef, 3)
-    ajdFwdPln = AbstractFFTs.Plan[](undef, 3)
-    ajdRevPln = AbstractFFTs.Plan[](undef, 3)
+    fwdPln = Array{AbstractFFTs.Plan}(undef, 3)
+    revPln = Array{AbstractFFTs.Plan}(undef, 3)
+    ajdFwdPln = Array{AbstractFFTs.Plan}(undef, 3)
+    ajdRevPln = Array{AbstractFFTs.Plan}(undef, 3)
     for dir in 1:3
         pln = fftPlnGen(size(mem.fftPlnFwd[dir]), size(mem.fftPlnRev[dir]), dir, GPUKerOpt())
         fwdPln[dir] = pln[1]
