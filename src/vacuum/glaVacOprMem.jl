@@ -250,7 +250,7 @@ function useCpu!(mem::GlaVacOprMem)
 
     # Convert to CPU
     mem.egoFur = collect(map(Array, mem.egoFur))
-    useCpu!(mem.cmpInf)
+    mem.cmpInf = useCpu(mem.cmpInf)
     fwdPln = Array{AbstractFFTs.Plan}(undef, 3)
     revPln = Array{AbstractFFTs.Plan}(undef, 3)
     ajdFwdPln = Array{AbstractFFTs.Plan}(undef, 3)
@@ -278,7 +278,7 @@ function useGpu!(mem::GlaVacOprMem)
 
     # Convert to GPU
     mem.egoFur = collect(map(CuArray, mem.egoFur))
-    useGpu!(mem.cmpInf)
+    mem.cmpInf = useGpu(mem.cmpInf)
     fwdPln = Array{AbstractFFTs.Plan}(undef, 3)
     revPln = Array{AbstractFFTs.Plan}(undef, 3)
     ajdFwdPln = Array{AbstractFFTs.Plan}(undef, 3)

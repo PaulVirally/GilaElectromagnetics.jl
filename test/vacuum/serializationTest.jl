@@ -18,6 +18,7 @@ using CUDA
     desOprCpu = open(tmpFilCpu, "r") do io
         deserialize(io, GlaVacOprMem)
     end
+    useCpu!(desOprCpu)
 
     # Verify all fields for CPU-based object
     @test desOprCpu.cmpInf.intOrd == oprMemCpu.cmpInf.intOrd

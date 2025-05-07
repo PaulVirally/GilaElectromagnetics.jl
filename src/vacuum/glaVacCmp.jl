@@ -113,7 +113,7 @@ Get the array type from a CPU kernel options object.
 arrTyp(::CPUKerOpt) = Array{ComplexF64}
 
 """
-    useCpu!(opt::CPUKerOpt)
+    useCpu(opt::CPUKerOpt)
 
 Does nothing. This function is a placeholder for consistency with the GPU version.
 
@@ -123,10 +123,10 @@ Does nothing. This function is a placeholder for consistency with the GPU versio
 # Returns
 - `CPUKerOpt`: The same CPU kernel options object
 """
-useCpu!(opt::CPUKerOpt) = opt
+useCpu(opt::CPUKerOpt) = opt
 
 """
-    useGpu!(opt::CPUKerOpt)
+    useGpu(opt::CPUKerOpt)
 
 Switch to GPU computation for the given CPU kernel options object.
 
@@ -143,7 +143,7 @@ Creates a new `GPUKerOpt` object with the same phase factor and integration orde
   - Adjoint mode flag from `opt`
   - Default CUDA backend
 """
-useGpu!(opt::CPUKerOpt) = GPUKerOpt(opt.frqPhz, opt.intOrd, 128, 256, opt.adjMod, CUDABackend())
+useGpu(opt::CPUKerOpt) = GPUKerOpt(opt.frqPhz, opt.intOrd, 128, 256, opt.adjMod, CUDABackend())
 
 """
     GPUKerOpt <: GlaKerOpt
@@ -270,7 +270,7 @@ arrTyp(::GPUKerOpt) = CuArray{ComplexF64}
 
 
 """
-    useCpu!(opt::GPUKerOpt)
+    useCpu(opt::GPUKerOpt)
 
 Switch to CPU computation for the given GPU kernel options object.
 
@@ -286,10 +286,10 @@ Creates a new `CPUKerOpt` object with the same phase factor and integration orde
   - Adjoint mode flag from `opt`
   - Default CPU backend
 """
-useCpu!(opt::GPUKerOpt) = CPUKerOpt(opt.frqPhz, opt.intOrd, opt.adjMod, CPU())
+useCpu(opt::GPUKerOpt) = CPUKerOpt(opt.frqPhz, opt.intOrd, opt.adjMod, CPU())
 
 """
-    useGpu!(opt::GPUKerOpt)
+    useGpu(opt::GPUKerOpt)
 
 Does nothing. This function is a placeholder for consistency with the CPU version.
 
@@ -299,7 +299,7 @@ Does nothing. This function is a placeholder for consistency with the CPU versio
 # Returns
 - `GPUKerOpt`: The same GPU kernel options object
 """
-useGpu!(opt::GPUKerOpt) = opt
+useGpu(opt::GPUKerOpt) = opt
 
 # Add serialization support for GlaKerOpt
 function Serialization.serialize(io::IO, opt::CPUKerOpt)
