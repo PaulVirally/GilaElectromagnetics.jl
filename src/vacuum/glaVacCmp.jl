@@ -143,7 +143,7 @@ Creates a new `GPUKerOpt` object with the same phase factor and integration orde
   - Adjoint mode flag from `opt`
   - Default CUDA backend
 """
-useGpu(opt::CPUKerOpt) = GPUKerOpt(opt.frqPhz, opt.intOrd, 128, 256, opt.adjMod, CUDABackend())
+useGpu(opt::CPUKerOpt) = GPUKerOpt(opt.frqPhz, opt.intOrd, (128, 2, 1), (1, 128, 256), opt.adjMod, CUDABackend())
 
 """
     GPUKerOpt <: GlaKerOpt
