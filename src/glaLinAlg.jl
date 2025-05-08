@@ -24,15 +24,10 @@ function Base.:*(opr::GlaOprVac, innVec::AbstractArray{ComplexF64, 4})
     end
     return egoOpr!(opr.mem, deepcopy(innVec))
 end
-function Base.:*(opr::GlaOprVac, innVec::AbstractArray{ComplexF64})
+function Base.:*(opr::GlaOprVac, innVec::AbstractVector{ComplexF64})
     innVecArr = reshape(innVec, glaSze(opr, 2))
     outVec = opr * innVecArr
-    if prod(size(innVec)) == prod(glaSze(opr, 1))
-        return reshape(outVec, size(innVec))
-    elseif ndims(innVec) == 1
-        return vec(outVec)
-    end
-    return reshape(outVec, glaSze(opr, 1))
+    return vec(outVec)
 end
 
 function Base.:*(opr::InvSctOpr, inp::AbstractArray{ComplexF64, 4})
