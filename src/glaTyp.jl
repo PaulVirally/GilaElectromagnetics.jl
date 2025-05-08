@@ -24,10 +24,6 @@ abstract type GlaSlv end
 Abstract base type for all operators in the Gila package. All concrete operator types
 must subtype this type and implement the AbstractMatrix interface.
 """
-abstract type AbstractGlaOpr end
-
-# Make AbstractGlaOpr compatible with AbstractMatrix
-Base.promote_rule(::Type{<:AbstractGlaOpr}, ::Type{<:AbstractMatrix}) = AbstractMatrix
-Base.promote_rule(::Type{<:AbstractMatrix}, ::Type{<:AbstractGlaOpr}) = AbstractMatrix
+abstract type AbstractGlaOpr <: AbstractMatrix{ComplexF64} end
 
 end # module 
