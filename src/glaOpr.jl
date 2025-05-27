@@ -29,7 +29,7 @@ import ..GilaVacuum: useCpu!, useGpu!
 
 export GlaOprVac, InvSctOpr, SctOpr, GlaOpr
 export VacuumGreensOperator, InverseScatteringOperator, ScatteringOperator, GreensOperator
-export isadjoint, isselfoperator, isexternaloperator, adjoint!, glaSze
+export isadjoint, isselfoperator, isexternaloperator, adjoint!, glaSze, slv
 
 """
     GlaOprVac
@@ -320,6 +320,132 @@ function useGpu!(opr::GlaOpr)
     useGpu!(opr.sctOpr)
     return opr
 end
+
+GilaVacuum.arrTyp(opr::GlaOprVac) = arrTyp(opr.mem.cmpInf)
+GilaVacuum.arrTyp(opr::InvSctOpr) = arrTyp(opr.oprVac)
+GilaVacuum.arrTyp(opr::SctOpr) = arrTyp(opr.invSctOpr)
+GilaVacuum.arrTyp(opr::GlaOpr) = arrTyp(opr.sctOpr)
+
+"""
+    isadjoint(opr::GlaOprVac)
+
+Checks if the operator is the adjoint of the Green's operator.
+
+# Arguments
+- `opr::GlaOprVac`: The operator to check.
+
+# Returns
+- `true` if the operator is the adjoint, `false` otherwise.
+"""
+isadjoint(opr::GlaOprVac) = opr.mem.cmpInf.adjMod
+
+"""
+    isadjoint(opr::InvSctOpr)
+
+Checks if the inverse scattering operator is the adjoint of its original form.
+
+# Arguments
+- `opr::InvSctOpr`: The operator to check.
+
+# Returns
+- `true` if the operator is the adjoint, `false` otherwise.
+"""
+isadjoint(opr::InvSctOpr) = isadjoint(opr.oprVac)
+
+"""
+    isadjoint(opr::SctOpr)
+
+Checks if the scattering operator is the adjoint of its original form.
+
+# Arguments
+- `opr::SctOpr`: The operator to check.
+
+# Returns
+- `true` if the operator is the adjoint, `false` otherwise.
+"""
+isadjoint(opr::SctOpr) = isadjoint(opr.invSctOpr)
+
+"""
+    isadjoint(opr::GlaOpr)
+
+Checks if the full Green's function operator is the adjoint of its original form.
+
+# Arguments
+- `opr::GlaOpr`: The operator to check.
+
+# Returns
+- `true` if the operator is the adjoint, `false` otherwise.
+"""
+isadjoint(opr::GlaOpr) = isadjoint(opr.sctOpr)
+
+"""
+    isselfoperator(opr::GlaOprVac)
+
+Checks if the operator is a self Green's operator.
+
+# Arguments
+- `opr::GlaOprVac`: The operator to check.
+
+# Returns
+- `true` if the operator is a self Green's operator, `false` otherwise.
+"""
+isselfoperator(opr::GlaOprVac) = opr.mem.srcVol == opr.mem.trgVol
+
+"""
+    isexternaloperator(opr::GlaOprVac)
+
+Checks if the operator is an external Green's operator.
+
+# Arguments
+- `opr::GlaOprVac`: The operator to check.
+
+# Returns
+- `true` if the operator is an external Green's operator, `false` otherwise.
+"""
+isexternaloperator(opr::GlaOprVac) = !isselfoperator(opr)
+
+"""
+    slv(opr::AbstractGlaOpr)
+
+Returns the solver associated with the operator.
+
+# Arguments
+- `opr::AbstractGlaOpr`: The operator for which to get the solver.
+
+# Returns
+- The solver used by the operator, which is always a `GlaSlv` instance.
+"""
+slv(::GlaOprVac) = GilaSolvers.BiCGStabSolver() # Default solver
+slv(opr::InvSctOpr) = slv(opr.oprVac)
+slv(opr::SctOpr) = opr.slv
+slv(opr::GlaOpr) = opr.sctOpr.slv
+
+_strKnd(opr::GlaOprVac) = "G₀"
+_strKnd(opr::InvSctOpr) = "(I - XG₀)"
+_strKnd(opr::SctOpr) = "(I - XG₀)⁻¹"
+_strKnd(opr::GlaOpr) = "G₀(I - XG₀)⁻¹"
+
+function Base.show(io::IO, opr::AbstractGlaOpr)
+    if isadjoint(opr)
+        print(io, "Adjoint ")
+    end
+    if isselfoperator(opr)
+        print(io, "Self ")
+    else
+        print(io, "External ")
+    end
+    print(io, _strKnd(opr))
+    print(io, " for ")
+    if isselfoperator(opr)
+        print(io, "a $(eltype(opr)) (" * join(opr.mem.srcVol.cel, "×") * ") volume ")
+        print(io, "of size (" * join(opr.mem.srcVol.scl, "×") * ")λ")
+    else
+        print(io, "$(eltype(opr)) (" * join(opr.mem.srcVol.cel, "×") * ") -> (" * join(opr.mem.trgVol.cel, "×") * ") volumes ")
+        print(io, "of sizes (" * join(opr.mem.srcVol.scl, "×") * ")λ -> (" * join(opr.mem.trgVol.scl, "×") * ")λ ")
+        print(io, "with separation (" * join(opr.mem.trgVol.org .- opr.mem.srcVol.org, ", ") * ")λ")
+    end
+end
+Base.show(io::IO, ::MIME"text/plain", opr::AbstractGlaOpr) = show(io, opr)
 
 include("glaLinAlg.jl")
 
