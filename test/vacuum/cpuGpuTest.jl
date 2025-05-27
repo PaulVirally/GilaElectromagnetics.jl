@@ -75,20 +75,21 @@ end
 
     # Make sure the CPU and GPU computations are consistent
     cpuOut = egoOpr!(oprMemCpu, deepcopy(cpuVec))
-    gpuOut = egoOpr!(oprMemGpu, gpuVec)
+    gpuOut = egoOpr!(oprMemGpu, deepcopy(gpuVec))
     @test cpuOut ≈ Array(gpuOut)
 
     # Test GPU to CPU conversion
     useCpu!(oprMemGpu)
     useCpu!(oprMemCpu) # Should be a no-op
     cpuOut = egoOpr!(oprMemCpu, deepcopy(cpuVec))
-    gpuOut = egoOpr!(oprMemGpu, deepcopy(gpuVec))
-    @test cpuOut ≈ Array(gpuOut)
+    gpuOut = egoOpr!(oprMemGpu, deepcopy(cpuVec))
+    @test cpuOut ≈ gpuOut
 
     # Test CPU to GPU conversion
     useGpu!(oprMemCpu)
     useGpu!(oprMemGpu) # Should be a no-op
-    cpuOut = egoOpr!(oprMemCpu, deepcopy(cpuVec))
+    cpuOut = egoOpr!(oprMemCpu, deepcopy(gpuVec))
     gpuOut = egoOpr!(oprMemGpu, deepcopy(gpuVec))
-    @test cpuOut ≈ Array(gpuOut)
+    @test cpuOut ≈ gpuOut
+
 end
