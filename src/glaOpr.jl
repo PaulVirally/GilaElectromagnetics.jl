@@ -327,69 +327,36 @@ GilaVacuum.arrTyp(opr::SctOpr) = arrTyp(opr.invSctOpr)
 GilaVacuum.arrTyp(opr::GlaOpr) = arrTyp(opr.sctOpr)
 
 """
-    isadjoint(opr::GlaOprVac)
+    isadjoint(opr::AbstractGlaOpr)
 
 Checks if the operator is the adjoint of the Green's operator.
 
 # Arguments
-- `opr::GlaOprVac`: The operator to check.
+- `opr::AbstractGlaOpr`: The operator to check.
 
 # Returns
 - `true` if the operator is the adjoint, `false` otherwise.
 """
 isadjoint(opr::GlaOprVac) = opr.mem.cmpInf.adjMod
-
-"""
-    isadjoint(opr::InvSctOpr)
-
-Checks if the inverse scattering operator is the adjoint of its original form.
-
-# Arguments
-- `opr::InvSctOpr`: The operator to check.
-
-# Returns
-- `true` if the operator is the adjoint, `false` otherwise.
-"""
 isadjoint(opr::InvSctOpr) = isadjoint(opr.oprVac)
-
-"""
-    isadjoint(opr::SctOpr)
-
-Checks if the scattering operator is the adjoint of its original form.
-
-# Arguments
-- `opr::SctOpr`: The operator to check.
-
-# Returns
-- `true` if the operator is the adjoint, `false` otherwise.
-"""
 isadjoint(opr::SctOpr) = isadjoint(opr.invSctOpr)
-
-"""
-    isadjoint(opr::GlaOpr)
-
-Checks if the full Green's function operator is the adjoint of its original form.
-
-# Arguments
-- `opr::GlaOpr`: The operator to check.
-
-# Returns
-- `true` if the operator is the adjoint, `false` otherwise.
-"""
 isadjoint(opr::GlaOpr) = isadjoint(opr.sctOpr)
 
 """
-    isselfoperator(opr::GlaOprVac)
+    isselfoperator(opr::AbstractGlaOpr)
 
 Checks if the operator is a self Green's operator.
 
 # Arguments
-- `opr::GlaOprVac`: The operator to check.
+- `opr::AbstractGlaOpr`: The operator to check.
 
 # Returns
 - `true` if the operator is a self Green's operator, `false` otherwise.
 """
 isselfoperator(opr::GlaOprVac) = opr.mem.srcVol == opr.mem.trgVol
+isselfoperator(opr::InvSctOpr) = isselfoperator(opr.oprVac)
+isselfoperator(opr::SctOpr) = isselfoperator(opr.invSctOpr)
+isselfoperator(opr::GlaOpr) = isselfoperator(opr.sctOpr)
 
 """
     isexternaloperator(opr::GlaOprVac)
@@ -403,6 +370,9 @@ Checks if the operator is an external Green's operator.
 - `true` if the operator is an external Green's operator, `false` otherwise.
 """
 isexternaloperator(opr::GlaOprVac) = !isselfoperator(opr)
+isexternaloperator(opr::InvSctOpr) = isexternaloperator(opr.oprVac)
+isexternaloperator(opr::SctOpr) = isexternaloperator(opr.invSctOpr)
+isexternaloperator(opr::GlaOpr) = isexternaloperator(opr.sctOpr)
 
 """
     slv(opr::AbstractGlaOpr)
@@ -425,6 +395,15 @@ _strKnd(opr::InvSctOpr) = "(I - XG₀)"
 _strKnd(opr::SctOpr) = "(I - XG₀)⁻¹"
 _strKnd(opr::GlaOpr) = "G₀(I - XG₀)⁻¹"
 
+_srcVol(opr::GlaOprVac) = opr.mem.srcVol
+_srcVol(opr::InvSctOpr) = _srcVol(opr.oprVac)
+_srcVol(opr::SctOpr) = _srcVol(opr.invSctOpr)
+_srcVol(opr::GlaOpr) = _srcVol(opr.sctOpr)
+_trgVol(opr::GlaOprVac) = opr.mem.trgVol
+_trgVol(opr::InvSctOpr) = _trgVol(opr.oprVac)
+_trgVol(opr::SctOpr) = _trgVol(opr.invSctOpr)
+_trgVol(opr::GlaOpr) = _trgVol(opr.sctOpr)
+
 function Base.show(io::IO, opr::AbstractGlaOpr)
     if isadjoint(opr)
         print(io, "Adjoint ")
@@ -437,12 +416,12 @@ function Base.show(io::IO, opr::AbstractGlaOpr)
     print(io, _strKnd(opr))
     print(io, " for ")
     if isselfoperator(opr)
-        print(io, "a $(eltype(opr)) (" * join(opr.mem.srcVol.cel, "×") * ") volume ")
-        print(io, "of size (" * join(opr.mem.srcVol.scl, "×") * ")λ")
+        print(io, "a $(eltype(opr)) (" * join(_srcVol(opr).cel, "×") * ") volume ")
+        print(io, "of size (" * join(_srcVol(opr).scl, "×") * ")λ")
     else
-        print(io, "$(eltype(opr)) (" * join(opr.mem.srcVol.cel, "×") * ") -> (" * join(opr.mem.trgVol.cel, "×") * ") volumes ")
-        print(io, "of sizes (" * join(opr.mem.srcVol.scl, "×") * ")λ -> (" * join(opr.mem.trgVol.scl, "×") * ")λ ")
-        print(io, "with separation (" * join(opr.mem.trgVol.org .- opr.mem.srcVol.org, ", ") * ")λ")
+        print(io, "$(eltype(opr)) (" * join(_srcVol(opr).cel, "×") * ") -> (" * join(_trgVol(opr).cel, "×") * ") volumes ")
+        print(io, "of sizes (" * join(_srcVol(opr).scl, "×") * ")λ -> (" * join(_trgVol(opr).scl, "×") * ")λ ")
+        print(io, "with separation (" * join(_trgVol(opr).org .- _srcVol(opr).org, ", ") * ")λ")
     end
 end
 Base.show(io::IO, ::MIME"text/plain", opr::AbstractGlaOpr) = show(io, opr)
