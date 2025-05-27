@@ -267,15 +267,15 @@ end
         # Test CPU to GPU conversion
         useGpu!(cpuOpr)
         useGpu!(gpuOpr) # Should be a no-op
-        cpuOut = cpuOpr * vecOnes
+        cpuOut = cpuOpr * vecOnesGpu
         gpuOut = gpuOpr * vecOnesGpu
-        @test cpuOut ≈ Array(gpuOut)
+        @test cpuOut ≈ gpuOut
 
         # Test GPU to CPU conversion
         useCpu!(gpuOpr)
         useCpu!(cpuOpr) # Should be a no-op
         cpuOut = cpuOpr * vecOnes
-        gpuOut = gpuOpr * vecOnesGpu
-        @test cpuOut ≈ Array(gpuOut)
+        gpuOut = gpuOpr * vecOnes
+        @test cpuOut ≈ gpuOut
     end
 end
