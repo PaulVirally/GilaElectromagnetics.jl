@@ -121,7 +121,7 @@ function Base.:*(opr::InvSctOpr, inp::AbstractVector{ComplexF64})
 end
 Base.:*(opr::SctOpr, inp::AbstractArray{ComplexF64, 4}) = reshape(solve(opr.invSctOpr, vec(inp), opr.slv), size(inp))
 Base.:*(opr::SctOpr, inp::AbstractVector{ComplexF64}) = solve(opr.invSctOpr, inp, opr.slv)
-function Base.:*(opr::GlaOpr, inp::AbstractArray{ComplexF64})
+function Base.:*(opr::GlaOpr, inp::Union{AbstractVector{ComplexF64}, AbstractArray{ComplexF64, 4}})
     # Compute the matrix-vector product G₀(I - XG₀)⁻¹ * inp
     if isadjoint(opr)
         return opr.sctOpr * (opr.sctOpr.invSctOpr.oprVac * inp)
