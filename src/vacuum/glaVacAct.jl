@@ -269,11 +269,6 @@ function mulBrn!(mixInf::GlaExtInf, bId::Integer, prdVec::AbstractArray{ComplexF
                      symSgn[2,divItr + 1] * symSgn[3,divItr + 1]]))
                 # perform Hadamard product
                 krn = mulKer!(bckEnd(cmpInf))
-                # y = G̃₀x; 
-                # y = prdVec, G̃₀ = vecMod, x = orgVec
-                @show size(prdVec)
-                @show size(vecMod)
-                @show size(orgVec)
                 krn(view(prdVec, vecRng[1, divItr + 1], vecRng[2, divItr + 1], vecRng[3, divItr + 1], :),
                     view(vecMod, modRng[1, divItr + 1], modRng[2, divItr + 1], modRng[3, divItr + 1], :),
                     view(orgVec, vecRng[1, divItr + 1], vecRng[2, divItr + 1], vecRng[3, divItr + 1], :),
