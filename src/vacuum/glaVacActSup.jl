@@ -92,8 +92,8 @@ function sptBrn!(prgVecEve::AbstractArray{ComplexF64,5}, prgVecOdd::AbstractArra
     ovrOff  = ntuple(i-> i==dirSpt ? brnSze[dirSpt] : 0, 3)
 
     # Zero the progeny vectors
-    fill!(prgVecEve, 0.0+0.0im)
-    fill!(prgVecOdd, 0.0+0.0im)
+    fill!(prgVecEve, zero(eltype(prgVecEve)))
+    fill!(prgVecOdd, zero(eltype(prgVecOdd)))
 
     # Launch one kernel per (par,dir) over the entire prgSze
     ker = sptBrnExt!(bckEnd(cmpInf))
@@ -200,32 +200,6 @@ end
 #=
 generalized host merge allowing for different output size
 =#
-function mrgBrn!(mrgVec::AbstractArray{ComplexF64, 5}, mrgDir::Integer, phzVec::AbstractVector{ComplexF64}, eveVec::AbstractArray{ComplexF64, 5}, oddVec::AbstractArray{ComplexF64, 5})
-	# size of current and merged vectors
-	mrgSze = size(mrgVec)
-	curSze = size(eveVec)
-	# range for top half of merge vector
-	topRng = ntuple(x -> x == mrgDir ? (1:min(mrgSze[x], curSze[x])) : 
-		(1:mrgSze[x]), 3)
-	# range for bottom half of merge vector
-	botRng = ntuple(x -> x == mrgDir ? 
-		(1:(mrgSze[x] - getproperty(topRng[x], :stop))) : (1:mrgSze[x]), 3)
-	# offset for merge vector
-	offSet = ntuple(x -> x == mrgDir ? 
-		(getproperty(botRng[x], :stop) > 0 ? 
-			getproperty(topRng[x], :stop) : 0) : 0, 5)
-	# merge top range
-    itr = CartesianIndices((topRng..., 1:3, 1:mrgSze[5]))
-    phzItr = map(itr -> itr[mrgDir], itr)
-    mrgVec[itr] .= 0.5 * (eveVec[itr] + conj(phzVec[phzItr]) .* oddVec[itr])
-	# check if merge vector is filled
-    itr = CartesianIndices((botRng..., 1:3, 1:mrgSze[5]))
-    phzItr = map(itr -> itr[mrgDir], itr)
-    mrgItr = map(itr -> itr + CartesianIndex(offSet), itr)
-    @. mrgVec[mrgItr] = 0.5 * (eveVec[itr] - conj(phzVec[phzItr]) * oddVec[itr])
-    memCln!(eveVec, oddVec)
-	return nothing
-end
 function mrgBrn!(mrgVec::AbstractArray{ComplexF64,5}, mrgDir::Integer, parNumTrg::Integer, phzVec::AbstractVector{ComplexF64}, eveVec::AbstractArray{ComplexF64,5}, oddVec::AbstractArray{ComplexF64,5}, cmpInf::GlaKerOpt)
     # 3D sizes
     mrgSze3 = size(mrgVec)[1:3]
