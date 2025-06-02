@@ -48,13 +48,7 @@ function egoBrn!(egoMem::GlaVacOprMem, lvl::Integer, bId::Integer, actVec::Abstr
     if lvl > 0
         # forward FFT
         # possibility of changing vector size accounted for in FFT plans
-        if isadjoint(egoMem)
-            egoMem.adjFftPlnFwd[lvl] * orgVec
-        else
-            egoMem.fftPlnFwd[lvl] * orgVec
-        end
-        # wait for completion of FFT
-        sncGpu(cmpInf)
+        fwdFFT!(egoMem, lvl, orgVec, cmpInf)
     end 
     # split branch
     if lvl < length(egoMem.dimInf)  
@@ -123,12 +117,7 @@ function egoBrn!(egoMem::GlaVacOprMem, lvl::Integer, bId::Integer, actVec::Abstr
     if lvl > 0
         # inverse FFT
         # possibility of changing vector size accounted for in FFT plans
-        if isadjoint(egoMem)
-            egoMem.adjFftPlnRev[lvl] * retVec
-        else
-            egoMem.fftPlnRev[lvl] * retVec
-        end
-        sncGpu(cmpInf)
+        invFFT!(egoMem, lvl, retVec, cmpInf)
     end
     # terminate task and return control to previous level 
     sncGpu(cmpInf)
@@ -142,6 +131,28 @@ function egoBrn!(egoMem::GlaVacOprMem, lvl::Integer, bId::Integer, actVec::Abstr
         end
     end
     return retVec
+end
+
+function fwdFFT!(egoMem::GlaVacOprMem, lvl::Int, actVec::AbstractArray{ComplexF64}, cmpInf::GlaKerOpt)
+    # forward FFT
+    if isadjoint(egoMem)
+        egoMem.adjFftPlnFwd[lvl] * actVec
+    else
+        egoMem.fftPlnFwd[lvl] * actVec
+    end
+    # wait for completion of FFT
+    sncGpu(cmpInf)
+end
+
+function invFFT!(egoMem::GlaVacOprMem, lvl::Int, actVec::AbstractArray{ComplexF64}, cmpInf::GlaKerOpt)
+    # inverse FFT
+    if isadjoint(egoMem)
+        egoMem.adjFftPlnRev[lvl] * actVec
+    else
+        egoMem.fftPlnRev[lvl] * actVec
+    end
+    # wait for completion of FFT
+    sncGpu(cmpInf)
 end
 
 function egoBrnExe!(egoMem::GlaVacOprMem, prgVecEve::AbstractArray{ComplexF64}, prgVecOdd::AbstractArray{ComplexF64}, lvl::Int, bId::Int, cmpInf::CPUKerOpt)
@@ -258,6 +269,11 @@ function mulBrn!(mixInf::GlaExtInf, bId::Integer, prdVec::AbstractArray{ComplexF
                      symSgn[2,divItr + 1] * symSgn[3,divItr + 1]]))
                 # perform Hadamard product
                 krn = mulKer!(bckEnd(cmpInf))
+                # y = G̃₀x; 
+                # y = prdVec, G̃₀ = vecMod, x = orgVec
+                @show size(prdVec)
+                @show size(vecMod)
+                @show size(orgVec)
                 krn(view(prdVec, vecRng[1, divItr + 1], vecRng[2, divItr + 1], vecRng[3, divItr + 1], :),
                     view(vecMod, modRng[1, divItr + 1], modRng[2, divItr + 1], modRng[3, divItr + 1], :),
                     view(orgVec, vecRng[1, divItr + 1], vecRng[2, divItr + 1], vecRng[3, divItr + 1], :),
