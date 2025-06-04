@@ -160,7 +160,7 @@ function InvSctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64
     susTen = rszSus(sus, srcVol.cel)
     # Make sure sus has the right size
     if size(sus) != srcVol.cel
-        throw(ArgumentError("Susceptibility tensor dimensions $(size(sus)) do not match volume dimensions $cel"))
+        throw(ArgumentError("Susceptibility tensor dimensions $(size(sus)) do not match volume dimensions $(srcVol.cel)"))
     end
     
     return InvSctOpr(oprVac, susTen)
