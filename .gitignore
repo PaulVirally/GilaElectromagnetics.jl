@@ -17,3 +17,6 @@ todo.jl
 
 # Benchmark data
 benchmark/*.jld2
+
+# Profiling
+statprof
