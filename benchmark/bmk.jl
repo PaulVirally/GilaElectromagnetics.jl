@@ -38,7 +38,7 @@ for volDim in volSiz
     volObj = GlaVol(volDim, sclArr, (0//1, 0//1, 0//1))
 
     # Benchmark creation of the operator
-    trialCpuCrt = @benchmark GlaOprVac($volObj)
+    trialCpuCrt = @benchmark GlaOprVac($volObj) samples=5 seconds=10000 evals=1 gcsample=true
     crtStatsCpu[volDim] = trialCpuCrt
 
     # Use the created operator for the application benchmark
@@ -56,7 +56,7 @@ if CUDA.functional()
         volObj = GlaVol(volDim, sclArr, (0//1, 0//1, 0//1))
 
         # Benchmark creation of the operator
-        trialGpuCrt = @benchmark GlaOprVac($volObj; useGpu=true)
+        trialGpuCrt = @benchmark GlaOprVac($volObj; useGpu=true) samples=5 seconds=10000 evals=1 gcsample=true
         crtStatsGpu[volDim] = trialGpuCrt
 
         # Use the created operator for the application benchmark
