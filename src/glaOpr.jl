@@ -137,7 +137,46 @@ This constructor creates a self-interaction Green's function operator where the 
 GlaOprVac(vol::GlaVol; useGpu::Bool=false) = GlaOprVac(vol, vol; useGpu=useGpu)
 
 """
-    InvSctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=false)
+    GlaOprVac(opr::InvSctOpr)
+
+Construct a vacuum Green's function operator from an inverse scattering operator.
+
+# Arguments
+- `opr::InvSctOpr`: The inverse scattering operator to convert into a vacuum Green's function operator
+
+# Returns
+- `GlaOprVac`: The vacuum Green's function operator
+"""
+GlaOprVac(opr::InvSctOpr) = opr.oprVac
+
+"""
+    GlaOprVac(opr::SctOpr)
+
+Construct a vacuum Green's function operator from a scattering operator.
+
+# Arguments
+- `opr::SctOpr`: The scattering operator to convert into a vacuum Green's function operator
+
+# Returns
+- `GlaOprVac`: The vacuum Green's function operator
+"""
+GlaOprVac(opr::SctOpr) = GlaOprVac(opr.invSctOpr)
+
+"""
+    GlaOprVac(opr::GlaOpr)
+
+Construct a vacuum Green's function operator from a full Green's function operator.
+
+# Arguments
+- `opr::GlaOpr`: The full Green's function operator to convert into a vacuum Green's function operator
+
+# Returns
+- `GlaOprVac`: The vacuum Green's function operator
+"""
+GlaOprVac(opr::GlaOpr) = GlaOprVac(opr.sctOpr)
+
+"""
+    InvSctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray))
 
 Construct an inverse scattering operator for external interactions between different volumes.
 
@@ -145,43 +184,69 @@ Construct an inverse scattering operator for external interactions between diffe
 - `trgVol::GlaVol`: The target volume where the field will be computed
 - `srcVol::GlaVol`: The source volume containing the sources
 - `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
-- `useGpu::Bool=false`: Whether to use GPU computation
+- `useGpu::Bool=false`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 
 # Returns
 - `InvSctOpr`: The inverse scattering operator
 
 This constructor creates an external inverse scattering operator that describes how electromagnetic fields interact with a material medium between distinct regions. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the source volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the source volume.
 """
-function InvSctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=false)
+function InvSctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray))
     # Create the vacuum operator
     oprVac = GlaOprVac(trgVol, srcVol; useGpu=useGpu)
     
     # Reshape susceptibility if needed and validate size
-    susTen = rszSus(sus, srcVol.cel)
-    # Make sure sus has the right size
     if size(sus) != srcVol.cel
         throw(ArgumentError("Susceptibility tensor dimensions $(size(sus)) do not match volume dimensions $(srcVol.cel)"))
     end
+    susTen = rszSus(sus, srcVol.cel)
     
     return InvSctOpr(oprVac, susTen)
 end
 
 """
-    InvSctOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=false)
+    InvSctOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray))
 
 Construct an inverse scattering operator for self-interactions on a single volume.
 
 # Arguments
 - `vol::GlaVol`: The volume to compute the self-interaction for
 - `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
-- `useGpu::Bool=false`: Whether to use GPU computation
+- `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 
 # Returns
 - `InvSctOpr`: The inverse scattering operator
 
 This constructor creates a self-interaction inverse scattering operator that describes how electromagnetic fields interact with a material medium within a single volume. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the volume.
 """
-InvSctOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=false) = InvSctOpr(vol, vol, sus; useGpu=useGpu)
+InvSctOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray)) = InvSctOpr(vol, vol, sus; useGpu=useGpu)
+
+"""
+
+    InvSctOpr(sctOpr::SctOpr)
+
+Construct an inverse scattering operator from a scattering operator.
+
+# Arguments
+- `sctOpr::SctOpr`: The scattering operator to convert into an inverse scattering operator
+
+# Returns
+- `InvSctOpr`: The inverse scattering operator
+"""
+InvSctOpr(opr::SctOpr) = sctOpr.invSctOpt
+
+"""
+    InvSctOpr(opr::GlaOpr)
+
+Construct an inverse scattering operator from a full Green's function operator.
+
+# Arguments
+- `opr::GlaOpr`: The full Green's function operator to convert into an inverse scattering operator
+
+# Returns
+- `InvSctOpr`: The inverse scattering operator
+"""
+InvSctOpr(opr::GlaOpr) = InvSctOpr(opr.sctOpr)
 
 # Reshape a flat susceptibility vector into a 3-tensor matching the volume dimensions.
 function rszSus(sus::AbstractArray{ComplexF64}, cel::NTuple{3,Integer})
@@ -198,7 +263,7 @@ function rszSus(sus::AbstractArray{ComplexF64}, cel::NTuple{3,Integer})
 end
 
 """
-    SctOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
+    SctOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
 
 Construct a scattering operator for self-interactions on a single volume.
 
@@ -207,17 +272,17 @@ This constructor creates a self-interaction scattering operator that describes h
 # Arguments
 - `vol::GlaVol`: The volume to compute the self-interaction for
 - `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
-- `useGpu::Bool=false`: Whether to use GPU computation
+- `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `SctOpr`: The scattering operator
 """
-SctOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver()) = 
+SctOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) = 
     SctOpr(vol, vol, sus; useGpu=useGpu, slv=slv)
 
 """
-    SctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
+    SctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
 
 Construct a scattering operator for external interactions between different volumes.
 
@@ -227,19 +292,57 @@ This constructor creates an external scattering operator that describes how elec
 - `trgVol::GlaVol`: The target volume where the field will be computed
 - `srcVol::GlaVol`: The source volume containing the sources
 - `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
-- `useGpu::Bool=false`: Whether to use GPU computation
+- `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `SctOpr`: The scattering operator
 """
-function SctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
+function SctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
     invSctOpr = InvSctOpr(trgVol, srcVol, sus; useGpu=useGpu)
     return SctOpr(invSctOpr, slv)
 end
 
 """
-    GlaOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
+    SctOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+
+Construct a scattering operator from a vacuum Green's function operator.
+
+This constructor creates a scattering operator that describes how electromagnetic fields interact with a material medium based on a given vacuum Green's function operator. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the source volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the source volume.
+
+# Arguments
+- `opr::GlaOprVac`: The vacuum Green's function operator to convert into a scattering operator
+- `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
+- `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
+- `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
+
+# Returns
+- `SctOpr`: The scattering operator
+"""
+function SctOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    # Reshape susceptibility if needed and validate size
+    if size(sus) != opr.mem.srcVol.cel
+        throw(ArgumentError("Susceptibility tensor dimensions $(size(sus)) do not match source volume dimensions $(opr.mem.srcVol.cel)"))
+    end
+    susTen = rszSus(sus, opr.mem.srcVol.cel)
+    return SctOpr(opr, susTen; useGpu=useGpu, slv=slv)
+end
+
+"""
+    SctOpr(opr::InvSctOpr)
+
+Construct a scattering operator from an inverse scattering operator.
+
+# Arguments
+- `opr::InvSctOpr`: The inverse scattering operator to convert into a scattering operator
+
+# Returns
+- `SctOpr`: The scattering operator
+"""
+SctOpr(opr::GlaOpr) = opr.sctOpr
+
+"""
+    GlaOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
 
 Construct a full Green's function operator for self-interactions on a single volume.
 
@@ -248,17 +351,17 @@ This constructor creates a self-interaction full Green's function operator that 
 # Arguments
 - `vol::GlaVol`: The volume to compute the self-interaction for
 - `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
-- `useGpu::Bool=false`: Whether to use GPU computation
+- `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `GlaOpr`: The full Green's function operator
 """
-GlaOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver()) = 
+GlaOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) = 
     GlaOpr(vol, vol, sus; useGpu=useGpu, slv=slv)
 
 """
-    GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
+    GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
 
 Construct a full Green's function operator for external interactions between different volumes.
 
@@ -268,16 +371,60 @@ This constructor creates an external full Green's function operator that combine
 - `trgVol::GlaVol`: The target volume where the field will be computed
 - `srcVol::GlaVol`: The source volume containing the sources
 - `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
-- `useGpu::Bool=false`: Whether to use GPU computation
+- `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `GlaOpr`: The full Green's function operator
 """
-function GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
+function GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
     sctOpr = SctOpr(trgVol, srcVol, sus; useGpu=useGpu, slv=slv)
     return GlaOpr(sctOpr)
 end
+
+"""
+    GlaOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+
+Construct a full Green's function operator from a vacuum Green's function operator.
+
+This constructor creates a full Green's function operator that combines the vacuum Green's function with the scattering operator to describe electromagnetic interactions in a material medium based on a given vacuum Green's function operator. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the source volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the source volume.
+
+# Arguments
+- `opr::GlaOprVac`: The vacuum Green's function operator to convert into a full Green's function operator
+- `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
+- `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
+- `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
+
+# Returns
+- `GlaOpr`: The full Green's function operator
+"""
+GlaOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) = GlaOpr(SctOpr(opr, sus; useGpu=useGpu, slv=slv))
+
+"""
+    GlaOpr(opr::InvSctOpr)
+
+Construct a full Green's function operator from an inverse scattering operator.
+
+# Arguments
+- `opr::InvSctOpr`: The inverse scattering operator to convert into a full Green's function operator
+
+# Returns
+- `GlaOpr`: The full Green's function operator
+"""
+GlaOpr(opr::InvSctOpr) = GlaOpr(SctOpr(opr))
+
+"""
+    GlaOpr(opr::SctOpr)
+
+Construct a full Green's function operator from a scattering operator.
+
+# Arguments
+- `opr::SctOpr`: The scattering operator to convert into a full Green's function operator
+
+# Returns
+- `GlaOpr`: The full Green's function operator
+"""
+GlaOpr(opr::SctOpr) = GlaOpr(opr.invSctOpr)
 
 function useCpu!(opr::GlaOprVac)
     useCpu!(opr.mem)
@@ -373,6 +520,61 @@ isexternaloperator(opr::GlaOprVac) = !isselfoperator(opr)
 isexternaloperator(opr::InvSctOpr) = isexternaloperator(opr.oprVac)
 isexternaloperator(opr::SctOpr) = isexternaloperator(opr.invSctOpr)
 isexternaloperator(opr::GlaOpr) = isexternaloperator(opr.sctOpr)
+
+"""
+    setSus!(opr::InvSctOpr, sus::AbstractArray{ComplexF64})
+
+Sets the susceptibility tensor for the inverse scattering operator.
+
+# Arguments
+- `opr::InvSctOpr`: The inverse scattering operator to modify.
+- `sus::AbstractArray{ComplexF64}`: The new susceptibility tensor, either as a flat vector or a 3-tensor.
+
+# Returns
+- The modified operator with the new susceptibility tensor set.
+"""
+setSus!(opr::InvSctOpr, sus::AbstractArray{ComplexF64}) = begin
+    # Reshape susceptibility if needed and validate size
+    if size(sus) != opr.oprVac.mem.srcVol.cel
+        throw(ArgumentError("Susceptibility tensor dimensions $(size(sus)) do not match source volume dimensions $(opr.oprVac.mem.srcVol.cel)"))
+    end
+    opr.sus = rszSus(sus, opr.oprVac.mem.srcVol.cel)
+    return opr
+end
+
+"""
+    setSus!(opr::SctOpr, sus::AbstractArray{ComplexF64})
+
+Sets the susceptibility tensor for the scattering operator.
+
+# Arguments
+- `opr::SctOpr`: The scattering operator to modify.
+- `sus::AbstractArray{ComplexF64}`: The new susceptibility tensor, either as a flat vector or a 3-tensor.
+
+# Returns
+- The modified operator with the new susceptibility tensor set.
+"""
+function setSus!(opr::SctOpr, sus::AbstractArray{ComplexF64})
+    setSus!(opr.invSctOpr, sus)
+    return opr
+end
+
+"""
+    setSus!(opr::GlaOpr, sus::AbstractArray{ComplexF64})
+
+Sets the susceptibility tensor for the full Green's function operator.
+
+# Arguments
+- `opr::GlaOpr`: The full Green's function operator to modify.
+- `sus::AbstractArray{ComplexF64}`: The new susceptibility tensor, either as a flat vector or a 3-tensor.
+
+# Returns
+- The modified operator with the new susceptibility tensor set.
+"""
+function setSus!(opr::GlaOpr, sus::AbstractArray{ComplexF64})
+    setSus!(opr.sctOpr, sus)
+    return opr
+end
 
 """
     slv(opr::AbstractGlaOpr)
