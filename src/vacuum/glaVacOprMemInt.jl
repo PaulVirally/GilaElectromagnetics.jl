@@ -35,35 +35,45 @@ The article cited above contains useful error comparison plots for the number
 evaluation points considered. 
 =#
 using LinearAlgebra
-using Cubature
+using StaticArrays
 #=
 Returns the scalar (Helmholtz) Green function. The separation dstMag is assumed 
 to be scaled by wavelength. 
 =#
-@inline function sclEgo(dstMag::AbstractFloat, frqPhz::T)::ComplexF64 where
-    T<:Union{ComplexF64,ComplexF32}
+@inline function sclEgo_(dstMag::Number, frqPhz::Number)
     return cis(2π * dstMag * frqPhz) / (4 * π * dstMag * frqPhz^2)
 end
+function sclEgo(dstMag::Number, frqPhz::ComplexF64)
+    if imag(frqPhz) == zero(real(typeof(frqPhz)))
+        return sclEgo_(dstMag, real(frqPhz))
+    end
+    return sclEgo_(dstMag, frqPhz)
+end
+sclEgo(dstMag::Number, frqPhz::Number) = sclEgo_(dstMag, frqPhz)
 #=
 Returns the scalar (Helmholtz) Green function with the singularity removed. The 
 separation distance dstMag is assumed to be scaled by the wavelength. The 
 function is used in the included glaIntSup.jl code to improve the convergence of
 all weakly singular integrals.
 =#
-@inline function sclEgoN(dstMag::AbstractFloat, frqPhz::T)::ComplexF64 where 
-    T<:Union{ComplexF64,ComplexF32}
+@inline function sclEgoN_(dstMag::Number, frqPhz::Number) 
     if dstMag > 1e-7
         return (cis(2π * dstMag * frqPhz) - 1) / 
         (4 * π * dstMag * frqPhz^2)
-    else
-        return ((im / frqPhz) - π * dstMag) / 2
     end
+    return ((im / frqPhz) - π * dstMag) / 2
 end
+function sclEgoN(dstMag::Number, frqPhz::ComplexF64)
+    if imag(frqPhz) == zero(real(typeof(frqPhz)))
+        return sclEgoN_(dstMag, real(frqPhz))
+    end
+    return sclEgoN_(dstMag, frqPhz)
+end
+sclEgoN(dstMag::Number, frqPhz::Number) = sclEgoN_(dstMag, frqPhz)
 #=
 Returns the three dimensional Euclidean norm of a vector. 
 =#
-@inline function dstMag(v1::AbstractFloat, v2::AbstractFloat, 
-    v3::AbstractFloat)::Float64
+@inline function dstMag(v1::T, v2::T, v3::T) where T <: AbstractFloat
     return sqrt(v1^2 + v2^2 + v3^2)
 end
 #=
@@ -74,10 +84,11 @@ positions. The cmpInf parameter determines the level of precision used for
 integral calculations. Namely, cmpInf.intOrd is used internally in all 
 weakly singular integral computations. 
 =#
-function wekS(scl::NTuple{3,Number}, glQud1::Array{<:AbstractFloat,2}, 
-    cmpInf::GlaKerOpt)::Array{ComplexF64,1}
+function wekS(scl::NTuple{3,Number}, glQud1::AbstractMatrix{<:AbstractFloat}, 
+    cmpInf::GlaKerOpt)
 
-    grdPts = Array{Float64}(undef, 3, 18)
+    # grdPts = Array{Float64}(undef, 3, 18)
+    grdPts = MMatrix{3, 18, Float64}(undef)
     # weak self integrals for the three characteristic faces of a cuboid 
     # dir = 1 -> xy face (z-nrm)   dir = 2 -> xz face (y-nrm) 
     # dir = 3 -> yz face (x-nrm)
@@ -92,8 +103,8 @@ end
 Weak self-integral of a particular face.
 =#
 function wekSDir(dir::Integer, scl::NTuple{3,Number}, 
-    grdPts::Array{<:AbstractFloat,2}, glQud1::Array{<:AbstractFloat,2}, 
-    cmpInf::GlaKerOpt)::ComplexF64
+    grdPts::AbstractMatrix{<:AbstractFloat}, glQud1::AbstractMatrix{<:AbstractFloat}, 
+    cmpInf::GlaKerOpt)
 
     wekGrdPts!(dir, scl, grdPts)
     return (((
@@ -122,8 +133,8 @@ end
 Head function for integration over edge adjacent square panels. See wekS for 
 input parameter descriptions. 
 =#
-function wekE(scl::NTuple{3,Number}, glQud1::Array{<:AbstractFloat,2}, 
-    cmpInf::GlaKerOpt)::Array{ComplexF64,1}
+function wekE(scl::NTuple{3,Number}, glQud1::AbstractMatrix{<:AbstractFloat}, 
+    cmpInf::GlaKerOpt)
     
     grdPts = Array{Float64,2}(undef, 3, 18)
     # labels are panelDir-panelDir-gridIncrement
@@ -153,7 +164,7 @@ function wekE(scl::NTuple{3,Number}, glQud1::Array{<:AbstractFloat,2},
         Float64(scl[1]), cmpInf)
     yzB = vals[4] + rSrfEdgCrn(Float64(scl[1]), Float64(scl[3]), 
         Float64(scl[2]), cmpInf)
-    return [xxY; xxZ; yyX; yyZ; zzX; zzY; (xyA + xyB) / 2.0; (xzA + xzB) / 2.0;
+    return @SVector [xxY; xxZ; yyX; yyZ; zzX; zzY; (xyA + xyB) / 2.0; (xzA + xzB) / 2.0;
     (yzA + yzB) / 2.0]
 end
 #= 
@@ -168,11 +179,11 @@ Weak edge integrals for a given face as specified by dir.
                           y-edge (++ gridZ) xx(z) xz(z)]
 =#
 function wekEDir(dir::Integer, scl::NTuple{3,Number}, 
-    grdPts::Array{<:AbstractFloat,2}, glQud1::Array{<:AbstractFloat,2}, 
-    cmpInf::GlaKerOpt)::Array{ComplexF64,1}
+    grdPts::AbstractMatrix{<:AbstractFloat}, glQud1::AbstractMatrix{<:AbstractFloat}, 
+    cmpInf::GlaKerOpt)
 
     wekGrdPts!(dir, scl, grdPts) 
-    return [wekEInt(hcat(grdPts[:,1], grdPts[:,2], grdPts[:,5],
+    return @SVector [wekEInt(hcat(grdPts[:,1], grdPts[:,2], grdPts[:,5],
     grdPts[:,2], grdPts[:,3], grdPts[:,5]), glQud1, cmpInf) +
     wekVInt(true, hcat(grdPts[:,1], grdPts[:,2], grdPts[:,5], 
     grdPts[:,3], grdPts[:,6], grdPts[:,5]), glQud1, cmpInf) +
@@ -209,10 +220,11 @@ end
 Head function returning integral values for the Ego function over vertex 
 adjacent square panels. See wekS for input parameter descriptions. 
 =#
-function wekV(scl::NTuple{3,Number}, glQud1::Array{<:AbstractFloat,2}, 
-    cmpInf::GlaKerOpt)::Array{ComplexF64,1}
+function wekV(scl::NTuple{3,Number}, glQud1::AbstractMatrix{<:AbstractFloat}, 
+    cmpInf::GlaKerOpt)
 
-    grdPts = Array{Float64,2}(undef,3,18)
+    # grdPts = Array{Float64,2}(undef,3,18)
+    grdPts = MMatrix{3, 18, Float64}(undef)
     # vertex integrals for x-normal face
     vals = wekVDir(3, scl, grdPts, glQud1, cmpInf)
     xxO = vals[1]
@@ -228,7 +240,7 @@ function wekV(scl::NTuple{3,Number}, glQud1::Array{<:AbstractFloat,2},
     zzO = vals[1]
     xzB = vals[2]
     yzB = vals[3]
-    return[xxO; yyO; zzO; (xyA + xyB) / 2.0; (xzA + xzB) / 2.0; 
+    return @SVector [xxO; yyO; zzO; (xyA + xyB) / 2.0; (xzA + xzB) / 2.0; 
     (yzA + yzB) / 2.0]
 end
 #= 
@@ -238,11 +250,11 @@ Weak edge integrals for a given face as specified by dir.
     dir = 3 -> x face -> [xx xy xz]
 =#
 function wekVDir(dir::Integer, scl::NTuple{3,Number}, 
-    grdPts::Array{<:AbstractFloat,2}, glQud1::Array{<:AbstractFloat,2}, 
-    cmpInf::GlaKerOpt)::Array{ComplexF64,1}
+    grdPts::AbstractMatrix{<:AbstractFloat}, glQud1::AbstractMatrix{<:AbstractFloat}, 
+    cmpInf::GlaKerOpt)
 
     wekGrdPts!(dir, scl, grdPts) 
-    return [wekVInt(false, hcat(grdPts[:,1], grdPts[:,2], grdPts[:,5], 
+    return @SVector [wekVInt(false, hcat(grdPts[:,1], grdPts[:,2], grdPts[:,5], 
     grdPts[:,5], grdPts[:,6], grdPts[:,9]), glQud1, cmpInf) +
     wekVInt(false, hcat(grdPts[:,1], grdPts[:,2], grdPts[:,5], 
     grdPts[:,5], grdPts[:,9], grdPts[:,8]), glQud1, cmpInf) +
@@ -270,21 +282,19 @@ end
 #=
 Generate all unique pairs of cube faces. 
 =#
-function facPar()::Array{Integer,2}
-
-    fPairs = Array{Integer,2}(undef, 36, 2)
+function facPar()
+    fPairs = Array{Integer,2}(undef, 2, 36)
     for i ∈ 1:6, j ∈ 1:6
         k = (i - 1) * 6 + j
-        fPairs[k,1] = i
-        fPairs[k,2] = j 
+        fPairs[1, k] = i
+        fPairs[2, k] = j 
     end
-    return fPairs
+    return SMatrix{2, 36}(fPairs)
 end
 #=
 Determine scaling factors for surface integrals.
 =#
-function srfScl(sclT::NTuple{3,Number}, 
-    sclS::NTuple{3,Number})::Array{Float64,1}
+function srfScl(sclT::NTuple{3,Number}, sclS::NTuple{3,Number})
 
     srcScl = 1.0
     trgScl = 1.0
@@ -304,7 +314,7 @@ function srfScl(sclT::NTuple{3,Number},
             srfScl[(srcFId - 1) * 6 + trgFId] = Float64(srcScl / trgScl)
         end
     end
-    return srfScl
+    return SVector{36}(srfScl)
 end
 #=
 Generate array of cuboid faces based from a characteristic size, l[]. 
@@ -312,7 +322,7 @@ L and U reference relative positions on the corresponding normal axis.
 Points are number in a counter-clockwise convention when viewing the 
 face from the exterior of the cube. 
 =#
-function cubFac(size::NTuple{3,Number})::Array{Float64,3}
+function cubFac(size::NTuple{3,Number})
     
     yzL = hcat([-size[1], -size[2], -size[3]], [-size[1], size[2], -size[3]], 
         [-size[1], size[2], size[3]], [-size[1], -size[2], size[3]]) ./ 2
@@ -326,7 +336,7 @@ function cubFac(size::NTuple{3,Number})::Array{Float64,3}
         [size[1], size[2], -size[3]], [-size[1], size[2], -size[3]]) ./ 2
     xyU = hcat([-size[1], -size[2], size[3]], [-size[1], size[2], size[3]], 
         [size[1], size[2], size[3]], [size[1], -size[2], size[3]]) ./ 2
-    return cat(yzL, yzU, xzL, xzU, xyL, xyU, dims = 3)
+    return SArray{Tuple{3,4,6}}(cat(yzL, yzU, xzL, xzU, xyL, xyU, dims = 3))
 end
 #=
 Determine a directional component, set by dir, of the separation vector for a 
@@ -334,27 +344,27 @@ pair points, as determined by ord, which may take on values between zero and
 one. The first pair of entries are coordinates in the source surface, the 
 second pair of entries are coordinates in the target surface. 
 =#
-@inline function cubVecAltAdp(dir::Integer, ordVec::Array{<:AbstractFloat,1}, 
-    fp::Integer, trgFaces::Array{<:AbstractFloat,3}, 
-    srcFaces::Array{<:AbstractFloat,3}, fPairs::Array{<:Integer,2})::Float64
-    
-    return (trgFaces[dir,1,fPairs[fp,1]] +
-        ordVec[3] * (trgFaces[dir,2,fPairs[fp,1]] - 
-            trgFaces[dir,1,fPairs[fp,1]]) +
-        ordVec[4] * (trgFaces[dir,4,fPairs[fp,1]] - 
-            trgFaces[dir,1,fPairs[fp,1]])) -
-    (srcFaces[dir,1,fPairs[fp,2]] +
-        ordVec[1] * (srcFaces[dir,2,fPairs[fp,2]] - 
-            srcFaces[dir,1,fPairs[fp,2]]) +
-        ordVec[2] * (srcFaces[dir,4,fPairs[fp,2]] - 
-            srcFaces[dir,1,fPairs[fp,2]]))
+@inline function cubVecAltAdp(dir::Integer, ordVec::AbstractVector{<:AbstractFloat}, 
+    fp::Integer, trgFaces::AbstractArray{<:AbstractFloat,3}, 
+    srcFaces::AbstractArray{<:AbstractFloat,3}, fPairs::AbstractMatrix{<:Integer})
+
+    srcPairs, trgPairs = fPairs[:, fp]
+    pst = trgFaces[dir, 1, srcPairs] + 
+        ordVec[3] * (trgFaces[dir, 2, srcPairs] - trgFaces[dir, 1, srcPairs]) +
+        ordVec[4] * (trgFaces[dir, 4, srcPairs] - trgFaces[dir, 1, srcPairs]) 
+
+    ngt = srcFaces[dir, 1, trgPairs] +
+        ordVec[1] * (srcFaces[dir, 2, trgPairs] - srcFaces[dir, 1, trgPairs]) +
+        ordVec[2] * (srcFaces[dir, 4, trgPairs] - srcFaces[dir, 1, trgPairs])
+
+    return pst - ngt
 end
 #=
 Create grid point system for calculation for calculation of weakly singular 
 integrals. 
 =#
 function wekGrdPts!(dir::Integer, scl::NTuple{3,Number}, 
-    grdPts::Array{<:AbstractFloat,2})::Nothing
+    grdPts::AbstractMatrix{<:AbstractFloat})
 
     if dir == 1
         # standard orientation
@@ -374,24 +384,24 @@ function wekGrdPts!(dir::Integer, scl::NTuple{3,Number},
     else
         error("Invalid direction selection.")
     end
-    grdPts[:,1] = [0.0;             0.0;            0.0]
-    grdPts[:,2] = [gridX;           0.0;            0.0]
-    grdPts[:,3] = [2.0 * gridX;     0.0;            0.0]
-    grdPts[:,4] = [0.0;             gridY;          0.0]
-    grdPts[:,5] = [gridX;           gridY;          0.0]
-    grdPts[:,6] = [2.0 * gridX;     gridY;          0.0]
-    grdPts[:,7] = [0.0;             2.0 * gridY;    0.0]
-    grdPts[:,8] = [gridX;           2.0 * gridY;    0.0]
-    grdPts[:,9] = [2.0 * gridX;     2.0 * gridY;    0.0]
-    grdPts[:,10] = [0.0;            0.0;            gridZ]
-    grdPts[:,11] = [gridX;          0.0;            gridZ]
-    grdPts[:,12] = [2.0 * gridX;    0.0;            gridZ]
-    grdPts[:,13] = [0.0;            gridY;          gridZ]
-    grdPts[:,14] = [gridX;          gridY;          gridZ]
-    grdPts[:,15] = [2.0 * gridX;    gridY;          gridZ]
-    grdPts[:,16] = [0.0;            2.0 * gridY;    gridZ]
-    grdPts[:,17] = [gridX;          2.0 * gridY;    gridZ]
-    grdPts[:,18] = [2.0 * gridX;    2.0 * gridY;    gridZ]
+    grdPts[:,1] .=  @SVector [0.0;             0.0;            0.0]
+    grdPts[:,2] .=  @SVector [gridX;           0.0;            0.0]
+    grdPts[:,3] .=  @SVector [2.0 * gridX;     0.0;            0.0]
+    grdPts[:,4] .=  @SVector [0.0;             gridY;          0.0]
+    grdPts[:,5] .=  @SVector [gridX;           gridY;          0.0]
+    grdPts[:,6] .=  @SVector [2.0 * gridX;     gridY;          0.0]
+    grdPts[:,7] .=  @SVector [0.0;             2.0 * gridY;    0.0]
+    grdPts[:,8] .=  @SVector [gridX;           2.0 * gridY;    0.0]
+    grdPts[:,9] .=  @SVector [2.0 * gridX;     2.0 * gridY;    0.0]
+    grdPts[:,10] .= @SVector [0.0;            0.0;            gridZ]
+    grdPts[:,11] .= @SVector [gridX;          0.0;            gridZ]
+    grdPts[:,12] .= @SVector [2.0 * gridX;    0.0;            gridZ]
+    grdPts[:,13] .= @SVector [0.0;            gridY;          gridZ]
+    grdPts[:,14] .= @SVector [gridX;          gridY;          gridZ]
+    grdPts[:,15] .= @SVector [2.0 * gridX;    gridY;          gridZ]
+    grdPts[:,16] .= @SVector [0.0;            2.0 * gridY;    gridZ]
+    grdPts[:,17] .= @SVector [gridX;          2.0 * gridY;    gridZ]
+    grdPts[:,18] .= @SVector [2.0 * gridX;    2.0 * gridY;    gridZ]
     return nothing
 end
 #=

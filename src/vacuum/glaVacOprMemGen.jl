@@ -1,5 +1,5 @@
 using FastGaussQuadrature
-using Cubature
+using HCubature
 
 # settings for cubature integral evaluation: relative tolerance and absolute 
 # tolerance
@@ -86,9 +86,9 @@ correctly, whenever the domains are in contact, the ratio of scales between the
 source and target volumes must all be integers, and cell corners must match up.  
 =#
 function genEgoCrcExt!(egoCrcExt::AbstractArray{ComplexF64,5}, 
-    trgVol::GlaVol, srcVol::GlaVol, sepGrdTrg::Array{<:StepRange,1}, 
-    sepGrdSrc::Array{<:StepRange,1}, trgFac::Array{<:Number,3}, 
-    srcFac::Array{<:Number,3}, facPar::Array{<:Integer,2}, 
+    trgVol::GlaVol, srcVol::GlaVol, sepGrdTrg::AbstractVector{<:StepRange}, 
+    sepGrdSrc::AbstractVector{<:StepRange}, trgFac::AbstractArray{<:Number,3}, 
+    srcFac::AbstractArray{<:Number,3}, facPar::AbstractMatrix{<:Integer}, 
     cmpInf::GlaKerOpt)
     ## calculate domain separation
     # upper and lower edges of the source volume
@@ -130,8 +130,8 @@ end
 Generate circulant vector for self Green function.
 =#
 function genEgoCrcSlf!(slfVol::GlaVol, egoCrc::AbstractArray{ComplexF64,5},  
-    srcGrd::Array{<:StepRange,1}, trgFac::Array{<:AbstractFloat,3}, 
-    srcFac::Array{<:AbstractFloat,3}, facPar::Array{<:Integer,2}, 
+    srcGrd::AbstractVector{<:StepRange}, trgFac::AbstractArray{<:AbstractFloat,3}, 
+    srcFac::AbstractArray{<:AbstractFloat,3}, facPar::AbstractMatrix{<:Integer}, 
     cmpInf::GlaKerOpt)
     # allocate intermediate storage for Toeplitz interaction vector
     egoToe = Array{eltype(egoCrc)}(undef, 3, 3, slfVol.cel...)
@@ -195,13 +195,13 @@ Write Green function element for a pair of cubes in distinct domains. Recall
 that grids span the separations between a pair of volumes. No field flips are 
 required when calculating an external Green function. 
 =#
-@inline function egoFunExt!(egoCrcExt::AbstractArray{ComplexF64,2}, 
+@inline function egoFunExt!(egoCrcExt::AbstractMatrix{ComplexF64}, 
     posInd::CartesianIndex{3}, 
-    indSpt::Union{Array{<:Integer,1},NTuple{3,Integer}}, 
-    sepGrdTrg::Array{<:StepRange,1}, sepGrdSrc::Array{<:StepRange,1}, 
+    indSpt::Union{AbstractVector{<:Integer},NTuple{3,Integer}}, 
+    sepGrdTrg::AbstractVector{<:StepRange}, sepGrdSrc::AbstractVector{<:StepRange}, 
     sclTrg::NTuple{3,Number}, sclSrc::NTuple{3,Number}, 
-    trgFac::Array{<:Number,3}, srcFac::Array{<:AbstractFloat,3}, 
-    facPar::Array{<:Integer,2}, cmpInf::GlaKerOpt)
+    trgFac::AbstractArray{<:Number,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
+    facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt)
     
     if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) || 
             posInd[3] == (indSpt[3] + 1)
@@ -220,12 +220,12 @@ Write Green element for a pair of cubes in distinct domains, checking for the
 possibility of contact. Separation grids span the separations between the pair 
 of volumes. No field flip is required for external Green function. 
 =#
-function egoFunExtCnt!(cntVol::GlaVol, egoCrc::AbstractArray{ComplexF64,2},
+function egoFunExtCnt!(cntVol::GlaVol, egoCrc::AbstractMatrix{ComplexF64},
     egoCrcCnt::AbstractArray{ComplexF64,5}, posInd::CartesianIndex{3}, 
-    indSpt::NTuple{3,Integer}, sepGrdTrg::Array{<:StepRange,1}, 
-    sepGrdSrc::Array{<:StepRange,1}, sclTrg::NTuple{3,Number}, 
-    sclSrc::NTuple{3,Number}, trgFac::Array{<:AbstractFloat,3}, 
-    srcFac::Array{<:AbstractFloat,3}, facPar::Array{<:Integer,2}, 
+    indSpt::NTuple{3,Integer}, sepGrdTrg::AbstractVector{<:StepRange}, 
+    sepGrdSrc::AbstractVector{<:StepRange}, sclTrg::NTuple{3,Number}, 
+    sclSrc::NTuple{3,Number}, trgFac::AbstractArray{<:AbstractFloat,3}, 
+    srcFac::AbstractArray{<:AbstractFloat,3}, facPar::AbstractMatrix{<:Integer}, 
     cmpInf::GlaKerOpt)
     # separation vector
     sepVec = [grdSel(posInd[1], indSpt[1], 1, sepGrdTrg, sepGrdSrc), 
@@ -258,10 +258,10 @@ end
 #=
 General external Green function interaction element. 
 =#
-function egoFunOut!(egoCrc::AbstractArray{ComplexF64,2}, grd::Array{<:AbstractFloat,1}, 
+function egoFunOut!(egoCrc::AbstractMatrix{ComplexF64}, grd::AbstractVector{<:AbstractFloat}, 
     sclTrg::NTuple{3,Number}, sclSrc::NTuple{3,Number}, 
-    trgFac::Array{<:AbstractFloat,3}, srcFac::Array{<:AbstractFloat,3}, 
-    facPar::Array{<:Integer,2}, cmpInf::GlaKerOpt)
+    trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
+    facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt)
 
     srfMat = zeros(eltype(egoCrc), 36)
     # calculate interaction contributions between all cube faces
@@ -273,10 +273,10 @@ end
 #=
 Compute Green function element for cells in contact. 
 =#
-function egoCntOut!(cntVol::GlaVol, egoCrcCnt::Array{ComplexF64,5}, 
-    egoCrc::AbstractArray{ComplexF64,2}, posInd::CartesianIndex{3}, 
+function egoCntOut!(cntVol::GlaVol, egoCrcCnt::AbstractArray{ComplexF64,5}, 
+    egoCrc::AbstractMatrix{ComplexF64}, posInd::CartesianIndex{3}, 
     sclTrg::NTuple{3,Number}, sclSrc::NTuple{3,Number}, 
-    sepVec::Array{<:AbstractFloat,1})
+    sepVec::AbstractVector{<:AbstractFloat})
     # safety zero local section of the Green function
     egoCrc[:,:] .= zeros(ComplexF64, 3, 3)
     # contact cell locations
@@ -332,9 +332,9 @@ end
 General self Green function interaction element. 
 =#
 function egoFunInn!(egoToe::AbstractArray{ComplexF64,5}, posInd::CartesianIndex{3},
-    srcGrd::Array{<:StepRange,1}, scl::NTuple{3,Number}, 
-    trgFac::Array{<:AbstractFloat,3}, srcFac::Array{<:AbstractFloat,3}, 
-    facPar::Array{<:Integer,2}, cmpInf::GlaKerOpt)
+    srcGrd::AbstractVector{<:StepRange}, scl::NTuple{3,Number}, 
+    trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
+    facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt)
 
     srfMat = zeros(eltype(egoToe), 36)
     # calculate interaction contributions between all cube faces
@@ -358,11 +358,11 @@ The convention by which facePairs are generated begins by looping over the
 source faces. Because of this choice, the transpose of the mask  follows the 
 standard source to target matrix convention used elsewhere. 
 =#
-function egoFunSng!(egoCrc::AbstractArray{ComplexF64,2}, posInd::CartesianIndex{3}, 
-    wS::Vector{ComplexF64}, wE::Vector{ComplexF64}, wV::Vector{ComplexF64}, 
-    srcGrd::Array{<:StepRange,1}, slfVol::GlaVol, 
-    trgFac::Array{<:AbstractFloat,3}, srcFac::Array{<:AbstractFloat,3}, 
-    facPar::Array{<:Integer,2}, cmpInf::GlaKerOpt)
+function egoFunSng!(egoCrc::AbstractMatrix{ComplexF64}, posInd::CartesianIndex{3}, 
+    wS::AbstractVector{ComplexF64}, wE::AbstractVector{ComplexF64}, wV::AbstractVector{ComplexF64}, 
+    srcGrd::AbstractVector{<:StepRange}, slfVol::GlaVol, 
+    trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
+    facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt)
 
     srfMat = zeros(eltype(egoCrc), 36)
     # linear index conversion
@@ -525,8 +525,8 @@ function egoFunSng!(egoCrc::AbstractArray{ComplexF64,2}, posInd::CartesianIndex{
         facPar, Float64.(srfScl(slfVol.scl, slfVol.scl)), cmpInf)
     # correct values of srfMat where needed
     for fp ∈ 1:36
-        if mask[facPar[fp,1], facPar[fp,2]] == 1
-            srfMat[fp] = corVal[facPar[fp,1], facPar[fp,2]]
+        if mask[facPar[1, fp], facPar[2, fp]] == 1
+            srfMat[fp] = corVal[facPar[1, fp], facPar[2, fp]]
         end
     end
     # overwrite problematic elements of Green function matrix
@@ -537,7 +537,7 @@ Update egoCrc to hold Green function interactions. The storage format of egoCrc
 is [[ii, ji, ki]^{T}; [ij, jj, kj]^{T}; [ik, jk, kk]^{T}]. 
 See documentation for explanation.
 =#
-function srfSum!(egoCrc::AbstractArray{ComplexF64,2}, srfMat::Array{ComplexF64,1})
+function srfSum!(egoCrc::AbstractMatrix{ComplexF64}, srfMat::AbstractVector{ComplexF64})
     # ii
     egoCrc[1,1] = srfMat[15] - srfMat[16] - srfMat[21] + 
     srfMat[22] + srfMat[29] - srfMat[30] - srfMat[35] + srfMat[36]
@@ -565,24 +565,22 @@ end
 Adaptive integration of the Green function over face pairs. 
 =#
 function egoSrfAdp!(grdX::AbstractFloat, grdY::AbstractFloat, 
-    grdZ::AbstractFloat, srfMat::Array{ComplexF64,1}, 
-    trgFac::Array{<:AbstractFloat,3}, srcFac::Array{<:AbstractFloat,3}, 
-    pairList::Union{UnitRange{<:Integer},Array{<:Integer,1}}, 
-    facPar::Array{<:Integer,2}, srfScales::Array{<:AbstractFloat,1}, 
+    grdZ::AbstractFloat, srfMat::AbstractVector{ComplexF64}, 
+    trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
+    pairList::Union{UnitRange{<:Integer},AbstractVector{<:Integer}}, 
+    facPar::AbstractMatrix{<:Integer}, srfScales::AbstractVector{<:AbstractFloat}, 
     cmpInf::GlaKerOpt)
-    # container for intermediate integral evaluation
-    intVal = [0.0,0.0]
     @inbounds for fp ∈ pairList
-        srfMat[fp] = 0.0 + 0.0im
+        srfMat[fp] = zero(eltype(srfMat))
         # define integration kernel  
-        intKer = (ordVec::Array{<:AbstractFloat,1}, 
-            vals::Array{<:AbstractFloat,1}) -> srfKer(ordVec, vals, grdX, grdY, 
+        # intKer = (ordVec::AbstractVector{Float64}, 
+        #     vals::AbstractVector{Float64}) -> srfKer(ordVec, vals, grdX, grdY, 
+        #     grdZ, fp, trgFac, srcFac, facPar, cmpInf)
+        intKer = (ordVec::AbstractVector{Float64}) -> srfKer(ordVec, grdX, grdY, 
             grdZ, fp, trgFac, srcFac, facPar, cmpInf)
         # surface integration
-        intVal[:] = hcubature(2, intKer, [0.0,0.0,0.0,0.0], 
-            [1.0,1.0,1.0,1.0], reltol = cubRelTol, abstol = cubAbsTol, 
-            maxevals = 0, error_norm = Cubature.INDIVIDUAL)[1];
-        srfMat[fp] = intVal[1] + im * intVal[2]
+        srfMat[fp] = hcubature(intKer, SVector{4}(0.0, 0.0, 0.0, 0.0), 
+            SVector{4}(1.0, 1.0, 1.0, 1.0), rtol=cubRelTol, atol=cubAbsTol)[1];
         # scaling correction
         srfMat[fp] *= srfScales[fp]
     end
@@ -591,25 +589,24 @@ end
 #=
 Integration kernel for Green function surface integrals.
 =#
-function srfKer(ordVec::Array{<:AbstractFloat,1}, vals::Array{<:AbstractFloat,1}, 
-    grdX::AbstractFloat, grdY::AbstractFloat, grdZ::AbstractFloat, fp::Integer, 
-    trgFac::Array{<:AbstractFloat,3}, srcFac::Array{<:AbstractFloat,3}, 
-    facPar::Array{<:Integer,2}, cmpInf::GlaKerOpt)
+@inline function srfKer(ordVec::AbstractVector{<:AbstractFloat}, grdX::AbstractFloat,
+        grdY::AbstractFloat, grdZ::AbstractFloat, fp::Integer,
+        trgFac::AbstractArray{<:AbstractFloat,3},
+        srcFac::AbstractArray{<:AbstractFloat,3},
+        facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt)
     # value of scalar Green function
-    z = sclEgo(dstMag(
+    return sclEgo(dstMag(
                       cubVecAltAdp(1, ordVec, fp, trgFac, srcFac, facPar) + grdX, 
                       cubVecAltAdp(2, ordVec, fp, trgFac, srcFac, facPar) + grdY, 
                       cubVecAltAdp(3, ordVec, fp, trgFac, srcFac, facPar) + grdZ), 
                frqPhz(cmpInf))
-    vals[:] = [real(z),imag(z)]
-    return nothing
 end
 #=
 Return the separation between two elements from circulant embedding indices and 
 domain grids. 
 =#
 @inline function grdSel(ind::Integer, indSpt::Integer, dir::Integer, 
-    trgGrd::Array{<:StepRange,1}, srcGrd::Array{<:StepRange,1})
+    trgGrd::AbstractVector{<:StepRange}, srcGrd::AbstractVector{<:StepRange})
     
     if ind <= indSpt
         return Float64(trgGrd[dir][ind])
@@ -646,7 +643,7 @@ Options:
 gausschebyshev(), gausslegendre(), gaussjacobi(), gaussradau(), gausslobatto(), 
 gausslaguerre(), gausshermite()
 =#
-function gauQud(ord::Int64)::Array{Float64,2}
+function gauQud(ord::Int64)
     pos, val = gausslegendre(ord)
     return [pos ;; val]
 end

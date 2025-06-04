@@ -1,4 +1,4 @@
-using ThreadsX
+using KernelAbstractions
 
 #=
 glaIntsup evaluates the integrands called by the weakS, weakE, and weakV head 
@@ -12,21 +12,24 @@ being performed see the article cited above and references included therein.
 #=
 Weak integral evaluation for a panel interacting with itself. 
 =#
-function wekSInt(rPts::AbstractArray{<:AbstractFloat,2}, 
-    glQud::AbstractArray{<:AbstractFloat,2}, cmpInf::GlaKerOpt)::ComplexF64
+function wekSInt(rPts::AbstractMatrix{<:AbstractFloat}, 
+    glQud::AbstractMatrix{<:AbstractFloat}, cmpInf::GlaKerOpt)::ComplexF64
 
     glqOrd = size(glQud)[1]
-    # integral as reduction
-    return eqvJacS(rPts) * ThreadsX.mapreduce(x -> wekSIntKer(x, glqOrd, 
-        rPts, glQud, cmpInf), +, CartesianIndices((1:3, 1:8, 1:glqOrd)); 
-        init = 0.0 + im * 0.0)
+    # integral
+    itr = CartesianIndices((1:3, 1:8, 1:glqOrd))
+    out = Array{ComplexF64}(undef, length(itr))
+    @inbounds @threads for (i, idx) in collect(enumerate(itr))
+        out[i] = wekSIntKer(idx, glqOrd, rPts, glQud, cmpInf)
+    end
+    return eqvJacS(rPts) * sum(out)
 end
 #=
 Kernel function for self panel integrals.
 =#
 function wekSIntKer(slvInd::CartesianIndex{3}, glqOrd::Integer, 
-    rPts::AbstractArray{<:AbstractFloat,2}, 
-    glQud::AbstractArray{<:AbstractFloat,2}, cmpInf::GlaKerOpt)::ComplexF64
+    rPts::AbstractMatrix{<:AbstractFloat}, 
+    glQud::AbstractMatrix{<:AbstractFloat}, cmpInf::GlaKerOpt)::ComplexF64
 
     (ψA, ψB) = ψlimS(slvInd[2])
     θ = θf(ψA, ψB, glQud[slvInd[3],1])
@@ -42,27 +45,29 @@ end
 #=
 Weak integral evaluation for two panels sharing an edge. 
 =#
-function wekEInt(rPts::AbstractArray{<:AbstractFloat,2}, 
-    glQud::AbstractArray{<:AbstractFloat,2}, cmpInf::GlaKerOpt)::ComplexF64
+function wekEInt(rPts::AbstractMatrix{<:AbstractFloat}, 
+    glQud::AbstractMatrix{<:AbstractFloat}, cmpInf::GlaKerOpt)::ComplexF64
 
     glqOrd = size(glQud)[1]
-    # integral implemented as reduction
-    return eqvJacEV(rPts) * ThreadsX.mapreduce(x ->  wekEIntKer(x, glqOrd, 
-        rPts, glQud, cmpInf), +, CartesianIndices((1:6, 1:glqOrd)); 
-        init = 0.0 + im * 0.0)
+    # integral
+    itr = CartesianIndices((1:6, 1:glqOrd))
+    out = Array{ComplexF64}(undef, length(itr))
+    @inbounds @threads for (i, idx) in collect(enumerate(itr))
+        out[i] = wekEIntKer(idx, glqOrd, rPts, glQud, cmpInf)
+    end
+    return eqvJacEV(rPts) * sum(out)
 end
 #=
 Kernel for edge panel reduction.
 =#
 function wekEIntKer(slvInd::CartesianIndex{2}, glqOrd::Integer, 
-    rPts::AbstractArray{<:AbstractFloat,2}, 
-    glQud::AbstractArray{<:AbstractFloat,2}, cmpInf::GlaKerOpt)::ComplexF64
+    rPts::AbstractMatrix{<:AbstractFloat}, 
+    glQud::AbstractMatrix{<:AbstractFloat}, cmpInf::GlaKerOpt)::ComplexF64
 
     (ψA, ψB) = ψlimE(slvInd[1])
     θB = θf(ψA, ψB, glQud[slvInd[2], 1])
     (ηA, ηB) = ηlimE(slvInd[1], θB)
-    θA = 0.0 + im * 0.0
-    intVal = 0.0 + im * 0.0
+    intVal = zero(ComplexF64)
     # component contribution
     @inbounds for itr ∈ 1:glqOrd
         θA = θf(ηA, ηB, glQud[itr, 1])
@@ -75,23 +80,26 @@ end
 #=
 Weak integral for panels sharing a vertex.
 =#
-function wekVInt(sngMod::Bool, rPts::AbstractArray{<:AbstractFloat,2}, 
-    glQud::AbstractArray{<:AbstractFloat,2}, cmpInf::GlaKerOpt)::ComplexF64
+function wekVInt(sngMod::Bool, rPts::AbstractMatrix{<:AbstractFloat}, 
+    glQud::AbstractMatrix{<:AbstractFloat}, cmpInf::GlaKerOpt)::ComplexF64
 
     glqOrd = size(glQud)[1]
-    # integral as mapreduction
-    return eqvJacEV(rPts) * ^(π,2) * ThreadsX.mapreduce(x -> wekVIntKer(x, 
-        glqOrd, sngMod, rPts, glQud, cmpInf), +, CartesianIndices((1:glqOrd, 
-        1:glqOrd, 1:glqOrd,)); init = 0.0 + im * 0.0) / 144.0
+    # integral
+    itr = CartesianIndices((1:glqOrd, 1:glqOrd, 1:glqOrd))
+    out = Array{ComplexF64}(undef, length(itr))
+    @inbounds @threads for (i, idx) in collect(enumerate(itr))
+        out[i] = wekVIntKer(idx, glqOrd, sngMod, rPts, glQud, cmpInf)
+    end
+    return eqvJacEV(rPts) * π^2 * sum(out) / 144.0
 end
 #=
 Kernel for weak vertex integral.
 =#
 function wekVIntKer(slvInd::CartesianIndex{3}, glqOrd::Integer, sngMod::Bool, 
-    rPts::AbstractArray{<:AbstractFloat,2}, 
-    glQud::AbstractArray{<:AbstractFloat,2}, cmpInf::GlaKerOpt)
+    rPts::AbstractMatrix{<:AbstractFloat}, 
+    glQud::AbstractMatrix{<:AbstractFloat}, cmpInf::GlaKerOpt)
     
-    xPts = Array{Float64,2}(undef, 3, 2)
+    xPts = MMatrix{3, 2, Float64}(undef)
     θA = θf(0.0, π / 3.0, glQud[slvInd[1],1])
     sθA, cθA = sincos(θA)
     LA = 2.0 * sqrt(3.0) / (sθA + sqrt(3.0) * cθA)
@@ -110,14 +118,14 @@ function wekVIntKer(slvInd::CartesianIndex{3}, glqOrd::Integer, sngMod::Bool,
         # loop D
         @inbounds for itrC ∈ 1:glqOrd
             θX = θf(0.0, LA / cθC, glQud[itrC,1])
-            spxV!(xPts, θX, θC, θB, θA)
+            spxV!(xPts, θX, (sθC, cθC), (sθB, cθB), (sθA, cθA))
             intValC += glQud[itrC,2] * (θX^3) * 
             kerEVN(rPts, xPts, frqPhz(cmpInf))
         end
         # loop E
         @inbounds for itrD ∈ 1:glqOrd
             θX = θf(0.0, LB / sθD, glQud[itrD,1])
-            spxV!(xPts, θX, θD, θB, θA)
+            spxV!(xPts, θX, (sθD, cθD), (sθB, cθB), (sθA, cθA))
             intValD += glQud[itrD,2] * (θX^3) * 
             kerEVN(rPts, xPts, frqPhz(cmpInf))
         end
@@ -125,14 +133,14 @@ function wekVIntKer(slvInd::CartesianIndex{3}, glqOrd::Integer, sngMod::Bool,
         # loop D
         @inbounds for itrC ∈ 1:glqOrd
             θX = θf(0.0, LA / cθC, glQud[itrC,1])
-            spxV!(xPts, θX, θC, θB, θA)
+            spxV!(xPts, θX, (sθC, cθC), (sθB, cθB), (sθA, cθA))
             intValC += glQud[itrC,2] * (θX^3) * 
             kerEV(rPts, xPts, frqPhz(cmpInf))
         end
         # loop E
         @inbounds for itrD ∈ 1:glqOrd
             θX = θf(0.0, LB / sθD, glQud[itrD,1])
-            spxV!(xPts, θX, θD, θB, θA)
+            spxV!(xPts, θX, (sθD, cθD), (sθB, cθB), (sθA, cθA))
             intValD += glQud[itrD,2] * (θX^3) * 
             kerEV(rPts, xPts, frqPhz(cmpInf))
         end
@@ -200,46 +208,51 @@ end
     end
 end 
 
-function nS(dir::Integer, idf::Integer, θ1::T, θB::T, rPts::Array{T,2}, 
-    glQud::Array{T,2}, cmpInf::GlaKerOpt)::ComplexF64 where T<:AbstractFloat
+function nS(dir::Integer, idf::Integer, θ1::T, θB::T, rPts::AbstractMatrix{T}, 
+    glQud::AbstractMatrix{T}, cmpInf::GlaKerOpt) where T<:AbstractFloat
 
     int = 0.0 + 0.0im
     glqOrd = size(glQud)[1]
     if idf == 1 || idf == 5
+        cθ1 = cos(θ1)
         for n ∈ 1:glqOrd
             int += glQud[n,2] * aS(rPts, θ1, θB, 
-                θf(0.0, (1.0 - θB) / cos(θ1), glQud[n,1]), dir, glQud, 
+                θf(0.0, (1.0 - θB) / cθ1, glQud[n,1]), dir, glQud, 
                 cmpInf)
         end
-        return (1.0 - θB) / (2.0 * cos(θ1)) * int
+        return (1.0 - θB) / (2.0 * cθ1) * int
     elseif idf == 2 || idf == 3
+        sθ1 = sin(θ1)
         for n ∈ 1:glqOrd
             int += glQud[n,2] * aS(rPts, θ1, θB, 
-                θf(0.0, sqrt(3.0) * (1.0 - θB) / sin(θ1), glQud[n,1]), dir, 
+                θf(0.0, sqrt(3.0) * (1.0 - θB) / sθ1, glQud[n,1]), dir, 
                 glQud, cmpInf)
         end
-        return sqrt(3.0) * (1.0 - θB) / (2.0 * sin(θ1)) * int
+        return sqrt(3.0) * (1.0 - θB) / (2.0 * sθ1) * int
     elseif idf == 6 || idf == 7
+        sθ1 = sin(θ1)
         for n ∈ 1:glqOrd
             int += glQud[n,2] * aS(rPts, θ1, θB, 
-                θf(0.0, sqrt(3.0) * (1.0 + θB) / sin(θ1), glQud[n,1]), dir, 
+                θf(0.0, sqrt(3.0) * (1.0 + θB) / sθ1, glQud[n,1]), dir, 
                 glQud, cmpInf)
         end 
-        return sqrt(3.0) * (1.0 + θB) / (2.0 * sin(θ1)) * int
+        return sqrt(3.0) * (1.0 + θB) / (2.0 * sθ1) * int
     elseif idf == 4 || idf == 8
+        cθ1 = cos(θ1)
         for n ∈ 1:glqOrd
             int += glQud[n,2] * aS(rPts, θ1, θB, 
-                θf(0.0, -(1.0 + θB) / cos(θ1), glQud[n,1]), dir, glQud, 
+                θf(0.0, -(1.0 + θB) / cθ1, glQud[n,1]), dir, glQud, 
                 cmpInf)
         end
-        return -(1.0 + θB) / (2.0 * cos(θ1)) * int
+        return -(1.0 + θB) / (2.0 * cθ1) * int
     else
         error("Unrecognized identifier.")
     end
+    return int # Type stability
 end
 
-function nE(idf1::Integer, idf2::Integer, θB::T, θ1::T, rPts::Array{T,2}, 
-    glQud::Array{T,2}, cmpInf::GlaKerOpt)::ComplexF64 where T<:AbstractFloat
+function nE(idf1::Integer, idf2::Integer, θB::T, θ1::T, rPts::AbstractMatrix{T}, 
+    glQud::AbstractMatrix{T}, cmpInf::GlaKerOpt)::ComplexF64 where T<:AbstractFloat
 
     γ = 0.0 
     intVal1 = 0.0 + 0.0im 
@@ -283,7 +296,7 @@ function nE(idf1::Integer, idf2::Integer, θB::T, θ1::T, rPts::Array{T,2},
 end
 
 @inline function intNE(n::Integer, idf1::Integer, γ::T, θB::T, θ1::T, 
-    rPts::Array{T,2}, glQud::Array{T,2}, idf2::Integer, 
+    rPts::AbstractMatrix{T}, glQud::AbstractMatrix{T}, idf2::Integer, 
     cmpInf::GlaKerOpt)::ComplexF64 where T <: AbstractFloat
     
     if idf1 == 1
@@ -312,31 +325,31 @@ end
     return aE(rPts, λ, η, θB, θ1, glQud, idf2, cmpInf)
 end
 
-function aS(rPts::Array{T,2}, θ1::T, θB::T, θ::T, dir::Integer, 
-    glQud::Array{T,2}, cmpInf::GlaKerOpt)::ComplexF64 where T<:AbstractFloat
+function aS(rPts::AbstractMatrix{T}, θ1::T, θB::T, θ::T, dir::Integer, 
+    glQud::AbstractMatrix{T}, cmpInf::GlaKerOpt)::ComplexF64 where T<:AbstractFloat
 
-    xPts = Array{Float64,2}(undef, 3, 2)
+    xPts = MMatrix{3, 2, Float64}(undef)
     glqOrd = size(glQud)[1]
-    aInt = 0.0 + 0.0im
-    η1 = 0.0 
-    η2 = 0.0 
-    ξ1 = 0.0
+    aInt = zero(ComplexF64)
+    η1 = zero(Float64)
+    η2 = zero(Float64)
+    ξ1 = zero(Float64)
     sθ1, cθ1 = sincos(θ1)
+    η1, ξ1 = subTri(θB, θ * sθ1, dir)
     @inbounds for n ∈ 1:glqOrd
-        (η1, ξ1) = subTri(θB, θ * sθ1, dir)
-        (η2, ξ2) = subTri(θf(0.0, θ, glQud[n,1]) * cθ1 + θB, 
-            (θ - θf(0.0, θ, glQud[n,1])) * sθ1, dir)
+        (η2, ξ2) = subTri(θf(zero(Float64), θ, glQud[n,1]) * cθ1 + θB, 
+                          (θ - θf(zero(Float64), θ, glQud[n,1])) * sθ1, dir)
         spx!(xPts, η1, η2, ξ1, ξ2)
-        aInt += glQud[n,2] * θf(0.0, θ, glQud[n,1]) * 
+        aInt += glQud[n,2] * θf(zero(Float64), θ, glQud[n,1]) * 
         kerSN(rPts, xPts, frqPhz(cmpInf))
     end
     return 0.5 * θ * aInt 
 end
 
-function aE(rPts::Array{T,2}, λ::T, η::T, θB::T, θ1::T, glQud::Array{T,2}, 
+function aE(rPts::AbstractMatrix{T}, λ::T, η::T, θB::T, θ1::T, glQud::AbstractMatrix{T}, 
     idf::Integer, cmpInf::GlaKerOpt)::ComplexF64 where T<:AbstractFloat
 
-    xPts = Array{Float64,2}(undef, 3, 2)
+    xPts = MMatrix{3, 2, Float64}(undef)
     glqOrd = size(glQud)[1]
     intVal = 0.0 + 0.0im
     ζ = 0.0
@@ -364,8 +377,7 @@ end
     end
 end
 
-@inline function eqvJacEV(rPts::Array{T,2})::Float64 where T<:AbstractFloat
-
+@inline function eqvJacEV(rPts::AbstractMatrix{T})::Float64 where T<:AbstractFloat
     return sqrt(dot(cross(rPts[:,2] - rPts[:,1], 
         rPts[:,3] - rPts[:,1]), cross(rPts[:,2] - rPts[:,1], 
         rPts[:,3] - rPts[:,1]))) * sqrt(dot(cross(rPts[:,5] - 
@@ -373,8 +385,7 @@ end
         rPts[:,4], rPts[:,6] - rPts[:,4]))) / 12.0
 end
 
-@inline function eqvJacS(rPts::Array{T,2})::Float64 where T<:AbstractFloat
-
+@inline function eqvJacS(rPts::AbstractMatrix{T})::Float64 where T<:AbstractFloat
     return dot(cross(rPts[:,1] - rPts[:,2], rPts[:,3] - rPts[:,1]), 
         cross(rPts[:,1] - rPts[:,2], rPts[:,3] - rPts[:,1])) / 12.0
 end
@@ -384,18 +395,18 @@ end
     return 0.5 * ((θb - θa) * pos + θa + θb)  
 end
 
-function spxV!(xPts::Array{T,2}, θ4::T, θ3::T, θB::T, θ1::T)::Nothing where 
+function spxV!(xPts::AbstractMatrix{T}, θ4::T, sincosθ3::Tuple{T, T}, sincosθB::Tuple{T, T}, sincosθ1::Tuple{T, T}) where 
     T <: AbstractFloat
 
-    sθB, cθB = sincos(θB)
-    sθ1, cθ1 = sincos(θ1)
-    sθ3, cθ3 = sincos(θ3)
+    sθB, cθB = sincosθB
+    sθ1, cθ1 = sincosθ1
+    sθ3, cθ3 = sincosθ3
     spx!(xPts, θ4 * cθ3 * cθ1 - 1.0, θ4 * sθ3 * cθB - 1.0, θ4 * cθ3 * sθ1, θ4 *
          sθ3 * sθB)
     return nothing
 end
 
-function spxE!(xPts::Array{T,2}, λ::T, η::T, θB::T, θ1::T, 
+function spxE!(xPts::AbstractMatrix{T}, λ::T, η::T, θB::T, θ1::T, 
     idf::Integer)::Nothing where T<:AbstractFloat
 
     sθB, cθB = sincos(θB)
@@ -414,7 +425,7 @@ end
 #=
 Two versions of the simplex function.
 =#
-@inline function spx!(xPts::Array{T,2}, η1::T, η2::T, ξ1::T, 
+@inline function spx!(xPts::AbstractMatrix{T}, η1::T, η2::T, ξ1::T, 
     ξ2::T)::Nothing where T <: AbstractFloat
 
     xPts[1,1] = (sqrt(3.0) * (1.0 - η1) - ξ1) / (2.0 * sqrt(3.0))
@@ -426,7 +437,7 @@ Two versions of the simplex function.
     return nothing
 end
 
-@inline function kerEV(rPts::Array{T,2}, xPts::AbstractArray{T,2}, 
+@inline function kerEV(rPts::AbstractMatrix{T}, xPts::AbstractMatrix{T}, 
     frqPhz::Union{ComplexF64,ComplexF32})::ComplexF64 where T<:AbstractFloat
 
     return sclEgo(dstMag(xPts[1,1] * rPts[1,1] + xPts[2,1] * 
@@ -441,7 +452,7 @@ end
             rPts[3,6])), frqPhz)
 end
 
-@inline function kerEVN(rPts::Array{T,2}, xPts::AbstractArray{T,2}, 
+@inline function kerEVN(rPts::AbstractMatrix{T}, xPts::AbstractMatrix{T}, 
     frqPhz::Union{ComplexF64,ComplexF32})::ComplexF64 where T<:AbstractFloat
     
     return sclEgoN(dstMag(xPts[1,1] * rPts[1,1] + xPts[2,1] * 
@@ -456,10 +467,10 @@ end
             rPts[3,6])), frqPhz)
 end
 
-@inline function kerSN(rPts::Array{T,2}, xPts::Array{T,2}, 
+@inline function kerSN(rPts::AbstractMatrix{T}, xPts::AbstractMatrix{T}, 
     frqPhz::Union{ComplexF64,ComplexF32})::ComplexF64 where T<:AbstractFloat
     
-    return  sclEgoN(dstMag(xPts[1,1] * rPts[1,1] + xPts[2,1] * 
+    return sclEgoN(dstMag(xPts[1,1] * rPts[1,1] + xPts[2,1] * 
         rPts[1,2] + xPts[3,1] * rPts[1,3] - (xPts[1,2] * 
             rPts[1,1] + xPts[2,2] * rPts[1,2] + xPts[3,2] * 
             rPts[1,3]), xPts[1,1] * rPts[2,1] + xPts[2,1] * 
