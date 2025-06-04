@@ -413,19 +413,6 @@ Construct a full Green's function operator from an inverse scattering operator.
 """
 GlaOpr(opr::InvSctOpr) = GlaOpr(SctOpr(opr))
 
-"""
-    GlaOpr(opr::SctOpr)
-
-Construct a full Green's function operator from a scattering operator.
-
-# Arguments
-- `opr::SctOpr`: The scattering operator to convert into a full Green's function operator
-
-# Returns
-- `GlaOpr`: The full Green's function operator
-"""
-GlaOpr(opr::SctOpr) = GlaOpr(opr.invSctOpr)
-
 function useCpu!(opr::GlaOprVac)
     useCpu!(opr.mem)
     return opr
