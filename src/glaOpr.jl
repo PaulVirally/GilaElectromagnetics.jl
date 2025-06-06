@@ -233,7 +233,7 @@ Construct an inverse scattering operator from a scattering operator.
 # Returns
 - `InvSctOpr`: The inverse scattering operator
 """
-InvSctOpr(opr::SctOpr) = sctOpr.invSctOpt
+InvSctOpr(opr::SctOpr) = opr.invSctOpt
 
 """
     InvSctOpr(opr::GlaOpr)
@@ -319,22 +319,18 @@ This constructor creates a scattering operator that describes how electromagneti
 # Returns
 - `SctOpr`: The scattering operator
 """
-function SctOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
-    # Reshape susceptibility if needed and validate size
-    if size(sus) != opr.mem.srcVol.cel
-        throw(ArgumentError("Susceptibility tensor dimensions $(size(sus)) do not match source volume dimensions $(opr.mem.srcVol.cel)"))
-    end
-    susTen = rszSus(sus, opr.mem.srcVol.cel)
-    return SctOpr(opr, susTen; useGpu=useGpu, slv=slv)
+function SctOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; slv::GlaSlv=BiCGStabSolver())
+    invSctOpr = InvSctOpr(opr, sus)
+    return SctOpr(invSctOpr, slv)
 end
 
 """
-    SctOpr(opr::InvSctOpr)
+    SctOpr(opr::GlaOpr)
 
-Construct a scattering operator from an inverse scattering operator.
+Construct a scattering operator from a full Green's function operator.
 
 # Arguments
-- `opr::InvSctOpr`: The inverse scattering operator to convert into a scattering operator
+- `opr::GlaOpr`: The full Green's function operator to convert into a scattering operator
 
 # Returns
 - `SctOpr`: The scattering operator
@@ -398,7 +394,7 @@ This constructor creates a full Green's function operator that combines the vacu
 # Returns
 - `GlaOpr`: The full Green's function operator
 """
-GlaOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) = GlaOpr(SctOpr(opr, sus; useGpu=useGpu, slv=slv))
+GlaOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; slv::GlaSlv=BiCGStabSolver()) = GlaOpr(SctOpr(opr, sus; slv=slv))
 
 """
     GlaOpr(opr::InvSctOpr)
