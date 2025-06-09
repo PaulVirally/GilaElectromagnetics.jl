@@ -24,6 +24,7 @@ using ..GilaVacuum
 using ..GilaTypes
 using ..GilaSolvers
 using CUDA
+using Serialization
 
 import ..GilaVacuum: useCpu!, useGpu!
 
@@ -612,5 +613,32 @@ end
 Base.show(io::IO, ::MIME"text/plain", opr::AbstractGlaOpr) = show(io, opr)
 
 include("glaLinAlg.jl")
+
+Serialization.serialize(io::IO, opr::GlaOprVac) = serialize(io, opr.mem)
+Serialization.deserialize(io::IO, ::Type{GlaOprVac}) = GlaOprVac(deserialize(io, GlaVacOprMem))
+function Serialization.serialize(io::IO, opr::InvSctOpr)
+    serialize(io, opr.oprVac)
+    sus = opr.sus
+    if sus isa CuArray
+        sus = Array(sus) # Convert to CPU array for serialization
+    end
+    serialize(io, opr.sus)
+end
+function Serialization.deserialize(io::IO, ::Type{InvSctOpr})
+    oprVac = deserialize(io, GlaOprVac)
+    sus = deserialize(io)
+    return InvSctOpr(oprVac, sus)
+end
+function Serialization.serialize(io::IO, opr::SctOpr)
+    serialize(io, opr.invSctOpr)
+    serialize(io, opr.slv)
+end
+function Serialization.deserialize(io::IO, ::Type{SctOpr})
+    invSctOpr = deserialize(io, InvSctOpr)
+    slv = deserialize(io)
+    return SctOpr(invSctOpr, slv)
+end
+Serialization.serialize(io::IO, opr::GlaOpr) = serialize(io, opr.sctOpr)
+Serialization.deserialize(io::IO, ::Type{GlaOpr}) = GlaOpr(deserialize(io, SctOpr))
 
 end # module
