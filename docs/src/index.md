@@ -6,7 +6,8 @@ three-dimensional electromagnetic Green function. For a technical description of
 the implementation, see the associated
 [paper](https://github.com/moleskySean/GilaElectromagnetics.jl/blob/main/docs/gilaDoc.pdf).
 For a high-level overview of what GilaElectromagnetics does, see the
-[concepts](./concepts.md) and [usage](./usage.md) pages. Detailed examples can
+[concepts](./concepts.md) and [usage](./usage.md) pages. A step by step
+[tutorial](./tutorial.md) introduces the basic workflow. Detailed examples can
 be found in the [examples](./examples.md) page. The public [API
 reference](./library.md) is also available.
 
