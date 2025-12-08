@@ -30,7 +30,7 @@ import ..GilaVacuum: useCpu!, useGpu!
 
 export GlaOprVac, InvSctOpr, SctOpr, GlaOpr
 export VacuumGreensOperator, InverseScatteringOperator, ScatteringOperator, GreensOperator
-export isadjoint, isselfoperator, isexternaloperator, adjoint!, glaSze, slv
+export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, adjoint!, glaSze, slv
 
 """
     GlaOprVac
@@ -41,15 +41,21 @@ interactions in free space.
 # Fields
 - `mem::GlaVacOprMem`: Memory structure containing the operator's data, including
   volume information and Fourier coefficients
+- `srcMsk::NTuple{StepRange{Int64, Int64}, 3}`: Tuple of ranges defining the mask for
+  the input volume (for overlapping operators only)
+- `trgMsk::NTuple{StepRage{Int64, Int64}, 3}`: Tuple of ranges defining the mask for
+  the output volume (for overlapping operators only)
 """
 struct GlaOprVac <: AbstractGlaOpr
     mem::GlaVacOprMem
+    srcMsk::NTuple{3, OrdinalRange{Int64, Int64}}
+    trgMsk::NTuple{3, OrdinalRange{Int64, Int64}}
 end
 
 """
     InvSctOpr
 
-Represents the inverse scattering operator (I - XG₀)⁻¹, where X is the susceptibility
+Represents the inverse scattering operator (I - XG₀), where X is the susceptibility
 tensor. This operator describes how electromagnetic fields interact with a material
 medium.
 
@@ -98,6 +104,59 @@ const InverseScatteringOperator = InvSctOpr
 const ScatteringOperator = SctOpr
 const GreensOperator = GlaOpr
 
+# Returns true if the volumes overlap
+function ovrChk(vol1::GlaVol, vol2::GlaVol)
+    # Upper/lower edges of the volumes
+    lwrEdg1 = first.(vol1.grd) .- (vol1.scl .// 2)
+    uprEdg1 = last.(vol1.grd) .+ (vol1.scl .//2)
+    lwrEdg2 = first.(vol2.grd) .- (vol2.scl .// 2)
+    uprEdg2 = last.(vol2.grd) .+ (vol2.scl .//2)
+
+    # Volume overlap check
+    return all(max.(lwrEdg1, lwrEdg2) .<= min.(uprEdg1, uprEdg2))
+end
+
+# Create the union volume of two overlapping volumes
+function uniVol(vol1::GlaVol, vol2::GlaVol)
+    sclMin = min.(vol1.scl, vol2.scl)
+    sclMax = max.(vol1.scl, vol2.scl)
+    sclRat = sclMax .// sclMin
+    @assert all(isinteger.(sclRat)) "Volumes must share a common scale grid for overlap handling"
+    scl = sclMin # Pick the finer scale as the common scale
+
+    # Upper/lower edges of the volumes
+    lwrEdg1 = first.(vol1.grd) .- (vol1.scl .// 2)
+    uprEdg1 = last.(vol1.grd) .+ (vol1.scl .//2)
+    lwrEdg2 = first.(vol2.grd) .- (vol2.scl .// 2)
+    uprEdg2 = last.(vol2.grd) .+ (vol2.scl .//2)
+    minEdg = min.(lwrEdg1, lwrEdg2) # Lower edge of the union volume
+    maxEdg = max.(uprEdg1, uprEdg2) # Upper edge of the union volume
+
+    cel = (maxEdg .- minEdg) .// scl
+    @assert all(isinteger.(cel)) "Computed union volume cell counts must be integers"
+    cel = Tuple(numerator.(cel))
+    org = Tuple(minEdg .+ (cel .* scl .// 2))
+    return GlaVol(cel, scl, org)
+end
+
+# Returns the region where subVol is contained within vol
+function mskRng(subVol::GlaVol, vol::GlaVol)
+    stpVol = Rational.(step.(vol.grd))
+    stpSub = Rational.(step.(subVol.grd))
+    stpRat = stpSub .// stpVol
+    @assert all(isinteger.(stpRat)) "Volumes must share a common scale grid for masking"
+    stpRat = Tuple(numerator.(stpRat))
+
+    off = (first.(subVol.grd) .- first.(vol.grd)) .// stpVol # Offset between volumes
+    @assert all(isinteger.(off)) "Sub-volume must align with volume grid for masking"
+    off = Tuple(numerator.(off))
+    idxBeg = 1 .+ off # 1-based indexing
+    idxEnd = idxBeg .+ ((subVol.cel .- 1) .* stpRat)
+    return (idxBeg[1]:stpRat[1]:idxEnd[1],
+            idxBeg[2]:stpRat[2]:idxEnd[2],
+            idxBeg[3]:stpRat[3]:idxEnd[3])
+end
+
 """
     GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false)
 
@@ -115,9 +174,19 @@ This constructor creates an external Green's function operator that describes el
 
 """
 function GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false)
+    innMsk = ntuple(_ -> 0:0, 3)
+    outMsk = ntuple(_ -> 0:0, 3)
+    if trgVol != srcVol && ovrChk(trgVol, srcVol)
+        # Volumes overlap: create the union volume and mask out the input/output regions
+        vol = uniVol(trgVol, srcVol)
+        innMsk = mskRng(srcVol, vol)
+        outMsk = mskRng(trgVol, vol)
+        trgVol, srcVol = vol, vol
+    end
+
     # Create the memory structure with appropriate GPU/CPU options
     mem = GlaVacOprMem(useGpu ? GPUKerOpt() : CPUKerOpt(), trgVol, srcVol)
-    return GlaOprVac(mem)
+    return GlaOprVac(mem, innMsk, outMsk)
 end
 
 """
@@ -484,7 +553,7 @@ Checks if the operator is a self Green's operator.
 # Returns
 - `true` if the operator is a self Green's operator, `false` otherwise.
 """
-isselfoperator(opr::GlaOprVac) = opr.mem.srcVol == opr.mem.trgVol
+isselfoperator(opr::GlaOprVac) = (opr.mem.srcVol == opr.mem.trgVol) && all(==(0:0), opr.srcMsk) && all(==(0:0), opr.trgMsk)
 isselfoperator(opr::InvSctOpr) = isselfoperator(opr.oprVac)
 isselfoperator(opr::SctOpr) = isselfoperator(opr.invSctOpr)
 isselfoperator(opr::GlaOpr) = isselfoperator(opr.sctOpr)
@@ -500,10 +569,42 @@ Checks if the operator is an external Green's operator.
 # Returns
 - `true` if the operator is an external Green's operator, `false` otherwise.
 """
-isexternaloperator(opr::GlaOprVac) = !isselfoperator(opr)
+isexternaloperator(opr::GlaOprVac) = opr.mem.srcVol != opr.mem.trgVol && all(==(0:0), opr.srcMsk) && all(==(0:0), opr.trgMsk)
 isexternaloperator(opr::InvSctOpr) = isexternaloperator(opr.oprVac)
 isexternaloperator(opr::SctOpr) = isexternaloperator(opr.invSctOpr)
 isexternaloperator(opr::GlaOpr) = isexternaloperator(opr.sctOpr)
+
+"""
+    isoverlappingoperator(opr::GlaOprVac)
+
+Checks if the operator is an overlapping Green's operator.
+
+# Arguments
+- `opr::GlaOprVac`: The operator to check.
+
+# Returns
+- `true` if the operator is an overlapping Green's operator, `false` otherwise.
+"""
+isoverlappingoperator(opr::GlaOprVac) = !(isselfoperator(opr) || isexternaloperator(opr))
+isoverlappingoperator(opr::InvSctOpr) = isoverlappingoperator(opr.oprVac)
+isoverlappingoperator(opr::SctOpr) = isoverlappingoperator(opr.invSctOpr)
+isoverlappingoperator(opr::GlaOpr) = isoverlappingoperator(opr.sctOpr)
+
+"""
+    isgpu(opr::AbstractGlaOpr)
+
+Checks if the operator is using GPU computation.
+
+# Arguments
+- `opr::AbstractGlaOpr`: The operator to check.
+
+# Returns
+- `true` if the operator is using GPU computation, `false` otherwise.
+"""
+isgpu(opr::GlaOprVac) = bckEnd(opr.mem.cmpInf) isa GPUKerOpt
+isgpu(opr::InvSctOpr) = isgpu(opr.oprVac)
+isgpu(opr::SctOpr) = isgpu(opr.invSctOpr)
+isgpu(opr::GlaOpr) = isgpu(opr.sctOpr)
 
 """
     setSus!(opr::InvSctOpr, sus::AbstractArray{ComplexF64})
@@ -596,18 +697,27 @@ function Base.show(io::IO, opr::AbstractGlaOpr)
     end
     if isselfoperator(opr)
         print(io, "Self ")
-    else
+    elseif isexternaloperator(opr)
         print(io, "External ")
+    else
+        print(io, "Overlapping ")
+    end
+    if isgpu(opr)
+        print(io, "GPU ")
+    else
+        print(io, "CPU ")
     end
     print(io, _strKnd(opr))
     print(io, " for ")
     if isselfoperator(opr)
         print(io, "a $(eltype(opr)) (" * join(_srcVol(opr).cel, "×") * ") volume ")
-        print(io, "of size (" * join(_srcVol(opr).scl, "×") * ")λ")
+        print(io, "of size (" * join(_srcVol(opr).scl, "×") * ")λ³")
     else
-        print(io, "$(eltype(opr)) (" * join(_srcVol(opr).cel, "×") * ") -> (" * join(_trgVol(opr).cel, "×") * ") volumes ")
-        print(io, "of sizes (" * join(_srcVol(opr).scl, "×") * ")λ -> (" * join(_trgVol(opr).scl, "×") * ")λ ")
-        print(io, "with separation (" * join(_trgVol(opr).org .- _srcVol(opr).org, ", ") * ")λ")
+        print(io, "$(eltype(opr)) (" * join(glaSze(opr)[2][1:3], "×") * ") -> (" * join(glaSze(opr)[1][1:3], "×") * ") volumes ")
+        print(io, "of sizes (" * join(_srcVol(opr).scl, "×") * ")λ³ -> (" * join(_trgVol(opr).scl, "×") * ")λ³")
+        if isexternaloperator(opr)
+            print(io, " with center separation (" * join(_trgVol(opr).org .- _srcVol(opr).org, ", ") * ")λ")
+        end
     end
 end
 Base.show(io::IO, ::MIME"text/plain", opr::AbstractGlaOpr) = show(io, opr)

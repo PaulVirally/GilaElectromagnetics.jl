@@ -9,7 +9,12 @@ Returns the size of the input/output arrays for an `AbstractGlaOpr` in tensor fo
 # Arguments
 - `opr::AbstractGlaOpr`: The operator to check.
 """
-glaSze(opr::GlaOprVac) = ((opr.mem.trgVol.cel..., 3), (opr.mem.srcVol.cel..., 3))
+function glaSze(opr::GlaOprVac)
+    if isoverlappingoperator(opr)
+        return ((length.(opr.trgMsk)..., 3), (length.(opr.srcMsk)..., 3))
+    end
+    return ((opr.mem.trgVol.cel..., 3), (opr.mem.srcVol.cel..., 3))
+end
 glaSze(opr::InvSctOpr) = glaSze(opr.oprVac)
 glaSze(opr::SctOpr) = glaSze(opr.invSctOpr)
 glaSze(opr::GlaOpr) = glaSze(opr.sctOpr)
@@ -29,6 +34,33 @@ glaSze(opr::AbstractGlaOpr, dim::Int) = glaSze(opr)[dim]
 Base.eltype(::AbstractGlaOpr) = ComplexF64
 Base.size(opr::AbstractGlaOpr) = prod.(glaSze(opr))
 Base.size(opr::AbstractGlaOpr, i::Int) = prod(glaSze(opr, i))
+
+# Array type definition
+Base.similar(opr::AbstractGlaOpr) = arrTyp(opr)(undef, size(opr, 1), size(opr, 2))
+function Base.similar(opr::AbstractGlaOpr, ::Type{T}) where T
+    AT = arrTyp(opr)
+    if AT <: CuArray
+        return CuArray{T}(undef, size(opr, 1), size(opr, 2))
+    else
+        return Array{T}(undef, size(opr, 1), size(opr, 2))
+    end
+end
+function Base.similar(opr::AbstractGlaOpr, dims::Tuple{Vararg{Int}})
+    AT = arrTyp(opr)
+    if AT <: CuArray
+        return CuArray{eltype(opr)}(undef, dims...)
+    else
+        return Array{eltype(opr)}(undef, dims...)
+    end
+end
+function Base.similar(opr::AbstractGlaOpr, ::Type{T}, dims::Tuple{Vararg{Int}}) where T
+    AT = arrTyp(opr)
+    if AT <: CuArray
+        return CuArray{T}(undef, dims...)
+    else
+        return Array{T}(undef, dims...)
+    end
+end
 
 # Indexing functions
 Base.IndexStyle(::Type{<:AbstractGlaOpr}) = IndexCartesian()
@@ -94,11 +126,22 @@ LinearAlgebra.mul!(out::AbstractMatrix{ComplexF64}, opr::AbstractGlaOpr, inp::Ab
 
 # Matrix-vector operations
 function Base.:*(opr::GlaOprVac, innVec::AbstractArray{ComplexF64, 4})
-    if bckEnd(opr.mem.cmpInf) isa GPUKerOpt && !(innVec isa CuArray)
+    if isoverlappingoperator(opr)
+        innVecEmb = similar(innVec, opr.mem.srcVol.cel..., 3) # Input array embedded in the input space of the full volume of the overlapping operator
+        fill!(innVecEmb, zero(eltype(innVec)))
+        innVecEmb[opr.srcMsk..., :] .= innVec # Place the input into the embedded array
+        innVec = innVecEmb # Swap out the memory locations
+    end
+    if isgpu(opr) && !(innVec isa CuArray)
         @warn "Input array is not a CuArray. Copying data to GPU."
         innVec = CuArray(innVec)
     end
-    return egoOpr!(opr.mem, deepcopy(innVec))
+    out = egoOpr!(opr.mem, deepcopy(innVec))
+    if isoverlappingoperator(opr)
+        # Mask out the output
+        return out[opr.trgMsk..., :]
+    end
+    return out
 end
 function Base.:*(opr::GlaOprVac, innVec::AbstractVector{ComplexF64})
     innVecArr = reshape(innVec, glaSze(opr, 2))
