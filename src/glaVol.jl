@@ -73,6 +73,32 @@ function Base.:(==)(a::GlaVol, b::GlaVol)
     return a.cel == b.cel && a.scl == b.scl && a.org == b.org && a.grd == b.grd
 end
 
+# Create the union volume of two overlapping volumes
+function uniVol(vol1::GlaVol, vol2::GlaVol)
+    sclMin = min.(vol1.scl, vol2.scl)
+    sclMax = max.(vol1.scl, vol2.scl)
+    sclRat = sclMax .// sclMin
+    @assert all(isinteger.(sclRat)) "Volumes must share a common scale grid for overlap handling"
+    scl = sclMin # Pick the finer scale as the common scale
+
+    # Upper/lower edges of the volumes
+    lwrEdg1 = first.(vol1.grd) .- (vol1.scl .// 2)
+    uprEdg1 = last.(vol1.grd) .+ (vol1.scl .//2)
+    lwrEdg2 = first.(vol2.grd) .- (vol2.scl .// 2)
+    uprEdg2 = last.(vol2.grd) .+ (vol2.scl .//2)
+    minEdg = min.(lwrEdg1, lwrEdg2) # Lower edge of the union volume
+    maxEdg = max.(uprEdg1, uprEdg2) # Upper edge of the union volume
+
+    cel = (maxEdg .- minEdg) .// scl
+    @assert all(isinteger.(cel)) "Computed union volume cell counts must be integers"
+    cel = Tuple(numerator.(cel))
+    org = Tuple(minEdg .+ (cel .* scl .// 2))
+    return GlaVol(cel, scl, org)
+end
+
+Base.union(vol1::GlaVol, vol2::GlaVol) = uniVol(vol1, vol2)
+Base.union(vols::T...) where {T<:GlaVol} = reduce(uniVol, vols)
+
 """
     genVolEve(glaVol::GlaVol)
 
