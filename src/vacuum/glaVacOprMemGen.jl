@@ -144,11 +144,11 @@ function genEgoCrcSlf!(slfVol::GlaVol, egoCrc::AbstractArray{ComplexF64,5},
     glQud = gauQud(intOrd(cmpInf))
     # correction values for singular integrals
     # return order of normal faces is xx yy zz
-    wS = (^(prod(slfVol.scl), -1) .* wekS(slfVol.scl, glQud, cmpInf))
+    wS = (^(prod(Float64.(slfVol.scl)), -1) .* wekS(slfVol.scl, glQud, cmpInf))
     # return order of normal faces is xxY xxZ yyX yyZ zzX zzY xy xz yz
-    wE = (^(prod(slfVol.scl), -1) .* wekE(slfVol.scl, glQud, cmpInf))
+    wE = (^(prod(Float64.(slfVol.scl)), -1) .* wekE(slfVol.scl, glQud, cmpInf))
     # return order of normal faces is xx yy zz xy xz yz
-    wV = (^(prod(slfVol.scl), -1) .* wekV(slfVol.scl, glQud, cmpInf))
+    wV = (^(prod(Float64.(slfVol.scl)), -1) .* wekV(slfVol.scl, glQud, cmpInf))
     # correct singular integrals for coincident and adjacent cells
     for posItr ∈ CartesianIndices(ntuple(itr -> min(slfVol.cel[itr], 2), 3))
         egoFunSng!(view(egoToe, :, :, posItr), posItr, wS, wE, wV, 
