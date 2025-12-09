@@ -266,7 +266,7 @@ function egoFunOut!(egoCrc::AbstractMatrix{ComplexF64}, grd::AbstractVector{<:Ab
     srfMat = zeros(eltype(egoCrc), 36)
     # calculate interaction contributions between all cube faces
     egoSrfAdp!(grd[1], grd[2], grd[3], srfMat, trgFac, srcFac, 1:36, 
-        facPar, srfScl(sclTrg, sclSrc), cmpInf)
+               facPar, srfScl(Float64.(sclTrg), Float64.(sclSrc)), cmpInf)
     # sum contributions depending on source and target current orientation 
     return srfSum!(egoCrc, srfMat)
 end
@@ -341,7 +341,7 @@ function egoFunInn!(egoToe::AbstractArray{ComplexF64,5}, posInd::CartesianIndex{
     if (posInd[1] > 2) || (posInd[2] > 2) || (posInd[3] > 2)
         egoSrfAdp!(Float64(srcGrd[1][posInd[1]]), Float64(srcGrd[2][posInd[2]]), 
             Float64(srcGrd[3][posInd[3]]), srfMat, trgFac, srcFac, 1:36, facPar, 
-            Float64.(srfScl(scl, scl)), cmpInf)
+            Float64.(srfScl(Float64.(scl), Float64.(scl))), cmpInf)
         # add contributions based on source and target current orientation 
         srfSum!(view(egoToe, :, :, posInd), srfMat)
     end
@@ -522,7 +522,7 @@ function egoFunSng!(egoCrc::AbstractMatrix{ComplexF64}, posInd::CartesianIndex{3
     pairListUn = linCon[findall(iszero, transpose(mask))]
     egoSrfAdp!(Float64(srcGrd[1][posInd[1]]), Float64(srcGrd[2][posInd[2]]), 
         Float64(srcGrd[3][posInd[3]]), srfMat, trgFac, srcFac, pairListUn, 
-        facPar, Float64.(srfScl(slfVol.scl, slfVol.scl)), cmpInf)
+        facPar, Float64.(srfScl(Float64.(slfVol.scl), Float64.(slfVol.scl))), cmpInf)
     # correct values of srfMat where needed
     for fp ∈ 1:36
         if mask[facPar[1, fp], facPar[2, fp]] == 1
