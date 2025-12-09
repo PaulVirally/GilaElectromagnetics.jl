@@ -701,7 +701,11 @@ Base.show(io::IO, ::MIME"text/plain", opr::AbstractGlaOpr) = show(io, opr)
 
 include("glaLinAlg.jl")
 
-Serialization.serialize(io::IO, opr::GlaOprVac) = serialize(io, opr.mem)
+function Serialization.serialize(io::IO, opr::GlaOprVac)
+    serialize(io, opr.mem)
+    serialize(io, opr.srcMsk)
+    serialize(io, opr.trgMsk)
+end
 Serialization.deserialize(io::IO, ::Type{GlaOprVac}) = GlaOprVac(deserialize(io, GlaVacOprMem))
 function Serialization.serialize(io::IO, opr::InvSctOpr)
     serialize(io, opr.oprVac)
