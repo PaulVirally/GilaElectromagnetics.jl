@@ -20,3 +20,7 @@ benchmark/*.jld2
 
 # Profiling
 statprof
+
+# It is not recommended to push the fixed state that is associated with saving a
+# Manifest.toml file. In addition, this breaks the docs CI.
+Manifest.toml
