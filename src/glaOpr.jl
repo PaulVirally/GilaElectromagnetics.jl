@@ -167,6 +167,31 @@ function GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false)
 end
 
 """
+    GlaOprVac(mem::GlaVacOprMem)
+
+Construct a vacuum Green's function operator from a memory structure.
+
+# Arguments
+- `mem::GlaVacOprMem`: The memory structure containing the operator's data
+
+# Returns
+- `GlaOprVac`: The vacuum Green's function operator
+"""
+function GlaOprVac(mem::GlaVacOprMem)
+    innMsk = ntuple(_ -> 0:0, 3)
+    outMsk = ntuple(_ -> 0:0, 3)
+    trgVol, srcVol = mem.trgVol, mem.srcVol
+    if trgVol != srcVol && ovrChk(trgVol, srcVol)
+        # Volumes overlap: create the union volume and mask out the input/output regions
+        vol = uniVol(trgVol, srcVol)
+        innMsk = mskRng(srcVol, vol)
+        outMsk = mskRng(trgVol, vol)
+        trgVol, srcVol = vol, vol
+    end
+    return GlaOprVac(mem, innMsk, outMsk)
+end
+
+"""
     GlaOprVac(vol::GlaVol; useGpu::Bool=false)
 
 Construct a vacuum Green's function operator for self-interactions on a single volume.
@@ -701,11 +726,7 @@ Base.show(io::IO, ::MIME"text/plain", opr::AbstractGlaOpr) = show(io, opr)
 
 include("glaLinAlg.jl")
 
-function Serialization.serialize(io::IO, opr::GlaOprVac)
-    serialize(io, opr.mem)
-    serialize(io, opr.srcMsk)
-    serialize(io, opr.trgMsk)
-end
+Serialization.serialize(io::IO, opr::GlaOprVac) = serialize(io, opr.mem)
 Serialization.deserialize(io::IO, ::Type{GlaOprVac}) = GlaOprVac(deserialize(io, GlaVacOprMem))
 function Serialization.serialize(io::IO, opr::InvSctOpr)
     serialize(io, opr.oprVac)
