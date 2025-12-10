@@ -18,7 +18,7 @@ handling grid layouts, and computing volume interactions.
 - `crcIndClc`: Calculate circulant index for self Green function vector
 """
 
-export GlaVol, GlaExtInf, genVolEve, genEveExtInf, genCntVol, sepGrd, crcIndClc
+export GlaVol, GlaExtInf, genVolEve, genEveExtInf, genCntVol, sepGrd, crcIndClc, uniVol
 
 """
     GlaVol
