@@ -53,7 +53,7 @@ function FunctionOperator(opr::AbstractGlaOpr)
     return FunctionOperator(fwd!, inp, out; op_adjoint=adj!, op_inverse=invFwd!, op_adjoint_inverse=invAdj!, isconstant=true, islinear=true)
 end
 
-function LinearOperator(opr::AbstractGlaOpr)
+function LinearOperators.LinearOperator(opr::AbstractGlaOpr)
     T = eltype(opr)
     m, n = size(opr)
     fwd!(w, v) = mul!(w, opr, v, one(T), zero(T)) # Matrix-vector product
@@ -68,7 +68,7 @@ function LinearOperator(opr::AbstractGlaOpr)
     return LinearOperator(T, m, n, is_symmetric, is_hermitian, fwd!, nothing, adj!; S=arrTyp(opr))
 end
 
-function LinearMap(opr::AbstractGlaOpr)
+function LinearMaps.LinearMap(opr::AbstractGlaOpr)
     T = eltype(opr)
     m, n = size(opr)
     fwd!(w, v) = mul!(w, opr, v, one(T), zero(T)) # Matrix-vector product
