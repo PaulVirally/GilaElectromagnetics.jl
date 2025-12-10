@@ -12,6 +12,10 @@ docs/*Notes.bib
 # personal task list file
 todo.jl
 
+# Documenter
+docs/build/
+docs/site/
+
 # MacOS
 .DS_Store
 
@@ -24,3 +28,7 @@ statprof
 # It is not recommended to push the fixed state that is associated with saving a
 # Manifest.toml file. In addition, this breaks the docs CI.
 Manifest.toml
+
+# Code coverage (run ] test --coverage)
+*.jl.cov
+*.jl.*.cov
