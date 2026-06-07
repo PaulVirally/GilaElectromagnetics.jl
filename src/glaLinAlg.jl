@@ -15,6 +15,8 @@ function glaSze(opr::GlaOprVac)
     end
     return ((opr.mem.trgVol.cel..., 3), (opr.mem.srcVol.cel..., 3))
 end
+glaSze(opr::AsyGlaOprVac) = ((opr.mem.trgVol.cel..., 3), (opr.mem.srcVol.cel..., 3))
+glaSze(opr::SymGlaOprVac) = ((opr.mem.trgVol.cel..., 3), (opr.mem.srcVol.cel..., 3))
 glaSze(opr::InvSctOpr) = glaSze(opr.oprVac)
 glaSze(opr::SctOpr) = glaSze(opr.invSctOpr)
 glaSze(opr::GlaOpr) = glaSze(opr.sctOpr)
@@ -125,7 +127,7 @@ LinearAlgebra.mul!(out::AbstractArray{ComplexF64, 4}, opr::AbstractGlaOpr, inp::
 LinearAlgebra.mul!(out::AbstractMatrix{ComplexF64}, opr::AbstractGlaOpr, inp::AbstractMatrix{ComplexF64}, α::Number, β::Number) = axpby!(α, opr * inp, β, out)
 
 # Matrix-vector operations
-function Base.:*(opr::GlaOprVac, innVec::AbstractArray{ComplexF64, 4})
+function Base.:*(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}, innVec::AbstractArray{ComplexF64, 4})
     if isoverlappingoperator(opr)
         innVecEmb = similar(innVec, opr.mem.srcVol.cel..., 3) # Input array embedded in the input space of the full volume of the overlapping operator
         fill!(innVecEmb, zero(eltype(innVec)))
@@ -143,7 +145,7 @@ function Base.:*(opr::GlaOprVac, innVec::AbstractArray{ComplexF64, 4})
     end
     return out
 end
-function Base.:*(opr::GlaOprVac, innVec::AbstractVector{ComplexF64})
+function Base.:*(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}, innVec::AbstractVector{ComplexF64})
     innVecArr = reshape(innVec, glaSze(opr, 2))
     outVec = opr * innVecArr
     return vec(outVec)

@@ -1,4 +1,8 @@
-using Test, GilaElectromagnetics, LinearAlgebra, CUDA
+using Test
+using GilaElectromagnetics
+using LinearAlgebra
+using LinearMaps
+using CUDA
 
 # Test volume sizes and susceptibility
 volSizes = [
@@ -12,12 +16,12 @@ volSizes = [
 sclArr = (1//32, 1//32, 1//32)
 
 # Helper function for dense matrix extraction
-function dnsMat(G::GlaOprVac)
-    mat = zeros(eltype(G), size(G, 1), size(G, 2))
-    for i in 1:size(G, 2)
-        v = zeros(eltype(G), size(G, 2))
-        v[i] = one(eltype(G))
-        mat[:, i] .= G * v
+function dnsMat(opr)
+    mat = zeros(eltype(opr), size(opr, 1), size(opr, 2))
+    for i in 1:size(opr, 2)
+        v = zeros(eltype(opr), size(opr, 2))
+        v[i] = one(eltype(opr))
+        mat[:, i] .= opr * v
     end
     return mat
 end
@@ -48,6 +52,28 @@ end
                 @test oprVacGpu.mem.cmpInf isa GPUKerOpt
             end
         end
+    end
+
+    @testset "Asy/SymGlaOprVac Tests" begin
+        vol = GlaVol((8, 8, 8), (1//32, 1//32, 1//32), (0//1, 0//1, 0//1))
+        G₀ = GlaOprVac(vol)
+        G₀_map = LinearMap(G₀)
+
+        manual_asym = (G₀_map - G₀_map') / (2im)
+        manual_sym = (G₀_map + G₀_map') / 2
+        manual_asym_mat = dnsMat(manual_asym)
+        manual_sym_mat = dnsMat(manual_sym)
+
+        asym_G₀ = AsyGlaOprVac(G₀)
+        sym_G₀ = SymGlaOprVac(G₀)
+        asym_G₀_mat = asym_G₀[:, :]
+        sym_G₀_mat = sym_G₀[:, :]
+
+        asym_rel_err = opnorm(asym_G₀_mat - manual_asym_mat) / opnorm(manual_asym_mat)
+        sym_rel_err = opnorm(sym_G₀_mat - manual_sym_mat) / opnorm(manual_sym_mat)
+
+        @test asym_rel_err < 1e-14
+        @test sym_rel_err < 1e-14
     end
 
     @testset "Operator Consistency Tests" begin

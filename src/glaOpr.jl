@@ -28,9 +28,9 @@ using Serialization
 
 import ..GilaVacuum: useCpu!, useGpu!
 
-export GlaOprVac, InvSctOpr, SctOpr, GlaOpr
-export VacuumGreensOperator, InverseScatteringOperator, ScatteringOperator, GreensOperator
-export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, adjoint!, glaSze, slv
+export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, InvSctOpr, SctOpr, GlaOpr
+export VacuumGreensOperator, AsymVacuumGreensOperator, SymGlaOprVac, InverseScatteringOperator, ScatteringOperator, GreensOperator
+export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, adjoint!, glaSze, slv, asym
 
 """
     GlaOprVac
@@ -50,6 +50,32 @@ struct GlaOprVac <: AbstractGlaOpr
     mem::GlaVacOprMem
     srcMsk::NTuple{3, OrdinalRange{Int64, Int64}}
     trgMsk::NTuple{3, OrdinalRange{Int64, Int64}}
+end
+
+"""
+    AsyGlaOprVac
+
+Represents the anti-Hermitian part of the vacuum Green's function operator.
+
+# Fields
+- `mem::GlaVacOprMem`: Memory structure containing the operator's data, including
+  volume information and Fourier coefficients
+"""
+struct AsyGlaOprVac <: AbstractGlaOpr
+    mem::GlaVacOprMem
+end
+
+"""
+    SymGlaOprVac
+
+Represents the Hermitian part of the vacuum Green's function operator.
+
+# Fields
+- `mem::GlaVacOprMem`: Memory structure containing the operator's data, including
+  volume information and Fourier coefficients
+"""
+struct SymGlaOprVac <: AbstractGlaOpr
+    mem::GlaVacOprMem
 end
 
 """
@@ -100,6 +126,8 @@ end
 
 # Type aliases for convenience
 const VacuumGreensOperator = GlaOprVac
+const AsymVacuumGreensOperator = AsyGlaOprVac
+const SymVacuumGreensOperator = SymGlaOprVac
 const InverseScatteringOperator = InvSctOpr
 const ScatteringOperator = SctOpr
 const GreensOperator = GlaOpr
@@ -246,6 +274,90 @@ Construct a vacuum Green's function operator from a full Green's function operat
 - `GlaOprVac`: The vacuum Green's function operator
 """
 GlaOprVac(opr::GlaOpr) = GlaOprVac(opr.sctOpr)
+
+"""
+    AsyGlaOprVac(vol::GlaVol; useGpu::Bool=false)
+
+Construct the anti-Hermitian part of the vacuum Green's function operator for self-interactions on a single volume.
+
+This constructor creates the anti-Hermitian part of the vacuum Green's function operator, which describes the radiated components of electromagnetic interactions within a single volume in free space. This operator shows up in the fluctuation-dissipation theorem and is thus related to certain losses in the system.
+
+# Arguments
+- `vol::GlaVol`: The volume to compute the anti-Hermitian part of the vacuum Green's function for
+- `useGpu::Bool=false`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
+
+# Returns
+- `AsyGlaOprVac`: The anti-Hermitian part of the vacuum Green's function operator
+"""
+function AsyGlaOprVac(vol::GlaVol; useGpu::Bool=false)
+    kerOpt = useGpu ? GPUKerOpt() : CPUKerOpt()
+    mem = GlaVacOprMem(kerOpt, vol, vol)
+    map!(fur -> complex.(imag.(fur)), mem.egoFur) # Take the imaginary part of the Fourier coefficients since Asym commutes with the FFT (to machine epsilon)
+    return AsyGlaOprVac(mem)
+end
+
+"""
+    AsyGlaOprVac(opr::GlaOprVac)
+
+Construct the anti-Hermitian part of the vacuum Green's function operator from a vacuum Green's function operator.
+
+# Arguments
+- `opr::GlaOprVac`: The vacuum Green's function operator to convert into its anti-Hermitian part
+
+# Returns
+- `AsyGlaOprVac`: The anti-Hermitian part of the vacuum Green's function operator
+"""
+function AsyGlaOprVac(opr::GlaOprVac)
+    srcVol, trgVol = opr.mem.srcVol, opr.mem.trgVol
+    if srcVol != trgVol && ovrChk(srcVol, trgVol)
+        throw(ArgumentError("AsyGlaOprVac can only be constructed from a GlaOprVac with identical source and target volumes"))
+    end
+    mem = deepcopy(opr.mem)
+    map!(fur -> complex.(imag.(fur)), mem.egoFur) # Take the imaginary part of the Fourier coefficients since Asym commutes with the FFT (to machine epsilon)
+    return AsyGlaOprVac(mem)
+end
+
+"""
+    SymGlaOprVac(vol::GlaVol; useGpu::Bool=false)
+
+Construct the Hermitian part of the vacuum Green's function operator for self-interactions on a single volume.
+
+This constructor creates the Hermitian part of the vacuum Green's function operator
+
+# Arguments
+- `vol::GlaVol`: The volume to compute the anti-Hermitian part of the vacuum Green's function for
+- `useGpu::Bool=false`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
+
+# Returns
+- `SymGlaOprVac`: The Hermitian part of the vacuum Green's function operator
+"""
+function SymGlaOprVac(vol::GlaVol; useGpu::Bool=false)
+    kerOpt = useGpu ? GPUKerOpt() : CPUKerOpt()
+    mem = GlaVacOprMem(kerOpt, vol, vol)
+    map!(fur -> complex.(real.(fur)), mem.egoFur) # Take the real part of the Fourier coefficients since Sym commutes with the FFT (to machine epsilon)
+    return AsyGlaOprVac(mem)
+end
+
+"""
+    SymGlaOprVac(opr::GlaOprVac)
+
+Construct the Hermitian part of the vacuum Green's function operator from a vacuum Green's function operator.
+
+# Arguments
+- `opr::GlaOprVac`: The vacuum Green's function operator to convert into its Hermitian part
+
+# Returns
+- `SymGlaOprVac`: The Hermitian part of the vacuum Green's function operator
+"""
+function SymGlaOprVac(opr::GlaOprVac)
+    srcVol, trgVol = opr.mem.srcVol, opr.mem.trgVol
+    if srcVol != trgVol && ovrChk(srcVol, trgVol)
+        throw(ArgumentError("AsyGlaOprVac can only be constructed from a GlaOprVac with identical source and target volumes"))
+    end
+    mem = deepcopy(opr.mem)
+    map!(fur -> complex.(real.(fur)), mem.egoFur) # Take the real part of the Fourier coefficients since Asym commutes with the FFT (to machine epsilon)
+    return SymGlaOprVac(mem)
+end
 
 """
     InvSctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray))
@@ -524,9 +636,37 @@ function useGpu!(opr::GlaOpr)
 end
 
 GilaVacuum.arrTyp(opr::GlaOprVac) = arrTyp(opr.mem.cmpInf)
+GilaVacuum.arrTyp(opr::AsyGlaOprVac) = arrTyp(opr.mem.cmpInf)
+GilaVacuum.arrTyp(opr::SymGlaOprVac) = arrTyp(opr.mem.cmpInf)
 GilaVacuum.arrTyp(opr::InvSctOpr) = arrTyp(opr.oprVac)
 GilaVacuum.arrTyp(opr::SctOpr) = arrTyp(opr.invSctOpr)
 GilaVacuum.arrTyp(opr::GlaOpr) = arrTyp(opr.sctOpr)
+
+"""
+    asym(opr::GlaOprVac)
+
+Construct the anti-Hermitian part of a vacuum Green's function operator.
+
+# Arguments
+- `opr::GlaOprVac`: The vacuum Green's function operator to convert into its anti-Hermitian part
+
+# Returns
+- `AsyGlaOprVac`: The anti-Hermitian part of the vacuum Green's function operator
+"""
+asym(opr::GlaOprVac) = AsyGlaOprVac(opr)
+
+"""
+    sym(opr::GlaOprVac)
+
+Construct the -ermitian part of a vacuum Green's function operator.
+
+# Arguments
+- `opr::GlaOprVac`: The vacuum Green's function operator to convert into its Hermitian part
+
+# Returns
+- `SymGlaOprVac`: The Hermitian part of the vacuum Green's function operator
+"""
+sym(opr::GlaOprVac) = SymGlaOprVac(opr)
 
 """
     isadjoint(opr::AbstractGlaOpr)
@@ -540,6 +680,8 @@ Checks if the operator is the adjoint of the Green's operator.
 - `true` if the operator is the adjoint, `false` otherwise.
 """
 isadjoint(opr::GlaOprVac) = opr.mem.cmpInf.adjMod
+isadjoint(opr::AsyGlaOprVac) = false
+isadjoint(opr::SymGlaOprVac) = false
 isadjoint(opr::InvSctOpr) = isadjoint(opr.oprVac)
 isadjoint(opr::SctOpr) = isadjoint(opr.invSctOpr)
 isadjoint(opr::GlaOpr) = isadjoint(opr.sctOpr)
@@ -556,6 +698,8 @@ Checks if the operator is a self Green's operator.
 - `true` if the operator is a self Green's operator, `false` otherwise.
 """
 isselfoperator(opr::GlaOprVac) = (opr.mem.srcVol == opr.mem.trgVol) && all(==(0:0), opr.srcMsk) && all(==(0:0), opr.trgMsk)
+isselfoperator(opr::AsyGlaOprVac) = true # AsyGlaOprVac is always a self operator
+isselfoperator(opr::SymGlaOprVac) = true # SymGlaOprVac is always a self operator
 isselfoperator(opr::InvSctOpr) = isselfoperator(opr.oprVac)
 isselfoperator(opr::SctOpr) = isselfoperator(opr.invSctOpr)
 isselfoperator(opr::GlaOpr) = isselfoperator(opr.sctOpr)
@@ -572,6 +716,8 @@ Checks if the operator is an external Green's operator.
 - `true` if the operator is an external Green's operator, `false` otherwise.
 """
 isexternaloperator(opr::GlaOprVac) = opr.mem.srcVol != opr.mem.trgVol && all(==(0:0), opr.srcMsk) && all(==(0:0), opr.trgMsk)
+isexternaloperator(opr::AsyGlaOprVac) = false # AsyGlaOprVac is always a self operator
+isexternaloperator(opr::SymGlaOprVac) = false # SymGlaOprVac is always a self operator
 isexternaloperator(opr::InvSctOpr) = isexternaloperator(opr.oprVac)
 isexternaloperator(opr::SctOpr) = isexternaloperator(opr.invSctOpr)
 isexternaloperator(opr::GlaOpr) = isexternaloperator(opr.sctOpr)
@@ -588,6 +734,8 @@ Checks if the operator is an overlapping Green's operator.
 - `true` if the operator is an overlapping Green's operator, `false` otherwise.
 """
 isoverlappingoperator(opr::GlaOprVac) = !(isselfoperator(opr) || isexternaloperator(opr))
+isoverlappingoperator(opr::AsyGlaOprVac) = false # AsyGlaOprVac is always a self operator
+isoverlappingoperator(opr::SymGlaOprVac) = false # SymGlaOprVac is always a self operator
 isoverlappingoperator(opr::InvSctOpr) = isoverlappingoperator(opr.oprVac)
 isoverlappingoperator(opr::SctOpr) = isoverlappingoperator(opr.invSctOpr)
 isoverlappingoperator(opr::GlaOpr) = isoverlappingoperator(opr.sctOpr)
@@ -603,7 +751,7 @@ Checks if the operator is using GPU computation.
 # Returns
 - `true` if the operator is using GPU computation, `false` otherwise.
 """
-isgpu(opr::GlaOprVac) = bckEnd(opr.mem.cmpInf) isa GPUKerOpt
+isgpu(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = bckEnd(opr.mem.cmpInf) isa GPUKerOpt
 isgpu(opr::InvSctOpr) = isgpu(opr.oprVac)
 isgpu(opr::SctOpr) = isgpu(opr.invSctOpr)
 isgpu(opr::GlaOpr) = isgpu(opr.sctOpr)
@@ -674,21 +822,23 @@ Returns the solver associated with the operator.
 # Returns
 - The solver used by the operator, which is always a `GlaSlv` instance.
 """
-slv(::GlaOprVac) = GilaSolvers.BiCGStabSolver() # Default solver
+slv(::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = GilaSolvers.BiCGStabSolver() # Default solver
 slv(opr::InvSctOpr) = slv(opr.oprVac)
 slv(opr::SctOpr) = opr.slv
 slv(opr::GlaOpr) = opr.sctOpr.slv
 
 _strKnd(opr::GlaOprVac) = "G₀"
+_strKnd(opr::AsyGlaOprVac) = "Asym(G₀)"
+_strKnd(opr::SymGlaOprVac) = "Sym(G₀)"
 _strKnd(opr::InvSctOpr) = "(I - XG₀)"
 _strKnd(opr::SctOpr) = "(I - XG₀)⁻¹"
 _strKnd(opr::GlaOpr) = "G₀(I - XG₀)⁻¹"
 
-_srcVol(opr::GlaOprVac) = opr.mem.srcVol
+_srcVol(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = opr.mem.srcVol
 _srcVol(opr::InvSctOpr) = _srcVol(opr.oprVac)
 _srcVol(opr::SctOpr) = _srcVol(opr.invSctOpr)
 _srcVol(opr::GlaOpr) = _srcVol(opr.sctOpr)
-_trgVol(opr::GlaOprVac) = opr.mem.trgVol
+_trgVol(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = opr.mem.trgVol
 _trgVol(opr::InvSctOpr) = _trgVol(opr.oprVac)
 _trgVol(opr::SctOpr) = _trgVol(opr.invSctOpr)
 _trgVol(opr::GlaOpr) = _trgVol(opr.sctOpr)
@@ -728,6 +878,9 @@ include("glaLinAlg.jl")
 
 Serialization.serialize(io::IO, opr::GlaOprVac) = serialize(io, opr.mem)
 Serialization.deserialize(io::IO, ::Type{GlaOprVac}) = GlaOprVac(deserialize(io, GlaVacOprMem))
+Serialization.serialize(io::IO, opr::AsyGlaOprVac) = serialize(io, opr.mem)
+Serialization.deserialize(io::IO, ::Type{AsyGlaOprVac}) = AsyGlaOprVac(deserialize(io, GlaVacOprMem))
+Serialization.deserialize(io::IO, ::Type{SymGlaOprVac}) = SymGlaOprVac(deserialize(io, GlaVacOprMem))
 function Serialization.serialize(io::IO, opr::InvSctOpr)
     serialize(io, opr.oprVac)
     sus = opr.sus
