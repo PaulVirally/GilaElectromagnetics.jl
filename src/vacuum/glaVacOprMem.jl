@@ -243,6 +243,34 @@ end
 
 isadjoint(vacOprMem::GlaVacOprMem) = adjMod(vacOprMem.cmpInf)
 
+# deepcopy must regenerate FFTW plans rather than copying the raw C pointers.
+# Two Julia plan objects that share the same C pointer both register a finalizer
+# calling fftw_destroy_plan; when either is GC'd the other becomes a dangling
+# pointer, causing a segfault on the next plan execution.
+#
+# FFTW plans are always created for the non-adjoint (original) volume orientation.
+# If the mem is currently in adjoint state the volumes are swapped back before
+# plan creation, then the adjoint state is re-applied to the new mem.
+function Base.deepcopy_internal(mem::GlaVacOprMem, stackdict::IdDict)
+    haskey(stackdict, mem) && return stackdict[mem]::GlaVacOprMem
+    egoFur = deepcopy(mem.egoFur) # data arrays are safe to deepcopy
+    cmpInf = deepcopy(mem.cmpInf) # mutable struct
+    if isadjoint(mem)
+        # Volumes are currently swapped relative to plan creation order.
+        # Swap back so that GlaVacOprMem creates plans for the original orientation.
+        cmpInf.adjMod = false
+        new_mem = GlaVacOprMem(cmpInf, egoFur, mem.srcVol, mem.trgVol)
+        # Re-apply the adjoint state (swap volumes, update mixInf, set adjMod).
+        new_mem.trgVol, new_mem.srcVol = new_mem.srcVol, new_mem.trgVol
+        new_mem.mixInf = GlaExtInf(new_mem.trgVol, new_mem.srcVol)
+        new_mem.cmpInf.adjMod = true
+    else
+        new_mem = GlaVacOprMem(cmpInf, egoFur, mem.trgVol, mem.srcVol)
+    end
+    stackdict[mem] = new_mem
+    return new_mem
+end
+
 function useCpu!(mem::GlaVacOprMem)
     if mem.cmpInf isa CPUKerOpt
         return

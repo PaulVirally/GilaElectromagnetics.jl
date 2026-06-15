@@ -156,16 +156,10 @@ function invFFT!(egoMem::GlaVacOprMem, lvl::Int, actVec::AbstractArray{ComplexF6
 end
 
 function egoBrnExe!(egoMem::GlaVacOprMem, prgVecEve::AbstractArray{ComplexF64}, prgVecOdd::AbstractArray{ComplexF64}, lvl::Int, bId::Int, cmpInf::CPUKerOpt)
-    # Make sure we still have eveVec and oddVec after the begin end
-    eveVec = prgVecEve
-    oddVec = prgVecOdd
-    # execute split branches---!asynchronous CPU is fine + some speed up!       
-    @sync begin
-        # origin branch
-        Base.Threads.@spawn eveVec = egoBrn!(egoMem, lvl + 1, bId, prgVecEve, cmpInf)
-        # phase modified branch
-        Base.Threads.@spawn oddVec = egoBrn!(egoMem, lvl + 1, nxtBrnId(length(egoMem.dimInf), lvl, bId), prgVecOdd, cmpInf)
-    end
+    # Branches run sequentially: concurrent execution of the same FFTW plan from
+    # multiple Julia tasks causes segfaults due to shared internal scratch space.
+    eveVec = egoBrn!(egoMem, lvl + 1, bId, prgVecEve, cmpInf)
+    oddVec = egoBrn!(egoMem, lvl + 1, nxtBrnId(length(egoMem.dimInf), lvl, bId), prgVecOdd, cmpInf)
     return eveVec, oddVec
 end
 
