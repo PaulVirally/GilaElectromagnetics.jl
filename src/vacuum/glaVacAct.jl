@@ -4,12 +4,12 @@ using KernelAbstractions
 """
     egoOpr!(egoMem::GlaVacOprMem, actVec::AbstractArray{ComplexF64})::AbstractArray{ComplexF64}
 
-Applies the electric Green's function operator to a polarization current density vector, returning the resulting electric field. The input vector is modified in-place to reduce memory allocation.
+Applies the electric Green function operator to a polarization current density vector, returning the resulting electric field. The input vector is modified in-place to reduce memory allocation.
 
 `egoOpr!` uses a fast Fourier transform (FFT) based approach for efficient evaluation. For GPU computation, the function automatically handles device synchronization. The function supports both CPU and GPU backends through the `GlaKerOpt` type.
 
 # Arguments
-- `egoMem::GlaVacOprMem`: Memory structure containing the Green's function operator data and computational options
+- `egoMem::GlaVacOprMem`: Memory structure containing the Green function operator data and computational options
 - `actVec::AbstractArray{ComplexF64}`: Input polarization current density vector. Must be a 4D array with shape (srcCelX, srcCelY, srcCelZ, 3) where the first three dimensions match the source volume dimensions and the last dimension represents the vector components
 
 # Returns

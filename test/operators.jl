@@ -32,13 +32,13 @@ end
             # println("Testing simple GlaOprVac functionality for volume size: $(volDim)")
             volObj = GlaVol(volDim, sclArr, (0//1, 0//1, 0//1))
 
-            # Test self Green's function operator
+            # Test self Green function operator
             oprVac = GlaOprVac(volObj)
             @test oprVac isa GlaOprVac
             @test isselfoperator(oprVac)
             @test !isexternaloperator(oprVac)
 
-            # Test external Green's function operator
+            # Test external Green function operator
             trgVol = GlaVol(volDim, sclArr, (1//1, 1//1, 1//1))
             oprVacExt = GlaOprVac(trgVol, volObj)
             @test oprVacExt isa GlaOprVac

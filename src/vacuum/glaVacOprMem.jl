@@ -9,7 +9,7 @@ using ..GilaVolumes
 """
     GlaVacOprMem
 
-Memory structure for the vacuum Green's function operator. This structure holds all the memory needed for computing the vacuum Green's function operator. The structure is designed to minimize memory allocation during computation. The Fourier transform plans are used to efficiently compute the Green's function integrals. The phase information is used to handle the splitting of Fourier transforms.
+Memory structure for the vacuum Green function operator. This structure holds all the memory needed for computing the vacuum Green function operator. The structure is designed to minimize memory allocation during computation. The Fourier transform plans are used to efficiently compute the Green function integrals. The phase information is used to handle the splitting of Fourier transforms.
 
 # Fields
 - `cmpInf::GlaKerOpt`: Computation information, settings and kernel options, see `GlaKerOpt`
@@ -25,9 +25,9 @@ Memory structure for the vacuum Green's function operator. This structure holds 
 - `phzInf::AbstractVector{<:AbstractArray{ComplexF64}}`: Phase vector for splitting Fourier transforms
 
 # Notes
-- This structure holds all the memory needed for computing the vacuum Green's function operator
+- This structure holds all the memory needed for computing the vacuum Green function operator
 - The structure is designed to minimize memory allocation during computation
-- The Fourier transform plans are used to efficiently compute the Green's function integrals
+- The Fourier transform plans are used to efficiently compute the Green function integrals
 - The phase information is used to handle the splitting of Fourier transforms
 """
 mutable struct GlaVacOprMem
@@ -52,17 +52,17 @@ It may be prudent to create the associated GlaVacOprMem with higher order.
 """
     GlaVacOprMem(cmpInf::GlaKerOpt, egoFur::AbstractVector{<:AbstractArray{ComplexF64}}, trgVol::GlaVol, srcVol::GlaVol=trgVol)
 
-Prepare memory for Green's function operator. When called with a single GlaVol, 
+Prepare memory for Green function operator. When called with a single GlaVol, 
 or identical source and target volumes, yields the self construction. 
 
 # Arguments
 - `cmpInf::GlaKerOpt`: Computation information, settings and kernel options, see `GlaKerOpt`.
-- `egoFur::AbstractVector{<:AbstractArray{ComplexF64}}`: Unique Fourier transform data for Green's function.
+- `egoFur::AbstractVector{<:AbstractArray{ComplexF64}}`: Unique Fourier transform data for Green function.
 - `trgVol::GlaVol`: Target volume or self volume definition.
 - `srcVol::Union{Nothing,GlaVol}=nothing`: Source volume for external construction. Nothing will generate the self construction.
 
 # Returns
-- `GlaVacOprMem`: The memory structure for the Green's function operator.
+- `GlaVacOprMem`: The memory structure for the Green function operator.
 """
 function GlaVacOprMem(cmpInf::GlaKerOpt, egoFur::AbstractVector{<:AbstractArray{ComplexF64}}, trgVol::GlaVol, srcVol::GlaVol=trgVol)
     mixInf = genEveExtInf(trgVol, srcVol)
@@ -84,7 +84,7 @@ include("glaVacOprMemGen.jl") # For genEgoCrc!
 """
     GlaVacOprMem(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol=trgVol)
 
-Prepare memory for Green's function operator. Automatically computes the Fourier transform data.
+Prepare memory for Green function operator. Automatically computes the Fourier transform data.
 
 # Arguments
 - `cmpInf::GlaKerOpt`: Computation information, settings and kernel options, see `GlaKerOpt`.
@@ -92,7 +92,7 @@ Prepare memory for Green's function operator. Automatically computes the Fourier
 - `srcVol::Union{Nothing,GlaVol}=nothing`: Source volume for external construction. Nothing will generate the self construction.
 
 # Returns
-- `GlaVacOprMem`: The memory structure for the Green's function operator.
+- `GlaVacOprMem`: The memory structure for the Green function operator.
 """
 function GlaVacOprMem(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol=trgVol)
     mixInf = genEveExtInf(trgVol, srcVol)

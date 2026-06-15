@@ -27,7 +27,7 @@ export GMRESSolver, BiCGStabSolver, solve, ini!
 include("glaOpr.jl")
 using .GilaOperators
 export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, MulRegGlaOprVac, InvSctOpr, SctOpr, GlaOpr
-export VacuumGreensOperator, AsymVacuumGreensOperator, SymVacuumGreensOperator, MultiRegionVacuumGreensOperator, InverseScatteringOperator, ScatteringOperator, GreensOperator
+export VacuumGreenOperator, AsymVacuumGreenOperator, SymVacuumGreenOperator, MultiRegionVacuumGreenOperator, InverseScatteringOperator, ScatteringOperator, GreenOperator
 export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, adjoint!, glaSze, slv, asym
 
 #
@@ -103,12 +103,12 @@ export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isg
 # egoOpr!---given a GlaOprMem structure and source current distribution, 
 # yield the resulting electromagnetic fields. 
 #
-# GlaOpr---a struct that wraps `egoOpr!` for easy use of the Greens function
+# GlaOpr---a struct that wraps `egoOpr!` for easy use of the Green function
 #
 # glaSze---like `size`, but gives the size of the input/output arrays for a
-# GreensOperator in tensor form
+# GreenOperator in tensor form
 #
-# isadjoint---returns true if the operator is the adjoint of the Greens operator
+# isadjoint---returns true if the operator is the adjoint of the Green operator
 #
 # isselfoperator---returns true if the operator is a self operator
 #

@@ -1,6 +1,6 @@
 using Test, GilaElectromagnetics, CUDA
 
-@testset "CPU-GPU Consistency Tests for Green's Operator" begin
+@testset "CPU-GPU Consistency Tests for Green Operator" begin
     if !CUDA.functional()
         # println("CUDA is not functional. Skipping GPU consistency tests.")
         return
@@ -18,7 +18,7 @@ using Test, GilaElectromagnetics, CUDA
     orgTrg = (1//1, 1//1, 1//1)  # Ensure non-overlapping target volume
 
     for volDim in volSizes
-        # Self Green's function
+        # Self Green function
         volObj = GlaVol(volDim, sclArr, orgSrc)
         oprMemCpu = GlaVacOprMem(CPUKerOpt(), volObj)
         randVecCpu = rand(ComplexF64, oprMemCpu.srcVol.cel..., 3)
@@ -36,7 +36,7 @@ using Test, GilaElectromagnetics, CUDA
         diff = maximum(abs.(outVecCpu .- outVecGpuCpu))
         @test diff < 1e-6
 
-        # External Green's function
+        # External Green function
         volTrg = GlaVol(volDim, sclArr, orgTrg)
         oprMemExtCpu = GlaVacOprMem(CPUKerOpt(), volTrg, volObj)
         randVecExtCpu = rand(ComplexF64, oprMemExtCpu.srcVol.cel..., 3)

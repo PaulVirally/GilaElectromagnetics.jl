@@ -1,21 +1,21 @@
 """
     GilaOperators
 
-This module provides the core operator types for the Gila package, including the vacuum Green's function operator,
+This module provides the core operator types for the Gila package, including the vacuum Green function operator,
 scattering operators, and their compositions.
 
 # Types
 - `AbstractGlaOpr`: Abstract base type for all operators
-- `GlaOprVac`: Vacuum Green's function operator G₀
+- `GlaOprVac`: Vacuum Green function operator G₀
 - `InvSctOpr`: Inverse scattering operator (I - XG₀)⁻¹
 - `SctOpr`: Scattering operator with solver
-- `GlaOpr`: Full Green's function operator G₀(I - XG₀)⁻¹
+- `GlaOpr`: Full Green function operator G₀(I - XG₀)⁻¹
 
 # Type Aliases
-- `VacuumGreensOperator`: Alias for `GlaOprVac`
+- `VacuumGreenOperator`: Alias for `GlaOprVac`
 - `InverseScatteringOperator`: Alias for `InvSctOpr`
 - `ScatteringOperator`: Alias for `SctOpr`
-- `GreensOperator`: Alias for `GlaOpr`
+- `GreenOperator`: Alias for `GlaOpr`
 """
 module GilaOperators
 
@@ -29,13 +29,13 @@ using Serialization
 import ..GilaVacuum: useCpu!, useGpu!
 
 export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, MulRegGlaOprVac, InvSctOpr, SctOpr, GlaOpr
-export VacuumGreensOperator, AsymVacuumGreensOperator, SymVacuumGreensOperator, MultiRegionVacuumGreensOperator, InverseScatteringOperator, ScatteringOperator, GreensOperator
+export VacuumGreenOperator, AsymVacuumGreenOperator, SymVacuumGreenOperator, MultiRegionVacuumGreenOperator, InverseScatteringOperator, ScatteringOperator, GreenOperator
 export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, adjoint!, glaSze, slv, asym
 
 """
     GlaOprVac
 
-Represents the vacuum Green's function operator G₀, which describes electromagnetic
+Represents the vacuum Green function operator G₀, which describes electromagnetic
 interactions in free space.
 
 # Fields
@@ -55,10 +55,10 @@ end
 """
     MulRegGlaOprVac
 
-Represents the vacuum Green's function operator G₀ for multiple disjoint domains, i.e., the source and/or target volumes consist of multiple non-overlapping regions (where the gaps are *not* computed).
+Represents the vacuum Green function operator G₀ for multiple disjoint domains, i.e., the source and/or target volumes consist of multiple non-overlapping regions (where the gaps are *not* computed).
 
 # Fields
-- oprMat::Matrix{GlaOprVac}: Matrix of vacuum Green's function operators for each disjoint region pair
+- oprMat::Matrix{GlaOprVac}: Matrix of vacuum Green function operators for each disjoint region pair
 """
 struct MulRegGlaOprVac <: AbstractGlaOpr
     oprMat::Matrix{GlaOprVac}
@@ -67,7 +67,7 @@ end
 """
     AsyGlaOprVac
 
-Represents the anti-Hermitian part of the vacuum Green's function operator.
+Represents the anti-Hermitian part of the vacuum Green function operator.
 
 # Fields
 - `mem::GlaVacOprMem`: Memory structure containing the operator's data, including
@@ -80,7 +80,7 @@ end
 """
     SymGlaOprVac
 
-Represents the Hermitian part of the vacuum Green's function operator.
+Represents the Hermitian part of the vacuum Green function operator.
 
 # Fields
 - `mem::GlaVacOprMem`: Memory structure containing the operator's data, including
@@ -98,7 +98,7 @@ tensor. This operator describes how electromagnetic fields interact with a mater
 medium.
 
 # Fields
-- `oprVac::GlaOprVac`: The vacuum Green's function operator
+- `oprVac::GlaOprVac`: The vacuum Green function operator
 - `sus::AbstractArray{ComplexF64, 3}`: The susceptibility tensor (isotropic medium)
   representing the material response
 """
@@ -125,8 +125,8 @@ end
 """
     GlaOpr
 
-Represents the full Green's function operator G₀(I - XG₀)⁻¹, which combines the
-vacuum Green's function with the scattering operator to describe electromagnetic
+Represents the full Green function operator G₀(I - XG₀)⁻¹, which combines the
+vacuum Green function with the scattering operator to describe electromagnetic
 interactions in a material medium.
 
 # Fields
@@ -137,13 +137,13 @@ mutable struct GlaOpr <: AbstractGlaOpr
 end
 
 # Type aliases for convenience
-const VacuumGreensOperator = GlaOprVac
-const AsymVacuumGreensOperator = AsyGlaOprVac
-const SymVacuumGreensOperator = SymGlaOprVac
-const MultiRegionVacuumGreensOperator = MulRegGlaOprVac
+const VacuumGreenOperator = GlaOprVac
+const AsymVacuumGreenOperator = AsyGlaOprVac
+const SymVacuumGreenOperator = SymGlaOprVac
+const MultiRegionVacuumGreenOperator = MulRegGlaOprVac
 const InverseScatteringOperator = InvSctOpr
 const ScatteringOperator = SctOpr
-const GreensOperator = GlaOpr
+const GreenOperator = GlaOpr
 
 # Returns true if the volumes overlap
 function ovrChk(vol1::GlaVol, vol2::GlaVol)
@@ -178,9 +178,9 @@ end
 """
     GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false)
 
-Construct a vacuum Green's function operator for external interactions between different volumes.
+Construct a vacuum Green function operator for external interactions between different volumes.
 
-This constructor creates an external Green's function operator that describes electromagnetic interactions between distinct regions in free space. The operator maps sources in the source volume to fields in the target volume, enabling the modeling of coupling effects between different parts of an electromagnetic system. For the computation to work correctly, the source and target volumes must share a common scale grid.
+This constructor creates an external Green function operator that describes electromagnetic interactions between distinct regions in free space. The operator maps sources in the source volume to fields in the target volume, enabling the modeling of coupling effects between different parts of an electromagnetic system. For the computation to work correctly, the source and target volumes must share a common scale grid.
 
 # Arguments
 - `trgVol::GlaVol`: The target volume where the field will be computed
@@ -188,7 +188,7 @@ This constructor creates an external Green's function operator that describes el
 - `useGpu::Bool=false`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 
 # Returns
-- `GlaOprVac`: The vacuum Green's function operator
+- `GlaOprVac`: The vacuum Green function operator
 
 """
 function GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false)
@@ -210,13 +210,13 @@ end
 """
     GlaOprVac(mem::GlaVacOprMem)
 
-Construct a vacuum Green's function operator from a memory structure.
+Construct a vacuum Green function operator from a memory structure.
 
 # Arguments
 - `mem::GlaVacOprMem`: The memory structure containing the operator's data
 
 # Returns
-- `GlaOprVac`: The vacuum Green's function operator
+- `GlaOprVac`: The vacuum Green function operator
 """
 function GlaOprVac(mem::GlaVacOprMem)
     innMsk = ntuple(_ -> 0:0, 3)
@@ -235,16 +235,16 @@ end
 """
     GlaOprVac(vol::GlaVol; useGpu::Bool=false)
 
-Construct a vacuum Green's function operator for self-interactions on a single volume.
+Construct a vacuum Green function operator for self-interactions on a single volume.
 
-This constructor creates a self-interaction Green's function operator where the source and target volumes are identical. The operator describes electromagnetic interactions within a single volume in free space, making it suitable for modeling self-coupling effects in electromagnetic systems.
+This constructor creates a self-interaction Green function operator where the source and target volumes are identical. The operator describes electromagnetic interactions within a single volume in free space, making it suitable for modeling self-coupling effects in electromagnetic systems.
 
 # Arguments
-- `vol::GlaVol`: The volume to compute the self Green's function for
+- `vol::GlaVol`: The volume to compute the self Green function for
 - `useGpu::Bool=false`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 
 # Returns
-- `GlaOprVac`: The vacuum Green's function operator
+- `GlaOprVac`: The vacuum Green function operator
 
 """
 GlaOprVac(vol::GlaVol; useGpu::Bool=false) = GlaOprVac(vol, vol; useGpu=useGpu)
@@ -252,55 +252,55 @@ GlaOprVac(vol::GlaVol; useGpu::Bool=false) = GlaOprVac(vol, vol; useGpu=useGpu)
 """
     GlaOprVac(opr::InvSctOpr)
 
-Construct a vacuum Green's function operator from an inverse scattering operator.
+Construct a vacuum Green function operator from an inverse scattering operator.
 
 # Arguments
-- `opr::InvSctOpr`: The inverse scattering operator to convert into a vacuum Green's function operator
+- `opr::InvSctOpr`: The inverse scattering operator to convert into a vacuum Green function operator
 
 # Returns
-- `GlaOprVac`: The vacuum Green's function operator
+- `GlaOprVac`: The vacuum Green function operator
 """
 GlaOprVac(opr::InvSctOpr) = opr.oprVac
 
 """
     GlaOprVac(opr::SctOpr)
 
-Construct a vacuum Green's function operator from a scattering operator.
+Construct a vacuum Green function operator from a scattering operator.
 
 # Arguments
-- `opr::SctOpr`: The scattering operator to convert into a vacuum Green's function operator
+- `opr::SctOpr`: The scattering operator to convert into a vacuum Green function operator
 
 # Returns
-- `GlaOprVac`: The vacuum Green's function operator
+- `GlaOprVac`: The vacuum Green function operator
 """
 GlaOprVac(opr::SctOpr) = GlaOprVac(opr.invSctOpr)
 
 """
     GlaOprVac(opr::GlaOpr)
 
-Construct a vacuum Green's function operator from a full Green's function operator.
+Construct a vacuum Green function operator from a full Green function operator.
 
 # Arguments
-- `opr::GlaOpr`: The full Green's function operator to convert into a vacuum Green's function operator
+- `opr::GlaOpr`: The full Green function operator to convert into a vacuum Green function operator
 
 # Returns
-- `GlaOprVac`: The vacuum Green's function operator
+- `GlaOprVac`: The vacuum Green function operator
 """
 GlaOprVac(opr::GlaOpr) = GlaOprVac(opr.sctOpr)
 
 """
     AsyGlaOprVac(vol::GlaVol; useGpu::Bool=false)
 
-Construct the anti-Hermitian part of the vacuum Green's function operator for self-interactions on a single volume.
+Construct the anti-Hermitian part of the vacuum Green function operator for self-interactions on a single volume.
 
-This constructor creates the anti-Hermitian part of the vacuum Green's function operator, which describes the radiated components of electromagnetic interactions within a single volume in free space. This operator shows up in the fluctuation-dissipation theorem and is thus related to certain losses in the system.
+This constructor creates the anti-Hermitian part of the vacuum Green function operator, which describes the radiated components of electromagnetic interactions within a single volume in free space. This operator shows up in the fluctuation-dissipation theorem and is thus related to certain losses in the system.
 
 # Arguments
-- `vol::GlaVol`: The volume to compute the anti-Hermitian part of the vacuum Green's function for
+- `vol::GlaVol`: The volume to compute the anti-Hermitian part of the vacuum Green function for
 - `useGpu::Bool=false`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 
 # Returns
-- `AsyGlaOprVac`: The anti-Hermitian part of the vacuum Green's function operator
+- `AsyGlaOprVac`: The anti-Hermitian part of the vacuum Green function operator
 """
 function AsyGlaOprVac(vol::GlaVol; useGpu::Bool=false)
     kerOpt = useGpu ? GPUKerOpt() : CPUKerOpt()
@@ -312,13 +312,13 @@ end
 """
     AsyGlaOprVac(opr::GlaOprVac)
 
-Construct the anti-Hermitian part of the vacuum Green's function operator from a vacuum Green's function operator.
+Construct the anti-Hermitian part of the vacuum Green function operator from a vacuum Green function operator.
 
 # Arguments
-- `opr::GlaOprVac`: The vacuum Green's function operator to convert into its anti-Hermitian part
+- `opr::GlaOprVac`: The vacuum Green function operator to convert into its anti-Hermitian part
 
 # Returns
-- `AsyGlaOprVac`: The anti-Hermitian part of the vacuum Green's function operator
+- `AsyGlaOprVac`: The anti-Hermitian part of the vacuum Green function operator
 """
 function AsyGlaOprVac(opr::GlaOprVac)
     srcVol, trgVol = opr.mem.srcVol, opr.mem.trgVol
@@ -333,16 +333,16 @@ end
 """
     SymGlaOprVac(vol::GlaVol; useGpu::Bool=false)
 
-Construct the Hermitian part of the vacuum Green's function operator for self-interactions on a single volume.
+Construct the Hermitian part of the vacuum Green function operator for self-interactions on a single volume.
 
-This constructor creates the Hermitian part of the vacuum Green's function operator
+This constructor creates the Hermitian part of the vacuum Green function operator
 
 # Arguments
-- `vol::GlaVol`: The volume to compute the anti-Hermitian part of the vacuum Green's function for
+- `vol::GlaVol`: The volume to compute the anti-Hermitian part of the vacuum Green function for
 - `useGpu::Bool=false`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 
 # Returns
-- `SymGlaOprVac`: The Hermitian part of the vacuum Green's function operator
+- `SymGlaOprVac`: The Hermitian part of the vacuum Green function operator
 """
 function SymGlaOprVac(vol::GlaVol; useGpu::Bool=false)
     kerOpt = useGpu ? GPUKerOpt() : CPUKerOpt()
@@ -354,13 +354,13 @@ end
 """
     SymGlaOprVac(opr::GlaOprVac)
 
-Construct the Hermitian part of the vacuum Green's function operator from a vacuum Green's function operator.
+Construct the Hermitian part of the vacuum Green function operator from a vacuum Green function operator.
 
 # Arguments
-- `opr::GlaOprVac`: The vacuum Green's function operator to convert into its Hermitian part
+- `opr::GlaOprVac`: The vacuum Green function operator to convert into its Hermitian part
 
 # Returns
-- `SymGlaOprVac`: The Hermitian part of the vacuum Green's function operator
+- `SymGlaOprVac`: The Hermitian part of the vacuum Green function operator
 """
 function SymGlaOprVac(opr::GlaOprVac)
     srcVol, trgVol = opr.mem.srcVol, opr.mem.trgVol
@@ -375,9 +375,9 @@ end
 """
     MulRegGlaOprVac(trgVols::VT{GlaVol}, srcVols::VT{GlaVol}; useGpu::Bool=false) where VT <: AbstractVector
 
-Construct a vacuum Green's function operator for multiple target and source volumes.
+Construct a vacuum Green function operator for multiple target and source volumes.
 
-This constructor creates a vacuum Green's function operator that describes interactions between multiple target and source volumes.
+This constructor creates a vacuum Green function operator that describes interactions between multiple target and source volumes.
 
 # Arguments
 - `trgVols::VT{GlaVol}`: A vector of target volumes
@@ -385,7 +385,7 @@ This constructor creates a vacuum Green's function operator that describes inter
 - `useGpu::Bool=false`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 
 # Returns
-- `MulRegGlaOprVac`: The vacuum Green's function operator for multiple target and source volumes
+- `MulRegGlaOprVac`: The vacuum Green function operator for multiple target and source volumes
 """
 function MulRegGlaOprVac(trgVols::VT, srcVols::VT; useGpu::Bool=false) where VT <: AbstractVector{GlaVol}
     ops = [GlaOprVac(trgVol, srcVol; useGpu=useGpu) for trgVol in trgVols, srcVol in srcVols]
@@ -455,10 +455,10 @@ InvSctOpr(opr::SctOpr) = opr.invSctOpt
 """
     InvSctOpr(opr::GlaOpr)
 
-Construct an inverse scattering operator from a full Green's function operator.
+Construct an inverse scattering operator from a full Green function operator.
 
 # Arguments
-- `opr::GlaOpr`: The full Green's function operator to convert into an inverse scattering operator
+- `opr::GlaOpr`: The full Green function operator to convert into an inverse scattering operator
 
 # Returns
 - `InvSctOpr`: The inverse scattering operator
@@ -523,12 +523,12 @@ end
 """
     SctOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
 
-Construct a scattering operator from a vacuum Green's function operator.
+Construct a scattering operator from a vacuum Green function operator.
 
-This constructor creates a scattering operator that describes how electromagnetic fields interact with a material medium based on a given vacuum Green's function operator. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the source volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the source volume.
+This constructor creates a scattering operator that describes how electromagnetic fields interact with a material medium based on a given vacuum Green function operator. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the source volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the source volume.
 
 # Arguments
-- `opr::GlaOprVac`: The vacuum Green's function operator to convert into a scattering operator
+- `opr::GlaOprVac`: The vacuum Green function operator to convert into a scattering operator
 - `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
@@ -544,10 +544,10 @@ end
 """
     SctOpr(opr::GlaOpr)
 
-Construct a scattering operator from a full Green's function operator.
+Construct a scattering operator from a full Green function operator.
 
 # Arguments
-- `opr::GlaOpr`: The full Green's function operator to convert into a scattering operator
+- `opr::GlaOpr`: The full Green function operator to convert into a scattering operator
 
 # Returns
 - `SctOpr`: The scattering operator
@@ -557,9 +557,9 @@ SctOpr(opr::GlaOpr) = opr.sctOpr
 """
     GlaOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
 
-Construct a full Green's function operator for self-interactions on a single volume.
+Construct a full Green function operator for self-interactions on a single volume.
 
-This constructor creates a self-interaction full Green's function operator that combines the vacuum Green's function with the scattering operator to describe electromagnetic interactions in a material medium within a single volume. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the volume.
+This constructor creates a self-interaction full Green function operator that combines the vacuum Green function with the scattering operator to describe electromagnetic interactions in a material medium within a single volume. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the volume.
 
 # Arguments
 - `vol::GlaVol`: The volume to compute the self-interaction for
@@ -568,7 +568,7 @@ This constructor creates a self-interaction full Green's function operator that 
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
 
 # Returns
-- `GlaOpr`: The full Green's function operator
+- `GlaOpr`: The full Green function operator
 """
 GlaOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) = 
     GlaOpr(vol, vol, sus; useGpu=useGpu, slv=slv)
@@ -576,9 +576,9 @@ GlaOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArra
 """
     GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
 
-Construct a full Green's function operator for external interactions between different volumes.
+Construct a full Green function operator for external interactions between different volumes.
 
-This constructor creates an external full Green's function operator that combines the vacuum Green's function with the scattering operator to describe electromagnetic interactions in a material medium between distinct regions. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the source volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the source volume.
+This constructor creates an external full Green function operator that combines the vacuum Green function with the scattering operator to describe electromagnetic interactions in a material medium between distinct regions. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the source volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the source volume.
 
 # Arguments
 - `trgVol::GlaVol`: The target volume where the field will be computed
@@ -588,7 +588,7 @@ This constructor creates an external full Green's function operator that combine
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
 
 # Returns
-- `GlaOpr`: The full Green's function operator
+- `GlaOpr`: The full Green function operator
 """
 function GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
     sctOpr = SctOpr(trgVol, srcVol, sus; useGpu=useGpu, slv=slv)
@@ -598,31 +598,31 @@ end
 """
     GlaOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
 
-Construct a full Green's function operator from a vacuum Green's function operator.
+Construct a full Green function operator from a vacuum Green function operator.
 
-This constructor creates a full Green's function operator that combines the vacuum Green's function with the scattering operator to describe electromagnetic interactions in a material medium based on a given vacuum Green's function operator. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the source volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the source volume.
+This constructor creates a full Green function operator that combines the vacuum Green function with the scattering operator to describe electromagnetic interactions in a material medium based on a given vacuum Green function operator. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the source volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the source volume.
 
 # Arguments
-- `opr::GlaOprVac`: The vacuum Green's function operator to convert into a full Green's function operator
+- `opr::GlaOprVac`: The vacuum Green function operator to convert into a full Green function operator
 - `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
 
 # Returns
-- `GlaOpr`: The full Green's function operator
+- `GlaOpr`: The full Green function operator
 """
 GlaOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; slv::GlaSlv=BiCGStabSolver()) = GlaOpr(SctOpr(opr, sus; slv=slv))
 
 """
     GlaOpr(opr::InvSctOpr)
 
-Construct a full Green's function operator from an inverse scattering operator.
+Construct a full Green function operator from an inverse scattering operator.
 
 # Arguments
-- `opr::InvSctOpr`: The inverse scattering operator to convert into a full Green's function operator
+- `opr::InvSctOpr`: The inverse scattering operator to convert into a full Green function operator
 
 # Returns
-- `GlaOpr`: The full Green's function operator
+- `GlaOpr`: The full Green function operator
 """
 GlaOpr(opr::InvSctOpr) = GlaOpr(SctOpr(opr))
 
@@ -709,33 +709,33 @@ GilaVacuum.arrTyp(opr::GlaOpr) = arrTyp(opr.sctOpr)
 """
     asym(opr::GlaOprVac)
 
-Construct the anti-Hermitian part of a vacuum Green's function operator.
+Construct the anti-Hermitian part of a vacuum Green function operator.
 
 # Arguments
-- `opr::GlaOprVac`: The vacuum Green's function operator to convert into its anti-Hermitian part
+- `opr::GlaOprVac`: The vacuum Green function operator to convert into its anti-Hermitian part
 
 # Returns
-- `AsyGlaOprVac`: The anti-Hermitian part of the vacuum Green's function operator
+- `AsyGlaOprVac`: The anti-Hermitian part of the vacuum Green function operator
 """
 asym(opr::GlaOprVac) = AsyGlaOprVac(opr)
 
 """
     sym(opr::GlaOprVac)
 
-Construct the -ermitian part of a vacuum Green's function operator.
+Construct the -ermitian part of a vacuum Green function operator.
 
 # Arguments
-- `opr::GlaOprVac`: The vacuum Green's function operator to convert into its Hermitian part
+- `opr::GlaOprVac`: The vacuum Green function operator to convert into its Hermitian part
 
 # Returns
-- `SymGlaOprVac`: The Hermitian part of the vacuum Green's function operator
+- `SymGlaOprVac`: The Hermitian part of the vacuum Green function operator
 """
 sym(opr::GlaOprVac) = SymGlaOprVac(opr)
 
 """
     isadjoint(opr::AbstractGlaOpr)
 
-Checks if the operator is the adjoint of the Green's operator.
+Checks if the operator is the adjoint of the Green operator.
 
 # Arguments
 - `opr::AbstractGlaOpr`: The operator to check.
@@ -754,13 +754,13 @@ isadjoint(opr::GlaOpr) = isadjoint(opr.sctOpr)
 """
     isselfoperator(opr::AbstractGlaOpr)
 
-Checks if the operator is a self Green's operator.
+Checks if the operator is a self Green operator.
 
 # Arguments
 - `opr::AbstractGlaOpr`: The operator to check.
 
 # Returns
-- `true` if the operator is a self Green's operator, `false` otherwise.
+- `true` if the operator is a self Green operator, `false` otherwise.
 """
 isselfoperator(opr::GlaOprVac) = (opr.mem.srcVol == opr.mem.trgVol) && all(==(0:0), opr.srcMsk) && all(==(0:0), opr.trgMsk)
 isselfoperator(opr::AsyGlaOprVac) = true # AsyGlaOprVac is always a self operator
@@ -773,13 +773,13 @@ isselfoperator(opr::GlaOpr) = isselfoperator(opr.sctOpr)
 """
     isexternaloperator(opr::GlaOprVac)
 
-Checks if the operator is an external Green's operator.
+Checks if the operator is an external Green operator.
 
 # Arguments
 - `opr::GlaOprVac`: The operator to check.
 
 # Returns
-- `true` if the operator is an external Green's operator, `false` otherwise.
+- `true` if the operator is an external Green operator, `false` otherwise.
 """
 isexternaloperator(opr::GlaOprVac) = opr.mem.srcVol != opr.mem.trgVol && all(==(0:0), opr.srcMsk) && all(==(0:0), opr.trgMsk)
 isexternaloperator(opr::AsyGlaOprVac) = false # AsyGlaOprVac is always a self operator
@@ -792,13 +792,13 @@ isexternaloperator(opr::GlaOpr) = isexternaloperator(opr.sctOpr)
 """
     isoverlappingoperator(opr::GlaOprVac)
 
-Checks if the operator is an overlapping Green's operator.
+Checks if the operator is an overlapping Green operator.
 
 # Arguments
 - `opr::GlaOprVac`: The operator to check.
 
 # Returns
-- `true` if the operator is an overlapping Green's operator, `false` otherwise.
+- `true` if the operator is an overlapping Green operator, `false` otherwise.
 """
 isoverlappingoperator(opr::GlaOprVac) = !(isselfoperator(opr) || isexternaloperator(opr))
 isoverlappingoperator(opr::AsyGlaOprVac) = false # AsyGlaOprVac is always a self operator
@@ -866,10 +866,10 @@ end
 """
     setSus!(opr::GlaOpr, sus::AbstractArray{ComplexF64})
 
-Sets the susceptibility tensor for the full Green's function operator.
+Sets the susceptibility tensor for the full Green function operator.
 
 # Arguments
-- `opr::GlaOpr`: The full Green's function operator to modify.
+- `opr::GlaOpr`: The full Green function operator to modify.
 - `sus::AbstractArray{ComplexF64}`: The new susceptibility tensor, either as a flat vector or a 3-tensor.
 
 # Returns

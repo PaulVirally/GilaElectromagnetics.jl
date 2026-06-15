@@ -29,7 +29,7 @@ crtStatsGpu = Dict{Tuple{Int, Int, Int}, BenchmarkTools.Trial}()
 actStatsCpu = Dict{Tuple{Int, Int, Int}, BenchmarkTools.Trial}()
 actStatsGpu = Dict{Tuple{Int, Int, Int}, BenchmarkTools.Trial}()
 
-println("Benchmarking vacuum Green's function operators...")
+println("Benchmarking vacuum Green function operators...")
 
 # CPU Benchmarks
 println("CPU Benchmarks:")

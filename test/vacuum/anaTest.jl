@@ -47,7 +47,7 @@ function egoAna!(anaOut::AbstractArray{ComplexF64}, slfVol::GlaVol, trgRng::Vect
 end
 
 
-@testset "Analytical Self Green's Function Tests" begin
+@testset "Analytical Self Green Function Tests" begin
     volSizes = [
         (6, 6, 6),
         (8, 8, 8),

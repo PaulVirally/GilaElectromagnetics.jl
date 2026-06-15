@@ -5,7 +5,7 @@ using Serialization
 """
     GlaKerOpt
 
-Abstract type for computational information that determines how the Green's function
+Abstract type for computational information that determines how the Green function
 operator is computed. Concrete implementations include `CPUKerOpt` for CPU computation
 and `GPUKerOpt` for GPU computation.
 """
@@ -14,9 +14,9 @@ abstract type GlaKerOpt end
 """
     CPUKerOpt <: GlaKerOpt
 
-Options for CPU computation of the Green's function operator.
+Options for CPU computation of the Green function operator.
 
-`CPUKerOpt` determines the accuracy of the Green's function computation for cells in contact through its integration order. Higher values give better accuracy but require more computation. The phase factor allows for complex frequencies, which is useful for modeling dispersive media or for numerical stability.
+`CPUKerOpt` determines the accuracy of the Green function computation for cells in contact through its integration order. Higher values give better accuracy but require more computation. The phase factor allows for complex frequencies, which is useful for modeling dispersive media or for numerical stability.
 
 # Fields
 - `frqPhz::Number`: Multiplicative scaling factor allowing for complex frequencies
@@ -148,9 +148,9 @@ useGpu(opt::CPUKerOpt) = GPUKerOpt(opt.frqPhz, opt.intOrd, (128, 2, 1), (1, 128,
 """
     GPUKerOpt <: GlaKerOpt
 
-Options for GPU computation of the Green's function operator.
+Options for GPU computation of the Green function operator.
 
-`GPUKerOpt` determines the parallelization strategy for GPU computation through its thread and block counts. The integration order determines the accuracy of the Green's function computation for cells in contact. Higher values give better accuracy but require more computation. The phase factor allows for complex frequencies, which is useful for modeling dispersive media or for numerical stability.
+`GPUKerOpt` determines the parallelization strategy for GPU computation through its thread and block counts. The integration order determines the accuracy of the Green function computation for cells in contact. Higher values give better accuracy but require more computation. The phase factor allows for complex frequencies, which is useful for modeling dispersive media or for numerical stability.
 
 # Fields
 - `frqPhz::Number`: Multiplicative scaling factor allowing for complex frequencies
