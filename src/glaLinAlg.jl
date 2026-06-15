@@ -17,6 +17,7 @@ function glaSze(opr::GlaOprVac)
 end
 glaSze(opr::AsyGlaOprVac) = ((opr.mem.trgVol.cel..., 3), (opr.mem.srcVol.cel..., 3))
 glaSze(opr::SymGlaOprVac) = ((opr.mem.trgVol.cel..., 3), (opr.mem.srcVol.cel..., 3))
+glaSze(opr::MulRegGlaOprVac) = glaSze.(opr.oprMat)
 glaSze(opr::InvSctOpr) = glaSze(opr.oprVac)
 glaSze(opr::SctOpr) = glaSze(opr.invSctOpr)
 glaSze(opr::GlaOpr) = glaSze(opr.sctOpr)
@@ -31,11 +32,18 @@ Returns the size of the input/output arrays for an `AbstractGlaOpr` in tensor fo
 - `dim::Int`: The index of the dimension to check.
 """
 glaSze(opr::AbstractGlaOpr, dim::Int) = glaSze(opr)[dim]
+glaSze(opr::MulRegGlaOprVac, dim::Int) = map(x -> x[dim], glaSze(opr))
 
 # Type and size definitions
 Base.eltype(::AbstractGlaOpr) = ComplexF64
 Base.size(opr::AbstractGlaOpr) = prod.(glaSze(opr))
+function Base.size(opr::MulRegGlaOprVac)
+    rowSzs = [size(opr.oprMat[i, 1], 1) for i in axes(opr.oprMat, 1)]
+    colSzs = [size(opr.oprMat[1, j], 2) for j in axes(opr.oprMat, 2)]
+    return (sum(rowSzs), sum(colSzs))
+end
 Base.size(opr::AbstractGlaOpr, i::Int) = prod(glaSze(opr, i))
+Base.size(opr::MulRegGlaOprVac, i::Int) = size(opr)[i]
 
 # Array type definition
 Base.similar(opr::AbstractGlaOpr) = arrTyp(opr)(undef, size(opr, 1), size(opr, 2))
@@ -145,10 +153,33 @@ function Base.:*(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}, innVec::Abst
     end
     return out
 end
+function Base.:*(opr::MulRegGlaOprVac, innVec::Vector{<:AbstractArray{ComplexF64, 4}})
+    m, n = size(opr.oprMat)
+    @assert length(innVec) == n "expected $n source blocks, got $(length(innVec))"
+    outVec = [opr.oprMat[i, 1] * innVec[1] for i in 1:m] # j = 1
+    for i in 1:m, j in 2:n
+        outVec[i] .+= opr.oprMat[i, j] * innVec[j]
+    end
+    return outVec
+end
 function Base.:*(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}, innVec::AbstractVector{ComplexF64})
     innVecArr = reshape(innVec, glaSze(opr, 2))
     outVec = opr * innVecArr
     return vec(outVec)
+end
+function Base.:*(opr::MulRegGlaOprVac, innVec::AbstractVector{ComplexF64})
+    rowSzs = [size(opr.oprMat[i, 1], 1) for i in axes(opr.oprMat, 1)]
+    colSzs = [size(opr.oprMat[1, j], 2) for j in axes(opr.oprMat, 2)]
+    rowOff = cumsum([0; rowSzs]); colOff = cumsum([0; colSzs])
+    outVec = fill!(similar(innVec, sum(rowSzs)), zero(eltype(innVec)))
+    for i in axes(opr.oprMat, 1)
+        outBlk = view(outVec, (rowOff[i]+1):rowOff[i+1])
+        for j in axes(opr.oprMat, 2)
+            inBlk = view(innVec, (colOff[j]+1):colOff[j+1])
+            outBlk .+= opr.oprMat[i, j] * inBlk
+        end
+    end
+    return outVec
 end
 function Base.:*(opr::InvSctOpr, inp::AbstractArray{ComplexF64, 4})
     # Compute the matrix-vector product (I - XG₀) * inp for inp in 4-tensor form
@@ -185,22 +216,30 @@ function adjoint!(opr::GlaOprVac)
     opr.mem.egoFur = collect(map(arr -> conj.(arr), opr.mem.egoFur))
     return opr
 end
-Base.adjoint(opr::GlaOprVac) = adjoint!(deepcopy(opr))
+adjoint!(opr::Union{AsyGlaOprVac, SymGlaOprVac}) = opr # These operators are Hermitian (self-adjoint)
+function adjoint!(opr::MulRegGlaOprVac)
+    adjMat = similar(opr.oprMat, reverse(size(opr.oprMat))) # New operator matrix with adjoint size
+    for i in axes(opr.oprMat, 1)
+        for j in axes(opr.oprMat, 2)
+            adjMat[j, i] = adjoint!(opr.oprMat[i, j])
+        end
+    end
+    # note that now, opr's entries are all adjoint's or the original entries
+    return MulRegGlaOprVac(adjMat)
+end
 function adjoint!(opr::InvSctOpr)
     opr.oprVac = adjoint!(opr.oprVac)
     opr.sus = conj(opr.sus)  # Conjugate the susceptibility
     return opr
 end
-Base.adjoint(opr::InvSctOpr) = adjoint!(deepcopy(opr))
 function adjoint!(opr::SctOpr)
     opr.invSctOpr = adjoint!(opr.invSctOpr)
     return opr
 end
-Base.adjoint(opr::SctOpr) = adjoint!(deepcopy(opr))
 function adjoint!(opr::GlaOpr)
     opr.sctOpr = adjoint!(opr.sctOpr)
     return opr
 end
-Base.adjoint(opr::GlaOpr) = adjoint!(deepcopy(opr))
+Base.adjoint(opr::AbstractGlaOpr) = adjoint!(deepcopy(opr))
 
 include("glaMatFreExtOps.jl")

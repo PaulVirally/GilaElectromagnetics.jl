@@ -26,8 +26,8 @@ export GMRESSolver, BiCGStabSolver, solve, ini!
 
 include("glaOpr.jl")
 using .GilaOperators
-export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, InvSctOpr, SctOpr, GlaOpr
-export VacuumGreensOperator, AsymVacuumGreensOperator, SymVacuumGreensOperator, InverseScatteringOperator, ScatteringOperator, GreensOperator
+export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, MulRegGlaOprVac, InvSctOpr, SctOpr, GlaOpr
+export VacuumGreensOperator, AsymVacuumGreensOperator, SymVacuumGreensOperator, MultiRegionVacuumGreensOperator, InverseScatteringOperator, ScatteringOperator, GreensOperator
 export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, adjoint!, glaSze, slv, asym
 
 #

@@ -14,24 +14,24 @@ function invMul!(w, opr::GlaOpr, v, α, β)
 end
 
 function invMulAdj!(w, opr::AbstractGlaOpr, v, α, β)
-    adjoint!(opr) # Compute with the adjoint operator
-    out = invMul!(w, opr, v, α, β) # Inverse adjoint matrix-vector product
+    adjOpr = adjoint!(opr) # Compute with the adjoint operator
+    out = invMul!(w, adjOpr, v, α, β) # Inverse adjoint matrix-vector product
     adjoint!(opr) # Restore the original operator
     return out
 end
 function invMulAdj!(w, opr::SctOpr, v, α, β)
-    adjoint!(opr.invSctOpr) # Compute with the adjoint operator
-    out = invMul!(w, opr.invSctOpr, v, α, β)
+    adjOpr = adjoint!(opr.invSctOpr) # Compute with the adjoint operator
+    out = invMul!(w, adjOpr, v, α, β)
     adjoint!(opr.invSctOpr) # Restore the original operator
     return out
 end
 function invMulAdj!(w, opr::GlaOpr, v, α, β)
-    adjoint!(opr.sctOpr.invSctOpr) # Compute with the adjoint operator
-    actWInvDag = opr.sctOpr.invSctOpr * v
+    adjOpr = adjoint!(opr.sctOpr.invSctOpr) # Compute with the adjoint operator
+    actWInvDag = adjOpr * v
     adjoint!(opr.sctOpr.invSctOpr) # Restore the original operator
 
-    adjoint!(opr.sctOpr.invSctOpr.oprVac) # Compute with the adjoint operator
-    out = axpby!(α, opr.sctOpr.invSctOpr.oprVac * actWInvDag, β, w)
+    adjOpr = adjoint!(opr.sctOpr.invSctOpr.oprVac) # Compute with the adjoint operator
+    out = axpby!(α, adjOpr * actWInvDag, β, w)
     adjoint!(opr.sctOpr.invSctOpr.oprVac) # Restore the original operator
     return out
 end
@@ -43,8 +43,8 @@ function FunctionOperator(opr::AbstractGlaOpr)
     out = fill!(arrTyp(opr)(undef, m), zero(T)) # Output prototype
     fwd!(w, v, _u, _p, _t) = mul!(w, opr, v, one(T), zero(T)) # Matrix-vector product
     adj!(w, v, _u, _p, _t) = begin # Adjoint matrix-vector product
-        adjoint!(opr) # Compute with the adjoint operator
-        out = mul!(w, opr, v, one(T), zero(T))
+        adjOpr = adjoint!(opr) # Compute with the adjoint operator
+        out = mul!(w, adjOpr, v, one(T), zero(T))
         adjoint!(opr) # Restore the original operator
         return out
     end
@@ -58,8 +58,8 @@ function LinearOperators.LinearOperator(opr::AbstractGlaOpr)
     m, n = size(opr)
     fwd!(w, v) = mul!(w, opr, v, one(T), zero(T)) # Matrix-vector product
     adj!(w, v) = begin # Adjoint matrix-vector product
-        adjoint!(opr) # Compute with the adjoint operator
-        out = mul!(w, opr, v, one(T), zero(T))
+        adjOpr = adjoint!(opr) # Compute with the adjoint operator
+        out = mul!(w, adjOpr, v, one(T), zero(T))
         adjoint!(opr) # Restore the original operator
         return out
     end
@@ -73,8 +73,8 @@ function LinearMaps.LinearMap(opr::AbstractGlaOpr)
     m, n = size(opr)
     fwd!(w, v) = mul!(w, opr, v, one(T), zero(T)) # Matrix-vector product
     adj!(w, v) = begin # Adjoint matrix-vector product
-        adjoint!(opr) # Compute with the adjoint operator
-        out = mul!(w, opr, v, one(T), zero(T))
+        adjOpr = adjoint!(opr) # Compute with the adjoint operator
+        out = mul!(w, adjOpr, v, one(T), zero(T))
         adjoint!(opr) # Restore the original operator
         return out
     end

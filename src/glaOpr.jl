@@ -28,8 +28,8 @@ using Serialization
 
 import ..GilaVacuum: useCpu!, useGpu!
 
-export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, InvSctOpr, SctOpr, GlaOpr
-export VacuumGreensOperator, AsymVacuumGreensOperator, SymGlaOprVac, InverseScatteringOperator, ScatteringOperator, GreensOperator
+export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, MulRegGlaOprVac, InvSctOpr, SctOpr, GlaOpr
+export VacuumGreensOperator, AsymVacuumGreensOperator, SymVacuumGreensOperator, MultiRegionVacuumGreensOperator, InverseScatteringOperator, ScatteringOperator, GreensOperator
 export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, adjoint!, glaSze, slv, asym
 
 """
@@ -50,6 +50,18 @@ struct GlaOprVac <: AbstractGlaOpr
     mem::GlaVacOprMem
     srcMsk::NTuple{3, OrdinalRange{Int64, Int64}}
     trgMsk::NTuple{3, OrdinalRange{Int64, Int64}}
+end
+
+"""
+    MulRegGlaOprVac
+
+Represents the vacuum Green's function operator G₀ for multiple disjoint domains, i.e., the source and/or target volumes consist of multiple non-overlapping regions (where the gaps are *not* computed).
+
+# Fields
+- oprMat::Matrix{GlaOprVac}: Matrix of vacuum Green's function operators for each disjoint region pair
+"""
+struct MulRegGlaOprVac <: AbstractGlaOpr
+    oprMat::Matrix{GlaOprVac}
 end
 
 """
@@ -128,6 +140,7 @@ end
 const VacuumGreensOperator = GlaOprVac
 const AsymVacuumGreensOperator = AsyGlaOprVac
 const SymVacuumGreensOperator = SymGlaOprVac
+const MultiRegionVacuumGreensOperator = MulRegGlaOprVac
 const InverseScatteringOperator = InvSctOpr
 const ScatteringOperator = SctOpr
 const GreensOperator = GlaOpr
@@ -335,7 +348,7 @@ function SymGlaOprVac(vol::GlaVol; useGpu::Bool=false)
     kerOpt = useGpu ? GPUKerOpt() : CPUKerOpt()
     mem = GlaVacOprMem(kerOpt, vol, vol)
     map!(fur -> complex.(real.(fur)), mem.egoFur) # Take the real part of the Fourier coefficients since Sym commutes with the FFT (to machine epsilon)
-    return AsyGlaOprVac(mem)
+    return SymGlaOprVac(mem)
 end
 
 """
@@ -357,6 +370,26 @@ function SymGlaOprVac(opr::GlaOprVac)
     mem = deepcopy(opr.mem)
     map!(fur -> complex.(real.(fur)), mem.egoFur) # Take the real part of the Fourier coefficients since Asym commutes with the FFT (to machine epsilon)
     return SymGlaOprVac(mem)
+end
+
+"""
+    MulRegGlaOprVac(trgVols::VT{GlaVol}, srcVols::VT{GlaVol}; useGpu::Bool=false) where VT <: AbstractVector
+
+Construct a vacuum Green's function operator for multiple target and source volumes.
+
+This constructor creates a vacuum Green's function operator that describes interactions between multiple target and source volumes.
+
+# Arguments
+- `trgVols::VT{GlaVol}`: A vector of target volumes
+- `srcVols::VT{GlaVol}`: A vector of source volumes
+- `useGpu::Bool=false`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
+
+# Returns
+- `MulRegGlaOprVac`: The vacuum Green's function operator for multiple target and source volumes
+"""
+function MulRegGlaOprVac(trgVols::VT, srcVols::VT; useGpu::Bool=false) where VT <: AbstractVector{GlaVol}
+    ops = [GlaOprVac(trgVol, srcVol; useGpu=useGpu) for trgVol in trgVols, srcVol in srcVols]
+    return MulRegGlaOprVac(ops)
 end
 
 """
@@ -603,6 +636,36 @@ function useGpu!(opr::GlaOprVac)
     return opr
 end
 
+function useCpu!(opr::AsyGlaOprVac)
+    useCpu!(opr.mem)
+    return opr
+end
+
+function useGpu!(opr::AsyGlaOprVac)
+    useGpu!(opr.mem)
+    return opr
+end
+
+function useCpu!(opr::SymGlaOprVac)
+    useCpu!(opr.mem)
+    return opr
+end
+
+function useGpu!(opr::SymGlaOprVac)
+    useGpu!(opr.mem)
+    return opr
+end
+
+function useCpu!(opr::MulRegGlaOprVac)
+    map(useCpu!, opr.oprMat)
+    return opr
+end
+
+function useGpu!(opr::MulRegGlaOprVac)
+    map(useGpu!, opr.oprMat)
+    return opr
+end
+
 function useCpu!(opr::InvSctOpr)
     useCpu!(opr.oprVac)
     opr.sus = Array(opr.sus)
@@ -638,6 +701,7 @@ end
 GilaVacuum.arrTyp(opr::GlaOprVac) = arrTyp(opr.mem.cmpInf)
 GilaVacuum.arrTyp(opr::AsyGlaOprVac) = arrTyp(opr.mem.cmpInf)
 GilaVacuum.arrTyp(opr::SymGlaOprVac) = arrTyp(opr.mem.cmpInf)
+GilaVacuum.arrTyp(opr::MulRegGlaOprVac) = arrTyp(first(opr.oprMat))
 GilaVacuum.arrTyp(opr::InvSctOpr) = arrTyp(opr.oprVac)
 GilaVacuum.arrTyp(opr::SctOpr) = arrTyp(opr.invSctOpr)
 GilaVacuum.arrTyp(opr::GlaOpr) = arrTyp(opr.sctOpr)
@@ -682,6 +746,7 @@ Checks if the operator is the adjoint of the Green's operator.
 isadjoint(opr::GlaOprVac) = opr.mem.cmpInf.adjMod
 isadjoint(opr::AsyGlaOprVac) = false
 isadjoint(opr::SymGlaOprVac) = false
+isadjoint(opr::MulRegGlaOprVac) = all(isadjoint.(opr.oprMat))
 isadjoint(opr::InvSctOpr) = isadjoint(opr.oprVac)
 isadjoint(opr::SctOpr) = isadjoint(opr.invSctOpr)
 isadjoint(opr::GlaOpr) = isadjoint(opr.sctOpr)
@@ -700,6 +765,7 @@ Checks if the operator is a self Green's operator.
 isselfoperator(opr::GlaOprVac) = (opr.mem.srcVol == opr.mem.trgVol) && all(==(0:0), opr.srcMsk) && all(==(0:0), opr.trgMsk)
 isselfoperator(opr::AsyGlaOprVac) = true # AsyGlaOprVac is always a self operator
 isselfoperator(opr::SymGlaOprVac) = true # SymGlaOprVac is always a self operator
+isselfoperator(opr::MulRegGlaOprVac) = all(isselfoperator.(opr.oprMat))
 isselfoperator(opr::InvSctOpr) = isselfoperator(opr.oprVac)
 isselfoperator(opr::SctOpr) = isselfoperator(opr.invSctOpr)
 isselfoperator(opr::GlaOpr) = isselfoperator(opr.sctOpr)
@@ -718,6 +784,7 @@ Checks if the operator is an external Green's operator.
 isexternaloperator(opr::GlaOprVac) = opr.mem.srcVol != opr.mem.trgVol && all(==(0:0), opr.srcMsk) && all(==(0:0), opr.trgMsk)
 isexternaloperator(opr::AsyGlaOprVac) = false # AsyGlaOprVac is always a self operator
 isexternaloperator(opr::SymGlaOprVac) = false # SymGlaOprVac is always a self operator
+isexternaloperator(opr::MulRegGlaOprVac) = any(isexternaloperator.(opr.oprMat))
 isexternaloperator(opr::InvSctOpr) = isexternaloperator(opr.oprVac)
 isexternaloperator(opr::SctOpr) = isexternaloperator(opr.invSctOpr)
 isexternaloperator(opr::GlaOpr) = isexternaloperator(opr.sctOpr)
@@ -736,6 +803,7 @@ Checks if the operator is an overlapping Green's operator.
 isoverlappingoperator(opr::GlaOprVac) = !(isselfoperator(opr) || isexternaloperator(opr))
 isoverlappingoperator(opr::AsyGlaOprVac) = false # AsyGlaOprVac is always a self operator
 isoverlappingoperator(opr::SymGlaOprVac) = false # SymGlaOprVac is always a self operator
+isoverlappingoperator(opr::MulRegGlaOprVac) = any(isoverlappingoperator.(opr.oprMat))
 isoverlappingoperator(opr::InvSctOpr) = isoverlappingoperator(opr.oprVac)
 isoverlappingoperator(opr::SctOpr) = isoverlappingoperator(opr.invSctOpr)
 isoverlappingoperator(opr::GlaOpr) = isoverlappingoperator(opr.sctOpr)
@@ -752,6 +820,7 @@ Checks if the operator is using GPU computation.
 - `true` if the operator is using GPU computation, `false` otherwise.
 """
 isgpu(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = bckEnd(opr.mem.cmpInf) isa GPUKerOpt
+isgpu(opr::MulRegGlaOprVac) = all(isgpu.(opr.oprMat))
 isgpu(opr::InvSctOpr) = isgpu(opr.oprVac)
 isgpu(opr::SctOpr) = isgpu(opr.invSctOpr)
 isgpu(opr::GlaOpr) = isgpu(opr.sctOpr)
@@ -823,6 +892,7 @@ Returns the solver associated with the operator.
 - The solver used by the operator, which is always a `GlaSlv` instance.
 """
 slv(::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = GilaSolvers.BiCGStabSolver() # Default solver
+slv(opr::MulRegGlaOprVac) = slv(first(opr.oprMat)) # Assume all operators in the matrix use the same solver
 slv(opr::InvSctOpr) = slv(opr.oprVac)
 slv(opr::SctOpr) = opr.slv
 slv(opr::GlaOpr) = opr.sctOpr.slv
@@ -830,6 +900,7 @@ slv(opr::GlaOpr) = opr.sctOpr.slv
 _strKnd(opr::GlaOprVac) = "G₀"
 _strKnd(opr::AsyGlaOprVac) = "Asym(G₀)"
 _strKnd(opr::SymGlaOprVac) = "Sym(G₀)"
+_strKnd(opr::MulRegGlaOprVac) = "multi-region G₀"
 _strKnd(opr::InvSctOpr) = "(I - XG₀)"
 _strKnd(opr::SctOpr) = "(I - XG₀)⁻¹"
 _strKnd(opr::GlaOpr) = "G₀(I - XG₀)⁻¹"
@@ -873,6 +944,30 @@ function Base.show(io::IO, opr::AbstractGlaOpr)
     end
 end
 Base.show(io::IO, ::MIME"text/plain", opr::AbstractGlaOpr) = show(io, opr)
+function Base.show(io::IO, opr::MulRegGlaOprVac)
+    m, n = size(opr.oprMat)
+    isadjoint(opr) && print(io, "Adjoint ")
+    print(io, isgpu(opr) ? "GPU " : "CPU ")
+    print(io, "multi-region G₀ ")
+    print(io, "($m target", m == 1 ? "" : "s", " × $n source", n == 1 ? "" : "s", ")")
+
+    trgVols = [_trgVol(opr.oprMat[i, 1]) for i in 1:m]
+    srcVols = [_srcVol(opr.oprMat[1, j]) for j in 1:n]
+
+    _fmtVol(v) = "(" * join(v.cel, "×") * ") cells, (" * join(v.scl, "×") * ")λ³"
+
+    println(io)
+    print(io, "  targets:")
+    for (i, v) in enumerate(trgVols)
+        print(io, "\n    [$i] ", _fmtVol(v))
+    end
+    println(io)
+    print(io, "  sources:")
+    for (j, v) in enumerate(srcVols)
+        print(io, "\n    [$j] ", _fmtVol(v))
+    end
+end
+Base.show(io::IO, ::MIME"text/plain", opr::MulRegGlaOprVac) = show(io, opr)
 
 include("glaLinAlg.jl")
 
@@ -880,7 +975,10 @@ Serialization.serialize(io::IO, opr::GlaOprVac) = serialize(io, opr.mem)
 Serialization.deserialize(io::IO, ::Type{GlaOprVac}) = GlaOprVac(deserialize(io, GlaVacOprMem))
 Serialization.serialize(io::IO, opr::AsyGlaOprVac) = serialize(io, opr.mem)
 Serialization.deserialize(io::IO, ::Type{AsyGlaOprVac}) = AsyGlaOprVac(deserialize(io, GlaVacOprMem))
+Serialization.serialize(io::IO, opr::SymGlaOprVac) = serialize(io, opr.mem)
 Serialization.deserialize(io::IO, ::Type{SymGlaOprVac}) = SymGlaOprVac(deserialize(io, GlaVacOprMem))
+Serialization.serialize(io::IO, opr::MulRegGlaOprVac) = serialize(io, opr.oprMat)
+Serialization.deserialize(io::IO, ::Type{MulRegGlaOprVac}) = MulRegGlaOprVac(deserialize(io, Matrix{GlaOprVac}))
 function Serialization.serialize(io::IO, opr::InvSctOpr)
     serialize(io, opr.oprVac)
     sus = opr.sus
