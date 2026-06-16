@@ -657,12 +657,12 @@ function useGpu!(opr::SymGlaOprVac)
 end
 
 function useCpu!(opr::MulRegGlaOprVac)
-    map(useCpu!, opr.oprMat)
+    useCpu!.(opr.oprMat)
     return opr
 end
 
 function useGpu!(opr::MulRegGlaOprVac)
-    map(useGpu!, opr.oprMat)
+    useGpu!.(opr.oprMat)
     return opr
 end
 
