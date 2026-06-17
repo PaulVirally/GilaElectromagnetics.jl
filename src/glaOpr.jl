@@ -322,7 +322,7 @@ Construct the anti-Hermitian part of the vacuum Green function operator from a v
 """
 function AsyGlaOprVac(opr::GlaOprVac)
     srcVol, trgVol = opr.mem.srcVol, opr.mem.trgVol
-    if srcVol != trgVol && ovrChk(srcVol, trgVol)
+    if srcVol != trgVol
         throw(ArgumentError("AsyGlaOprVac can only be constructed from a GlaOprVac with identical source and target volumes"))
     end
     mem = deepcopy(opr.mem)
@@ -364,8 +364,8 @@ Construct the Hermitian part of the vacuum Green function operator from a vacuum
 """
 function SymGlaOprVac(opr::GlaOprVac)
     srcVol, trgVol = opr.mem.srcVol, opr.mem.trgVol
-    if srcVol != trgVol && ovrChk(srcVol, trgVol)
-        throw(ArgumentError("AsyGlaOprVac can only be constructed from a GlaOprVac with identical source and target volumes"))
+    if srcVol != trgVol
+        throw(ArgumentError("SymGlaOprVac can only be constructed from a GlaOprVac with identical source and target volumes"))
     end
     mem = deepcopy(opr.mem)
     map!(fur -> complex.(real.(fur)), mem.egoFur) # Take the real part of the Fourier coefficients since Asym commutes with the FFT (to machine epsilon)
