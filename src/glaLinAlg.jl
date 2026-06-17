@@ -184,9 +184,9 @@ end
 function Base.:*(opr::InvSctOpr, inp::AbstractArray{ComplexF64, 4})
     # Compute the matrix-vector product (I - XG₀) * inp for inp in 4-tensor form
     if isadjoint(opr)
-        return inp - (opr.invSctOpr.oprVac * (opr.invSctOpr.sus .* inp))
+        return inp - (opr.oprVac * (opr.sus .* inp))
     end
-    return inp - (opr.invSctOpr.sus .* (opr.invSctOpr.oprVac * inp))
+    return inp - (opr.sus .* (opr.oprVac * inp))
 end
 function Base.:*(opr::InvSctOpr, inp::AbstractVector{ComplexF64})
     # Compute the matrix-vector product (I - XG₀)⁻¹ * inp for inp in vector form
