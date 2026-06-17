@@ -97,7 +97,7 @@ function uniVol(vol1::GlaVol, vol2::GlaVol)
 end
 
 Base.union(vol1::GlaVol, vol2::GlaVol) = uniVol(vol1, vol2)
-Base.union(vols::T...) where {T<:GlaVol} = reduce(uniVol, vols)
+Base.union(vols::GlaVol...) where {T<:GlaVol} = reduce(uniVol, vols)
 
 """
     genVolEve(glaVol::GlaVol)
