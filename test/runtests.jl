@@ -1,5 +1,16 @@
-using Random
-Random.seed!(0xdeadbeef)
+using Test, Random, GilaElectromagnetics, LinearAlgebra
+using LinearMaps, LinearOperators, SciMLOperators, Serialization, CUDA
+import GilaElectromagnetics.GilaVolumes: uniVol
 
-# include("vacuum/runtests.jl")
-include("operators.jl")
+Random.seed!(0xdeadbeef)
+include("tstHlp.jl")
+
+@testset "GilaElectromagnetics" begin
+    include("volTest.jl")
+    include("vacTest.jl")
+    include("slvTest.jl")
+    include("oprTest.jl")
+    include("linAlgTest.jl")
+    include("extOpsTest.jl")
+    include("physTest.jl")
+end
