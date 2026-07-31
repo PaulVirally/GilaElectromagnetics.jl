@@ -72,7 +72,7 @@ function GlaVacOprMem(cmpInf::GlaKerOpt, egoFur::AbstractVector{<:AbstractArray{
     eoDim = 2^lvl
     # verify that egoFur contains only numeric values
     for eoItr ∈ eachindex(1:eoDim)
-        if !all(isfinite.(egoFur[eoItr]))
+        if !all(isfinite, egoFur[eoItr])
             throw(ArgumentError("Fourier information contains non-numeric values."))
         end
     end
@@ -107,7 +107,7 @@ function GlaVacOprMem(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol=trgVol)
     egoCrc = Array{ComplexF64}(undef, 3, 3, totCelCrc..., totParSrc, totParTrg) # FIXME: Should this be a CuArray if we have access to a GPU?
     genEgoCrc!(egoCrc, trgVol, srcVol, mixInf, cmpInf)
     # verify that egoCrc contains numeric values
-    if !all(isfinite.(egoCrc))
+    if !all(isfinite, egoCrc)
         throw(ArgumentError("Computed circulant contains non-numeric values."))
     end
     # Fourier transform of circulant green function
@@ -121,7 +121,7 @@ function GlaVacOprMem(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol=trgVol)
         egoFurPrp[:, :, :, blkEgoItr(3 * (colItr - 1) + rowItr), srcItr, trgItr] = fftCrcOut * egoCrc[rowItr, colItr, :, :, :, srcItr, trgItr]
     end
     # verify integrity of Fourier transform data
-    if !all(isfinite.(egoFurPrp))
+    if !all(isfinite, egoFurPrp)
         throw(ArgumentError("Fourier transform of circulant contains non-numeric values."))
     end
     # number of unique green function blocks
