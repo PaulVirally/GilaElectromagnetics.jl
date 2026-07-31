@@ -2,7 +2,7 @@ using Test, Random, GilaElectromagnetics, LinearAlgebra
 using LinearMaps, LinearOperators, SciMLOperators, Serialization, CUDA
 import GilaElectromagnetics.GilaVolumes: uniVol
 
-Random.seed!(0xdeadbeef)
+Random.seed!(0x67696c61)
 include("tstHlp.jl")
 
 @testset "GilaElectromagnetics" begin
