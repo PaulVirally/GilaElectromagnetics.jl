@@ -1,77 +1,79 @@
-# Run from the `root` directory
-# julia --threads=auto --project=. benchmark/pltBmk.jl 
+#=
+Plot creation / application times from runBmk.jl. Usage:
 
-using JLD2, Plots, Statistics, BenchmarkTools, LaTeXStrings
+    julia --project=. benchmark/pltBmk.jl [result.(json|jld2)]
 
-# Load results from JLD2 file
-@load "benchmark/bmkResults.jld2" crtStatsCpu crtStatsGpu actStatsCpu actStatsGpu volSiz
+Defaults to the newest .json in benchmark/results/. Plots time versus size for
+the cubic self operators, CPU and GPU overlaid when both are present, and
+saves benchmark/bmk.png.
+=#
+include("bmkEnv.jl")
 
-# Extract sizes for plotting
-volSizFlat = [vol[1] for vol in volSiz]
+using BenchmarkTools
+using JLD2
+using Plots
+using Statistics
 
-# Extract CPU creation statistics
-cpuCrtMeans = [mean(crtStatsCpu[vol].times) / 1e9 for vol in volSiz]  # Convert to seconds
-cpuCrtStds = [std(crtStatsCpu[vol].times) / 1e9 for vol in volSiz]    # Convert to seconds
-
-# Extract GPU creation statistics (if available)
-gpuCrtMeans = []
-gpuCrtStds = []
-if !isempty(crtStatsGpu)
-    gpuCrtMeans = [mean(crtStatsGpu[vol].times) / 1e9 for vol in volSiz if haskey(crtStatsGpu, vol)]
-    gpuCrtStds = [std(crtStatsGpu[vol].times) / 1e9 for vol in volSiz if haskey(crtStatsGpu, vol)]
+function loadGrp(pth::AbstractString)
+    if endswith(pth, ".jld2")
+        return load(pth, "results")
+    end
+    return only(BenchmarkTools.load(pth))
 end
 
-# Extract CPU application statistics
-cpuActMeans = [mean(actStatsCpu[vol].times) / 1e9 for vol in volSiz]  # Convert to seconds
-cpuActStds = [std(actStatsCpu[vol].times) / 1e9 for vol in volSiz]    # Convert to seconds
+resPth = if isempty(ARGS)
+    resDir = joinpath(@__DIR__, "results")
+    candLst = isdir(resDir) ?
+        filter(pth -> endswith(pth, ".json") && !endswith(pth, ".meta.json"),
+            readdir(resDir; join = true)) : String[]
+    if isempty(candLst)
+        error("no result files in $resDir; run benchmark/runbenchmarks.jl " *
+            "first or pass a result file explicitly")
+    end
+    last(sort!(candLst; by = mtime))
+else
+    first(ARGS)
+end
+println("Plotting ", resPth)
+resGrp = loadGrp(resPth)
 
-# Extract GPU application statistics (if available)
-gpuActMeans = []
-gpuActStds = []
-if !isempty(actStatsGpu)
-    gpuActMeans = [mean(actStatsGpu[vol].times) / 1e9 for vol in volSiz if haskey(actStatsGpu, vol)]
-    gpuActStds = [std(actStatsGpu[vol].times) / 1e9 for vol in volSiz if haskey(actStatsGpu, vol)]
+# (n, mean seconds, std seconds) for the cubic self benchmarks of one device
+function slfSrs(resGrp::BenchmarkGroup, opNam::String, devNam::String)
+    (haskey(resGrp, opNam) && haskey(resGrp[opNam], devNam) &&
+        haskey(resGrp[opNam][devNam], "self")) || return nothing
+    ptsLst = Tuple{Int,Float64,Float64}[]
+    for (key, tri) ∈ resGrp[opNam][devNam]["self"]
+        dimLst = parse.(Int, split(key, "x"))
+        allequal(dimLst) || continue # line plot is cubic sizes only
+        tmStd = length(tri.times) > 1 ? std(tri.times) / 1e9 : 0.0
+        push!(ptsLst, (first(dimLst), mean(tri.times) / 1e9, tmStd))
+    end
+    isempty(ptsLst) && return nothing
+    return sort!(ptsLst; by = first)
 end
 
-# Plot creation times
-crtPlt = plot(
-    volSizFlat, cpuCrtMeans,
-    ribbon=cpuCrtStds, label="CPU Creation", xscale=:log2,
-    m=:circle,
-    xticks=([1<<i for i in 1:5], [L"2^{%$i}" for i in 1:5]),
-    ylabel="Time [s]", legend=:topleft, title="Creation Benchmarks"
-)
-if !isempty(gpuCrtMeans)
-    plot!(crtPlt,
-        m=:triangle,
-        volSizFlat, gpuCrtMeans,
-        ribbon=gpuCrtStds, label="GPU Creation"
-    )
+function pltOpr(resGrp::BenchmarkGroup, opNam::String, titNam::String)
+    plt = plot(xscale = :log2, yscale = :log10, ylabel = "Time [s]",
+        title = titNam * " Benchmarks", legend = :topleft)
+    for (devNam, mrk) ∈ (("cpu", :circle), ("gpu", :utriangle))
+        srs = slfSrs(resGrp, opNam, devNam)
+        isnothing(srs) && continue
+        nLst = first.(srs)
+        plot!(plt, nLst, getindex.(srs, 2); ribbon = getindex.(srs, 3),
+            m = mrk, label = uppercase(devNam) * " " * titNam,
+            xticks = (nLst, string.(nLst)))
+    end
+    return plt
 end
 
-# Plot application times
-appPlt = plot(
-    volSizFlat, cpuActMeans,
-    ribbon=cpuActStds, label="CPU Application", xscale=:log2,
-    m=:circle,
-    xticks=([1<<i for i in 1:5], [L"2^{%$i}" for i in 1:5]),
-    xlabel="Operator Size: (n, n, n)",
-    ylabel="Time [s]", legend=:topleft, title="Application Benchmarks"
-)
-if !isempty(gpuActMeans)
-    plot!(appPlt,
-        m=:triangle,
-        volSizFlat, gpuActMeans,
-        ribbon=gpuActStds, label="GPU Application"
-    )
+crtPlt = pltOpr(resGrp, "create", "Creation")
+appPlt = pltOpr(resGrp, "apply", "Application")
+xlabel!(appPlt, "Self operator size: (n, n, n)")
+plt = plot(crtPlt, appPlt; layout = (2, 1), size = (800, 600))
+
+pngPth = joinpath(@__DIR__, "bmk.png")
+savefig(plt, pngPth)
+println("Plot saved as ", pngPth)
+if isinteractive()
+    display(plt)
 end
-
-plt = plot(crtPlt, appPlt, layout=(2, 1), size=(800, 600))
-
-# Save plot
-savefig(plt, "benchmark/bmk.png")
-println("Plot saved as benchmark/bmk.png")
-
-display(plt)
-println("Press Enter to exit...")
-readline()
