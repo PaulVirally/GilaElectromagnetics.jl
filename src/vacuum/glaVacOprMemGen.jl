@@ -111,14 +111,14 @@ function genEgoCrcExt!(egoCrcExt::AbstractArray{ComplexF64,5},
         cntVol = genCntVol(trgVol, srcVol) 
         egoCrcCnt = Array{eltype(egoCrcExt)}(undef, 3, 3, (2 .* cntVol.cel)...)
         genEgoSlf!(egoCrcCnt, cntVol, cmpInf)
-        # pull values for cells in contact 
-        @threads for posItr ∈ CartesianIndices(egoCrcExt[1,1,:,:,:])
+        # pull values for cells in contact
+        @threads for posItr ∈ CartesianIndices(axes(egoCrcExt)[3:5])
             egoFunExtCnt!(cntVol, view(egoCrcExt, :, :, posItr), egoCrcCnt, 
                 posItr, trgVol.cel, sepGrdTrg, sepGrdSrc, trgVol.scl, 
                 srcVol.scl, trgFac, srcFac, facPar, cmpInf)
         end
     else
-        @threads for posItr ∈ CartesianIndices(egoCrcExt[1,1,:,:,:])
+        @threads for posItr ∈ CartesianIndices(axes(egoCrcExt)[3:5])
             egoFunExt!(view(egoCrcExt, :, :, posItr), posItr, trgVol.cel, 
                 sepGrdTrg, sepGrdSrc, trgVol.scl, srcVol.scl, trgFac, srcFac, 
                 facPar, cmpInf)
@@ -136,7 +136,7 @@ function genEgoCrcSlf!(slfVol::GlaVol, egoCrc::AbstractArray{ComplexF64,5},
     # allocate intermediate storage for Toeplitz interaction vector
     egoToe = Array{eltype(egoCrc)}(undef, 3, 3, slfVol.cel...)
     # write Green function, ignoring weakly singular integrals
-    @threads for crtItr ∈ CartesianIndices(egoToe[1,1,:,:,:])
+    @threads for crtItr ∈ CartesianIndices(axes(egoToe)[3:5])
         @inbounds egoFunInn!(egoToe, crtItr, srcGrd, slfVol.scl, trgFac, 
             srcFac, facPar, cmpInf)
     end
@@ -159,7 +159,7 @@ function genEgoCrcSlf!(slfVol::GlaVol, egoCrc::AbstractArray{ComplexF64,5},
     egoToe[2,2,1,1,1] -= 1 / (frqPhz(cmpInf)^2)
     egoToe[3,3,1,1,1] -= 1 / (frqPhz(cmpInf)^2)
     # embed self Toeplitz vector into a circulant vector
-    @threads for crtItr ∈ CartesianIndices(egoCrc[1,1,:,:,:])
+    @threads for crtItr ∈ CartesianIndices(axes(egoCrc)[3:5])
         @inbounds egoToeCrc!(view(egoCrc, :, :, crtItr), egoToe, crtItr, 
             div.(size(egoCrc)[3:5], 2))
     end
@@ -173,20 +173,21 @@ direction under a coordinate reflection.
 function egoToeCrc!(egoCrc::AbstractArray{ComplexF64,2}, egoToe::AbstractArray{ComplexF64,5},
     posInd::CartesianIndex{3}, indSpt::Tuple{Vararg{Integer}})
     
-    if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) || 
+    if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) ||
         posInd[3] == (indSpt[3] + 1)
-        egoCrc[:,:] .= zeros(eltype(egoCrc), 3, 3)
-    else        
+        fill!(egoCrc, zero(eltype(egoCrc)))
+    else
         # flip field under coordinate reflection
         fi = indFlp(posInd[1], indSpt[1])
         fj = indFlp(posInd[2], indSpt[2])
         fk = indFlp(posInd[3], indSpt[3])
         # embedding
-        egoCrc[:,:] .= view(egoToe, :, :, 
-            indSel(posInd[1], indSpt[1]), indSel(posInd[2], indSpt[2]), 
-            indSel(posInd[3], indSpt[3])) .* 
-            [1.0 (fi * fj)  (fi * fk); (fj * fi) 1.0 (fj * fk); 
-            (fk * fi) (fk * fj) 1.0]
+        egoCrc .= view(egoToe, :, :,
+            indSel(posInd[1], indSpt[1]), indSel(posInd[2], indSpt[2]),
+            indSel(posInd[3], indSpt[3])) .*
+            SMatrix{3,3,Float64}(1.0, (fj * fi), (fk * fi),
+            (fi * fj), 1.0, (fk * fj),
+            (fi * fk), (fj * fk), 1.0)
     end
     return nothing
 end
@@ -203,14 +204,14 @@ required when calculating an external Green function.
     trgFac::AbstractArray{<:Number,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
     facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt)
     
-    if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) || 
+    if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) ||
             posInd[3] == (indSpt[3] + 1)
-        egoCrcExt[:,:] .= zeros(eltype(egoCrcExt), 3, 3)
-    else        
-        egoFunOut!(egoCrcExt, [grdSel(posInd[1], indSpt[1], 1, 
-            sepGrdTrg, sepGrdSrc), grdSel(posInd[2], indSpt[2], 2, 
-            sepGrdTrg, sepGrdSrc), grdSel(posInd[3], indSpt[3], 3, 
-            sepGrdTrg, sepGrdSrc)], sclTrg, sclSrc, trgFac, srcFac, facPar, 
+        fill!(egoCrcExt, zero(eltype(egoCrcExt)))
+    else
+        egoFunOut!(egoCrcExt, SVector(grdSel(posInd[1], indSpt[1], 1,
+            sepGrdTrg, sepGrdSrc), grdSel(posInd[2], indSpt[2], 2,
+            sepGrdTrg, sepGrdSrc), grdSel(posInd[3], indSpt[3], 3,
+            sepGrdTrg, sepGrdSrc)), sclTrg, sclSrc, trgFac, srcFac, facPar,
             cmpInf)
     end
     return nothing
@@ -228,29 +229,29 @@ function egoFunExtCnt!(cntVol::GlaVol, egoCrc::AbstractMatrix{ComplexF64},
     srcFac::AbstractArray{<:AbstractFloat,3}, facPar::AbstractMatrix{<:Integer}, 
     cmpInf::GlaKerOpt)
     # separation vector
-    sepVec = [grdSel(posInd[1], indSpt[1], 1, sepGrdTrg, sepGrdSrc), 
-        grdSel(posInd[2], indSpt[2], 2, sepGrdTrg, sepGrdSrc), 
-        grdSel(posInd[3], indSpt[3], 3, sepGrdTrg, sepGrdSrc)]
+    sepVec = SVector(grdSel(posInd[1], indSpt[1], 1, sepGrdTrg, sepGrdSrc),
+        grdSel(posInd[2], indSpt[2], 2, sepGrdTrg, sepGrdSrc),
+        grdSel(posInd[3], indSpt[3], 3, sepGrdTrg, sepGrdSrc))
     # absolute separation
     absSep = abs.(sepVec)
     # branch between contact and non-contact cases
     # contact case
-    if prod(absSep .< (ones(3) .* cntTol .+ ((sclTrg .+ sclSrc) ./ 2.0)))
-        if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) || 
-            posInd[3] == (indSpt[3] + 1) 
-            egoCrc[:,:] .= zeros(eltype(egoCrc), 3, 3)
+    if all(absSep .< (cntTol .+ ((sclTrg .+ sclSrc) ./ 2.0)))
+        if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) ||
+            posInd[3] == (indSpt[3] + 1)
+            fill!(egoCrc, zero(eltype(egoCrc)))
         else
-            egoCntOut!(cntVol, egoCrcCnt, egoCrc, posInd, sclTrg, sclSrc, 
+            egoCntOut!(cntVol, egoCrcCnt, egoCrc, posInd, sclTrg, sclSrc,
                 sepVec)
         end
     # non-contact case
     else
-        if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) || 
+        if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) ||
             posInd[3] == (indSpt[3] + 1)
-            egoCrc[:,:] .= zeros(eltype(egoCrc), 3, 3)
+            fill!(egoCrc, zero(eltype(egoCrc)))
         else
-            egoFunOut!(egoCrc, sepVec, sclTrg, sclSrc, trgFac, 
-                srcFac, facPar, cmpInf)     
+            egoFunOut!(egoCrc, sepVec, sclTrg, sclSrc, trgFac,
+                srcFac, facPar, cmpInf)
         end
     end
     return nothing
@@ -263,9 +264,9 @@ function egoFunOut!(egoCrc::AbstractMatrix{ComplexF64}, grd::AbstractVector{<:Ab
     trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
     facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt)
 
-    srfMat = zeros(eltype(egoCrc), 36)
+    srfMat = zeros(MVector{36,ComplexF64})
     # calculate interaction contributions between all cube faces
-    egoSrfAdp!(grd[1], grd[2], grd[3], srfMat, trgFac, srcFac, 1:36, 
+    egoSrfAdp!(grd[1], grd[2], grd[3], srfMat, trgFac, srcFac, 1:36,
                facPar, srfScl(Float64.(sclTrg), Float64.(sclSrc)), cmpInf)
     # sum contributions depending on source and target current orientation 
     return srfSum!(egoCrc, srfMat)
@@ -278,7 +279,7 @@ function egoCntOut!(cntVol::GlaVol, egoCrcCnt::AbstractArray{ComplexF64,5},
     sclTrg::NTuple{3,Number}, sclSrc::NTuple{3,Number}, 
     sepVec::AbstractVector{<:AbstractFloat})
     # safety zero local section of the Green function
-    egoCrc[:,:] .= zeros(ComplexF64, 3, 3)
+    fill!(egoCrc, zero(eltype(egoCrc)))
     # contact cell locations
     srcCellLocs = [[1,1,1], 
     [Int(sclSrc[dir] / cntVol.scl[dir]) for dir ∈ 1:3]]
@@ -317,14 +318,14 @@ function egoCntOut!(cntVol::GlaVol, egoCrcCnt::AbstractArray{ComplexF64,5},
                 trgCellLocs[1][3]:trgCellLocs[2][3]))
 
             # add result to element calculation
-            egoCrc[:,:] .+= egoCrcCnt[:,:,
-                crcIndClc(cntVol, indTrg, indSrc)]
+            egoCrc .+= view(egoCrcCnt, :, :,
+                crcIndClc(cntVol, indTrg, indSrc))
         end
     end
     totTrgCells = (trgCellLocs[2][3] - trgCellLocs[1][3] + 1) * 
         (trgCellLocs[2][2] - trgCellLocs[1][2] + 1) * 
         (trgCellLocs[2][1] - trgCellLocs[1][1] + 1)
-    egoCrc[:,:] .= egoCrc[:,:] ./ totTrgCells
+    egoCrc ./= totTrgCells
     return nothing
 end
 
@@ -336,10 +337,10 @@ function egoFunInn!(egoToe::AbstractArray{ComplexF64,5}, posInd::CartesianIndex{
     trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
     facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt)
 
-    srfMat = zeros(eltype(egoToe), 36)
     # calculate interaction contributions between all cube faces
     if (posInd[1] > 2) || (posInd[2] > 2) || (posInd[3] > 2)
-        egoSrfAdp!(Float64(srcGrd[1][posInd[1]]), Float64(srcGrd[2][posInd[2]]), 
+        srfMat = zeros(MVector{36,ComplexF64})
+        egoSrfAdp!(Float64(srcGrd[1][posInd[1]]), Float64(srcGrd[2][posInd[2]]),
             Float64(srcGrd[3][posInd[3]]), srfMat, trgFac, srcFac, 1:36, facPar, 
             Float64.(srfScl(Float64.(scl), Float64.(scl))), cmpInf)
         # add contributions based on source and target current orientation 
@@ -364,7 +365,7 @@ function egoFunSng!(egoCrc::AbstractMatrix{ComplexF64}, posInd::CartesianIndex{3
     trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
     facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt)
 
-    srfMat = zeros(eltype(egoCrc), 36)
+    srfMat = zeros(MVector{36,ComplexF64})
     # linear index conversion
     linCon = LinearIndices((1:6, 1:6))
     # face convention yzL yzU (x-faces) xzL xzU (y-faces) xyL xyU (z-faces)
