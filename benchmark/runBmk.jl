@@ -48,7 +48,7 @@ end
 check_threads()
 
 println("Building benchmark suite (constructs the application operators)...")
-include("benchmarks.jl")
+include("bmk.jl")
 
 # tune evals for the cheap application benchmarks; the creation benchmarks
 # have fixed samples/evals and are not tuned
