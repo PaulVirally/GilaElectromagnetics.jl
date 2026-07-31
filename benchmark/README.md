@@ -7,9 +7,9 @@ on CPU (and GPU when `CUDA.functional()`).
 ## Running
 
 ```
-julia --project=. -t auto benchmark/runbenchmarks.jl         # full reference run (slow)
-julia --project=. -t auto benchmark/runbenchmarks.jl --quick # small sizes, for iterating
-julia --project=. -t auto benchmark/runbenchmarks.jl --big   # adds application-only (48,64) self sizes
+julia --project=. -t auto benchmark/runBmk.jl         # full reference run (slow)
+julia --project=. -t auto benchmark/runBmk.jl --quick # small sizes, for iterating
+julia --project=. -t auto benchmark/runBmk.jl --big   # adds application-only (48,64) self sizes
 ```
 
 The scripts manage their own environment (`benchmark/Project.toml`). The first
