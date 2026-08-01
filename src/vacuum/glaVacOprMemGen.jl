@@ -12,6 +12,25 @@ const cntTol = 1e-8;
 
 include("glaVacOprMemInt.jl") # For integrals
 
+#=
+Threaded loop over cell indices for the adaptive-cubature fill. Per-cell cost
+is wildly non-uniform (near cells subdivide heavily, far cells exit at the
+absolute tolerance), so on Julia ≥ 1.11 greedy scheduling is used to keep the
+near-corner cells from serializing on a single thread.
+=#
+function thrCubFil!(celFun::F, itrSpc::CartesianIndices{3}) where {F<:Function}
+    @static if VERSION >= v"1.11"
+        @threads :greedy for posItr ∈ itrSpc
+            celFun(posItr)
+        end
+    else
+        @threads for posItr ∈ itrSpc
+            celFun(posItr)
+        end
+    end
+    return nothing
+end
+
 function genEgoCrc!(egoCrc::AbstractArray{ComplexF64}, trgVol::GlaVol, srcVol::GlaVol, mixInf::GlaExtInf, cmpInf::GlaKerOpt)
     # self green function case
     if srcVol == trgVol
@@ -112,15 +131,15 @@ function genEgoCrcExt!(egoCrcExt::AbstractArray{ComplexF64,5},
         egoCrcCnt = Array{eltype(egoCrcExt)}(undef, 3, 3, (2 .* cntVol.cel)...)
         genEgoSlf!(egoCrcCnt, cntVol, cmpInf)
         # pull values for cells in contact
-        @threads for posItr ∈ CartesianIndices(axes(egoCrcExt)[3:5])
-            egoFunExtCnt!(cntVol, view(egoCrcExt, :, :, posItr), egoCrcCnt, 
-                posItr, trgVol.cel, sepGrdTrg, sepGrdSrc, trgVol.scl, 
+        thrCubFil!(CartesianIndices(axes(egoCrcExt)[3:5])) do posItr
+            egoFunExtCnt!(cntVol, view(egoCrcExt, :, :, posItr), egoCrcCnt,
+                posItr, trgVol.cel, sepGrdTrg, sepGrdSrc, trgVol.scl,
                 srcVol.scl, trgFac, srcFac, facPar, cmpInf)
         end
     else
-        @threads for posItr ∈ CartesianIndices(axes(egoCrcExt)[3:5])
-            egoFunExt!(view(egoCrcExt, :, :, posItr), posItr, trgVol.cel, 
-                sepGrdTrg, sepGrdSrc, trgVol.scl, srcVol.scl, trgFac, srcFac, 
+        thrCubFil!(CartesianIndices(axes(egoCrcExt)[3:5])) do posItr
+            egoFunExt!(view(egoCrcExt, :, :, posItr), posItr, trgVol.cel,
+                sepGrdTrg, sepGrdSrc, trgVol.scl, srcVol.scl, trgFac, srcFac,
                 facPar, cmpInf)
         end
     end
@@ -136,8 +155,8 @@ function genEgoCrcSlf!(slfVol::GlaVol, egoCrc::AbstractArray{ComplexF64,5},
     # allocate intermediate storage for Toeplitz interaction vector
     egoToe = Array{eltype(egoCrc)}(undef, 3, 3, slfVol.cel...)
     # write Green function, ignoring weakly singular integrals
-    @threads for crtItr ∈ CartesianIndices(axes(egoToe)[3:5])
-        @inbounds egoFunInn!(egoToe, crtItr, srcGrd, slfVol.scl, trgFac, 
+    thrCubFil!(CartesianIndices(axes(egoToe)[3:5])) do crtItr
+        @inbounds egoFunInn!(egoToe, crtItr, srcGrd, slfVol.scl, trgFac,
             srcFac, facPar, cmpInf)
     end
     # Gauss-Legendre quadrature
