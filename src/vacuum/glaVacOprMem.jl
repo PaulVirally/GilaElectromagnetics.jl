@@ -112,13 +112,24 @@ function GlaVacOprMem(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol=trgVol)
     end
     # Fourier transform of circulant green function
     egoFurPrp = Array{eltype(egoCrc)}(undef, totCelCrc..., 6, totParSrc, totParTrg)
-    # plan Fourier transform
-    fftCrcOut = plan_fft(egoCrc[1,1,:,:,:,1,1], (1, 2, 3))
-    # Fourier transform of the green function, making use of real space 
-    # symmetry under transposition--entries are xx, yy, zz, xy, xz, yz
-    for trgItr ∈ eachindex(1:totParTrg), srcItr ∈ eachindex(1:totParSrc), colItr ∈ eachindex(1:3), rowItr ∈ eachindex(1:colItr)
-        # vector direction moved to outer volume index---largest stride
-        egoFurPrp[:, :, :, blkEgoItr(3 * (colItr - 1) + rowItr), srcItr, trgItr] = fftCrcOut * egoCrc[rowItr, colItr, :, :, :, srcItr, trgItr]
+    # thread the creation-time FFTs, restoring the global FFTW state afterwards
+    fftwThr = FFTW.get_num_threads()
+    FFTW.set_num_threads(Threads.nthreads())
+    try
+        # plan Fourier transform
+        fftCrcOut = plan_fft(Array{ComplexF64}(undef, totCelCrc...), (1, 2, 3))
+        # Fourier transform of the green function, making use of real space
+        # symmetry under transposition--entries are xx, yy, zz, xy, xz, yz
+        # the six unique tensor components are independent for every partition
+        # pair
+        furItr = [(rowItr, colItr, srcItr, trgItr) for trgItr ∈ 1:totParTrg for srcItr ∈ 1:totParSrc for colItr ∈ 1:3 for rowItr ∈ 1:colItr]
+        @threads for furInd ∈ furItr
+            rowItr, colItr, srcItr, trgItr = furInd
+            # vector direction moved to outer volume index---largest stride
+            egoFurPrp[:, :, :, blkEgoItr(3 * (colItr - 1) + rowItr), srcItr, trgItr] = fftCrcOut * egoCrc[rowItr, colItr, :, :, :, srcItr, trgItr]
+        end
+    finally
+        FFTW.set_num_threads(fftwThr)
     end
     # verify integrity of Fourier transform data
     if !all(isfinite, egoFurPrp)
@@ -144,21 +155,22 @@ function GlaVacOprMem(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol=trgVol)
     eoDim = 2^lvl
     # final Fourier coefficients for a given branch
     egoFur = Array{arrTyp(cmpInf)}(undef, eoDim)
-    # intermediate storage
-    egoFurInt = Array{ComplexF64}(undef, max.(div.(totCelCrc, 2), (2,2,2))..., 
-        ddDim, totParSrc, totParTrg)
-    # only one one eighth of the green function is unique 
-    for eoItr ∈ 0:(eoDim - 1)
+    # only one one eighth of the green function is unique; the eight branch
+    # extractions are independent
+    @threads for eoItr ∈ 0:(eoDim - 1)
+        # intermediate storage
+        egoFurInt = Array{ComplexF64}(undef, max.(div.(totCelCrc, 2), (2,2,2))...,
+            ddDim, totParSrc, totParTrg)
         # odd / even branch extraction
-        # egoFur[eoItr + 1] = Array{ComplexF64}(undef, truInf..., ddDim, totParSrc, totParTrg)
-        egoFur[eoItr + 1] = arrTyp(cmpInf)(undef, truInf..., ddDim, totParSrc, totParTrg)
+        egoFurBrn = arrTyp(cmpInf)(undef, truInf..., ddDim, totParSrc, totParTrg)
         # first division is along smallest stride -> largest binary division
-        egoFurInt .= ComplexF64.(egoFurPrp[(1 + 
-            mod(div(eoItr, 4), 2)):2:(end - 1 + mod(div(eoItr, 4), 2)), 
+        egoFurInt .= @view egoFurPrp[(1 +
+            mod(div(eoItr, 4), 2)):2:(end - 1 + mod(div(eoItr, 4), 2)),
             (1 + mod(div(eoItr, 2), 2)):2:(end - 1 + mod(div(eoItr, 2), 2)),
-            (1 + mod(eoItr, 2)):2:(end - 1 + mod(eoItr, 2)),:,:,:])
-        itr = CartesianIndices(egoFur[eoItr + 1])
-        copyto!(egoFur[eoItr + 1], itr, egoFurInt, itr)
+            (1 + mod(eoItr, 2)):2:(end - 1 + mod(eoItr, 2)),:,:,:]
+        itr = CartesianIndices(egoFurBrn)
+        copyto!(egoFurBrn, itr, egoFurInt, itr)
+        egoFur[eoItr + 1] = egoFurBrn
     end
     return GlaVacOprMem(cmpInf, egoFur, trgVol, srcVol)
 end
