@@ -19,6 +19,11 @@ absolute tolerance), so on Julia ≥ 1.11 greedy scheduling is used to keep the
 near-corner cells from serializing on a single thread.
 =#
 function thrCubFil!(celFun::F, itrSpc::CartesianIndices{3}) where {F<:Function}
+    # TODO: Eventually we should work towards fixed quadrature orders for big
+    # separation cells (maybe 4+?) to even out the threading load. For this
+    # though, we will need to do some testing to see what order is sufficient
+    # for the tolerances we are interested in (the DIRECTFN paper has some
+    # starting points for us here)
     @static if VERSION >= v"1.11"
         @threads :greedy for posItr ∈ itrSpc
             celFun(posItr)
