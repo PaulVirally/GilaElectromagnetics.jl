@@ -51,16 +51,19 @@ cmpRun = length(resPthLst) == 2
 foreach(pth -> println("Plotting ", pth), resPthLst)
 runLst = [(runLbl(pth), loadGrp(pth)) for pth ∈ resPthLst]
 
-# (n, mean seconds, std seconds) for the cubic self benchmarks of one device
+# (n, median seconds, 25% quantile, 75% quantile) for the cubic self
+# benchmarks of one device. Medians match what cmpBmk.jl judges, and with the
+# interquartile band stay readable for the heavy-tailed (GC / GPU-sync
+# outlier) timing distributions that make mean ± std ribbons explode
 function slfSrs(resGrp::BenchmarkGroup, opNam::String, devNam::String)
     (haskey(resGrp, opNam) && haskey(resGrp[opNam], devNam) &&
         haskey(resGrp[opNam][devNam], "self")) || return nothing
-    ptsLst = Tuple{Int,Float64,Float64}[]
+    ptsLst = Tuple{Int,Float64,Float64,Float64}[]
     for (key, tri) ∈ resGrp[opNam][devNam]["self"]
         dimLst = parse.(Int, split(key, "x"))
         allequal(dimLst) || continue # line plot is cubic sizes only
-        tmStd = length(tri.times) > 1 ? std(tri.times) / 1e9 : 0.0
-        push!(ptsLst, (first(dimLst), mean(tri.times) / 1e9, tmStd))
+        tmQnt = quantile(tri.times, (0.25, 0.5, 0.75)) ./ 1e9
+        push!(ptsLst, (first(dimLst), tmQnt[2], tmQnt[1], tmQnt[3]))
     end
     isempty(ptsLst) && return nothing
     return sort!(ptsLst; by = first)
@@ -79,16 +82,20 @@ function pltOpr(runLst::AbstractVector, opNam::String, titNam::String)
             srs = slfSrs(resGrp, opNam, devNam)
             isnothing(srs) && continue
             union!(nTck, first.(srs))
-            plot!(plt, first.(srs), getindex.(srs, 2);
-                ribbon = getindex.(srs, 3), m = mrk, color = devItr,
+            medLst = getindex.(srs, 2)
+            # asymmetric interquartile ribbon about the median; quantiles of
+            # positive times keep the band positive on the log axis
+            ribLo = medLst .- getindex.(srs, 3)
+            ribHi = getindex.(srs, 4) .- medLst
+            plot!(plt, first.(srs), medLst;
+                  ribbon = (ribLo, ribHi), m = mrk, color = devItr + (runItr-1)*2,
                 linestyle = oldSty ? :dash : :solid,
-                alpha = oldSty ? 0.5 : 1.0,
                 label = uppercase(devNam) * " " * titNam *
                     (length(runLst) > 1 ? " ($lblNam)" : ""))
         end
     end
     sort!(nTck)
-    plot!(plt; xticks = (nTck, string.(nTck)))
+    isempty(nTck) || plot!(plt; xticks = (nTck, string.(nTck)))
     return plt
 end
 
@@ -98,6 +105,7 @@ xlabel!(appPlt, "Self operator size: (n, n, n)")
 plt = plot(crtPlt, appPlt; layout = (2, 1), size = (800, 600))
 
 pngPth = joinpath(@__DIR__, cmpRun ? "bmkCmp.png" : "bmk.png")
+plot!(plt, dpi=300)
 savefig(plt, pngPth)
 println("Plot saved as ", pngPth)
 if isinteractive()
