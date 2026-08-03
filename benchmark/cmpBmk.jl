@@ -34,8 +34,52 @@ function loadGrp(pth::AbstractString)
     return only(BenchmarkTools.load(pth))
 end
 
+# run metadata: from the jld2 directly, or the .meta.json sidecar of a .json
+# result file (flat string/bool/int values as written by runBmk.jl)
+function loadMta(pth::AbstractString)
+    if endswith(pth, ".jld2")
+        try
+            return load(pth, "metadata")
+        catch
+            return nothing
+        end
+    end
+    mtaPth = first(splitext(pth)) * ".meta.json"
+    isfile(mtaPth) || return nothing
+    mta = Dict{String,Any}()
+    for lin ∈ eachline(mtaPth)
+        mtc = match(r"^\s*\"([^\"]+)\":\s*(.*?),?\s*$", lin)
+        isnothing(mtc) && continue
+        mta[first(mtc.captures)] = strip(last(mtc.captures), '"')
+    end
+    return mta
+end
+
 oldGrp = loadGrp(oldPth)
 newGrp = loadGrp(newPth)
+
+# environment keys that change what a fair time comparison means: a mismatch
+# here (fewer threads, different Julia, different machine) shifts every
+# CPU-parallel benchmark and masquerades as a code regression / improvement
+mtaChkLst = ("julia", "nthreads", "fftw_threads", "blas_threads", "cpu",
+    "cpu_threads", "gpu", "quick", "big")
+oldMta = loadMta(oldPth)
+newMta = loadMta(newPth)
+if isnothing(oldMta) || isnothing(newMta)
+    @warn "run metadata missing for one or both result files; cannot check " *
+        "that the runs are comparable"
+else
+    difLst = [key for key ∈ mtaChkLst if
+        string(get(oldMta, key, missing)) != string(get(newMta, key, missing))]
+    if !isempty(difLst)
+        println("WARNING: these runs may NOT be comparable; metadata differs:")
+        for key ∈ difLst
+            println("    ", key, ": old = ", get(oldMta, key, "?"),
+                ", new = ", get(newMta, key, "?"))
+        end
+        println()
+    end
+end
 
 oldLvs = Dict(join(keyPth, "/") => tri for (keyPth, tri) ∈ BenchmarkTools.leaves(oldGrp))
 newLvs = Dict(join(keyPth, "/") => tri for (keyPth, tri) ∈ BenchmarkTools.leaves(newGrp))
