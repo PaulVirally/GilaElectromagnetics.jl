@@ -80,6 +80,10 @@ metadata = Dict{String,Any}(
     "fftw_threads" => FFTW.get_num_threads(),
     "blas_threads" => BLAS.get_num_threads(),
     "cpu" => Sys.cpu_info()[1].model,
+    "cpu_threads" => Sys.CPU_THREADS,
+    # 1/5/15 minute load averages at save time: a high load from *other*
+    # processes during the run is invisible in nthreads but poisons timings
+    "loadavg" => join(round.(Sys.loadavg(); digits = 2), " "),
     "gpu" => CUDA.functional() ? CUDA.name(CUDA.device()) : "none",
     "quick" => quickRun,
     "big" => bigRun,
