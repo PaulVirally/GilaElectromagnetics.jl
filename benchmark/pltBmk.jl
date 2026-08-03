@@ -1,11 +1,14 @@
 #=
 Plot creation / application times from runBmk.jl. Usage:
 
-    julia --project=. benchmark/pltBmk.jl [result.(json|jld2)]
+    julia --project=. benchmark/pltBmk.jl [old.(json|jld2)] [new.(json|jld2)]
 
-Defaults to the newest .json in benchmark/results/. Plots time versus size for
-the cubic self operators, CPU and GPU overlaid when both are present, and
-saves benchmark/bmk.png.
+With no arguments, plots the newest .json in benchmark/results/. With one
+result file, plots that run: time versus size for the cubic self operators,
+CPU and GPU overlaid when both are present, saved to benchmark/bmk.png. With
+two result files, overlays both runs in the spirit of cmpBmk.jl --- the first
+(old) dashed and faded, the second (new) solid --- saved to
+benchmark/bmkCmp.png.
 =#
 include("bmkEnv.jl")
 
@@ -21,21 +24,32 @@ function loadGrp(pth::AbstractString)
     return only(BenchmarkTools.load(pth))
 end
 
-resPth = if isempty(ARGS)
+# legend label for a result file: the commit part of the runBmk.jl naming
+# convention when present, the bare file name otherwise
+function runLbl(pth::AbstractString)
+    mtc = match(r"^bmk_([0-9a-f]+(?:-dirty)?)_", basename(pth))
+    return isnothing(mtc) ? first(splitext(basename(pth))) :
+        String(first(mtc.captures))
+end
+
+length(ARGS) <= 2 || error("usage: julia --project=. benchmark/pltBmk.jl " *
+    "[old.(json|jld2)] [new.(json|jld2)]")
+resPthLst = if isempty(ARGS)
     resDir = joinpath(@__DIR__, "results")
     candLst = isdir(resDir) ?
         filter(pth -> endswith(pth, ".json") && !endswith(pth, ".meta.json"),
             readdir(resDir; join = true)) : String[]
     if isempty(candLst)
-        error("no result files in $resDir; run benchmark/runbenchmarks.jl " *
+        error("no result files in $resDir; run benchmark/runBmk.jl " *
             "first or pass a result file explicitly")
     end
-    last(sort!(candLst; by = mtime))
+    [last(sort!(candLst; by = mtime))]
 else
-    first(ARGS)
+    collect(String, ARGS)
 end
-println("Plotting ", resPth)
-resGrp = loadGrp(resPth)
+cmpRun = length(resPthLst) == 2
+foreach(pth -> println("Plotting ", pth), resPthLst)
+runLst = [(runLbl(pth), loadGrp(pth)) for pth ∈ resPthLst]
 
 # (n, mean seconds, std seconds) for the cubic self benchmarks of one device
 function slfSrs(resGrp::BenchmarkGroup, opNam::String, devNam::String)
@@ -52,26 +66,38 @@ function slfSrs(resGrp::BenchmarkGroup, opNam::String, devNam::String)
     return sort!(ptsLst; by = first)
 end
 
-function pltOpr(resGrp::BenchmarkGroup, opNam::String, titNam::String)
+function pltOpr(runLst::AbstractVector, opNam::String, titNam::String)
     plt = plot(xscale = :log2, yscale = :log10, ylabel = "Time [s]",
         title = titNam * " Benchmarks", legend = :topleft)
-    for (devNam, mrk) ∈ (("cpu", :circle), ("gpu", :utriangle))
-        srs = slfSrs(resGrp, opNam, devNam)
-        isnothing(srs) && continue
-        nLst = first.(srs)
-        plot!(plt, nLst, getindex.(srs, 2); ribbon = getindex.(srs, 3),
-            m = mrk, label = uppercase(devNam) * " " * titNam,
-            xticks = (nLst, string.(nLst)))
+    nTck = Int[]
+    for (runItr, (lblNam, resGrp)) ∈ enumerate(runLst)
+        # in a comparison the first (old) run is dashed and faded; devices
+        # keep a fixed color across runs so old/new pairs read together
+        oldSty = length(runLst) > 1 && runItr == 1
+        for (devItr, (devNam, mrk)) ∈
+            enumerate((("cpu", :circle), ("gpu", :utriangle)))
+            srs = slfSrs(resGrp, opNam, devNam)
+            isnothing(srs) && continue
+            union!(nTck, first.(srs))
+            plot!(plt, first.(srs), getindex.(srs, 2);
+                ribbon = getindex.(srs, 3), m = mrk, color = devItr,
+                linestyle = oldSty ? :dash : :solid,
+                alpha = oldSty ? 0.5 : 1.0,
+                label = uppercase(devNam) * " " * titNam *
+                    (length(runLst) > 1 ? " ($lblNam)" : ""))
+        end
     end
+    sort!(nTck)
+    plot!(plt; xticks = (nTck, string.(nTck)))
     return plt
 end
 
-crtPlt = pltOpr(resGrp, "create", "Creation")
-appPlt = pltOpr(resGrp, "apply", "Application")
+crtPlt = pltOpr(runLst, "create", "Creation")
+appPlt = pltOpr(runLst, "apply", "Application")
 xlabel!(appPlt, "Self operator size: (n, n, n)")
 plt = plot(crtPlt, appPlt; layout = (2, 1), size = (800, 600))
 
-pngPth = joinpath(@__DIR__, "bmk.png")
+pngPth = joinpath(@__DIR__, cmpRun ? "bmkCmp.png" : "bmk.png")
 savefig(plt, pngPth)
 println("Plot saved as ", pngPth)
 if isinteractive()
