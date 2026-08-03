@@ -47,6 +47,15 @@ function check_threads()
 end
 check_threads()
 
+# a busy machine poisons every threaded timing: warn before spending an hour
+# measuring other people's jobs
+loadBeg = Sys.loadavg()
+if first(loadBeg) > 0.1 * Sys.CPU_THREADS
+    @warn "1-minute load average is $(round(first(loadBeg); digits = 2)) " *
+        "with $(Sys.CPU_THREADS) CPU threads: other processes are using " *
+        "this machine and timings will not be comparable across runs."
+end
+
 println("Building benchmark suite (constructs the application operators)...")
 include("bmk.jl")
 
@@ -81,8 +90,10 @@ metadata = Dict{String,Any}(
     "blas_threads" => BLAS.get_num_threads(),
     "cpu" => Sys.cpu_info()[1].model,
     "cpu_threads" => Sys.CPU_THREADS,
-    # 1/5/15 minute load averages at save time: a high load from *other*
-    # processes during the run is invisible in nthreads but poisons timings
+    # 1/5/15 minute load averages at run start and at save time: a high load
+    # from *other* processes is invisible in nthreads but poisons timings.
+    # Note the end-of-run value includes this benchmark's own threads
+    "loadavg_start" => join(round.(loadBeg; digits = 2), " "),
     "loadavg" => join(round.(Sys.loadavg(); digits = 2), " "),
     "gpu" => CUDA.functional() ? CUDA.name(CUDA.device()) : "none",
     "quick" => quickRun,
