@@ -407,7 +407,35 @@ function useGpu!(mem::GlaVacOprMem)
     return mem
 end
 
-# Add serialization support for GlaVacOprMem
+# As with deepcopy above, serialization must regenerate the FFTW plans rather
+# than write out the raw C pointers, which are only meaningful inside the
+# process that created them. Only the Fourier data, volumes, and kernel options
+# are written, and glaOprPrp rebuilds the plans on load. These methods cover
+# mems reached through the generic serializer (struct fields, array elements);
+# the io::IO methods below are the top level format used for preload files.
+function Serialization.serialize(s::AbstractSerializer, mem::GlaVacOprMem)
+    Serialization.serialize_type(s, GlaVacOprMem)
+    serialize(s, mem.cmpInf isa GPUKerOpt ? collect(map(Array, mem.egoFur)) : mem.egoFur)
+    cmpInf = useCpu(mem.cmpInf)
+    serialize(s, cmpInf.frqPhz)
+    serialize(s, cmpInf.intOrd)
+    serialize(s, cmpInf.adjMod)
+    serialize(s, mem.trgVol)
+    serialize(s, mem.srcVol)
+    serialize(s, mem.mixInf)
+end
+
+function Serialization.deserialize(s::AbstractSerializer, ::Type{GlaVacOprMem})
+    egoFur = deserialize(s)
+    frqPhz = deserialize(s)
+    intOrd = deserialize(s)
+    adjMod = deserialize(s)
+    trgVol = deserialize(s)
+    srcVol = deserialize(s)
+    mixInf = deserialize(s)
+    return glaOprPrp(egoFur, trgVol, srcVol, mixInf, CPUKerOpt(frqPhz, intOrd, adjMod, CPU()))
+end
+
 function Serialization.serialize(io::IO, mem::GlaVacOprMem)
     wasGpu = false
     if mem.cmpInf isa GPUKerOpt

@@ -341,13 +341,27 @@ end
         end
     end
 
-    # Source bug: MulRegGlaOprVac.deserialize calls `deserialize(io, Matrix{GlaOprVac})`
-    # which has no method defined — the custom deserialize implementation is incomplete.
+    # Multi-region blocks go through the generic serializer, which must rebuild
+    # the FFTW plans on load rather than restore the written pointers
     tmpFil = tempname()
     mr = MulRegGlaOprVac([_vol4, _trgV4], [_vol4, _trgV4])
+    vMr = rand(ComplexF64, size(mr, 2))
     try
         open(tmpFil, "w") do io; serialize(io, mr); end
-        @test_throws MethodError open(tmpFil, "r") do io; deserialize(io, MulRegGlaOprVac); end
+        desMr = open(tmpFil, "r") do io; deserialize(io, MulRegGlaOprVac); end
+        @test desMr * vMr ≈ mr * vMr
+    finally
+        isfile(tmpFil) && rm(tmpFil)
+    end
+
+    # Same path for operators nested in a container
+    tmpFil = tempname()
+    opr = _g0()
+    try
+        open(tmpFil, "w") do io; serialize(io, [opr]); end
+        @test isnothing(findfirst(codeunits("FFTW"), read(tmpFil)))
+        desOpr = only(open(deserialize, tmpFil))
+        @test desOpr * v ≈ opr * v
     finally
         isfile(tmpFil) && rm(tmpFil)
     end

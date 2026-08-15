@@ -978,14 +978,16 @@ Serialization.deserialize(io::IO, ::Type{AsyGlaOprVac}) = AsyGlaOprVac(deseriali
 Serialization.serialize(io::IO, opr::SymGlaOprVac) = serialize(io, opr.mem)
 Serialization.deserialize(io::IO, ::Type{SymGlaOprVac}) = SymGlaOprVac(deserialize(io, GlaVacOprMem))
 Serialization.serialize(io::IO, opr::MulRegGlaOprVac) = serialize(io, opr.oprMat)
-Serialization.deserialize(io::IO, ::Type{MulRegGlaOprVac}) = MulRegGlaOprVac(deserialize(io, Matrix{GlaOprVac}))
+# The blocks go through the generic serializer, which rebuilds their FFTW plans
+# on load, see vacuum/glaVacOprMem.jl
+Serialization.deserialize(io::IO, ::Type{MulRegGlaOprVac}) = MulRegGlaOprVac(deserialize(io))
 function Serialization.serialize(io::IO, opr::InvSctOpr)
     serialize(io, opr.oprVac)
     sus = opr.sus
     if sus isa CuArray
         sus = Array(sus) # Convert to CPU array for serialization
     end
-    serialize(io, opr.sus)
+    serialize(io, sus)
 end
 function Serialization.deserialize(io::IO, ::Type{InvSctOpr})
     oprVac = deserialize(io, GlaOprVac)
