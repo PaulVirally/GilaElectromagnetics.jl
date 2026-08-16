@@ -46,6 +46,24 @@ const _volOvr4 = GlaVol((4,4,4), stdScl, _ovrOrg4)
     end
 end
 
+@testset "isgpu follows cmpInf" begin
+    # useGpu!/useCpu! swap mem.cmpInf between GPUKerOpt and CPUKerOpt, so isgpu
+    # only needs to check the type of the options. Swapping the options by hand
+    # avoids needing a GPU; nothing here applies the operator. Fresh mem so the
+    # shared _selfMem4 is not mutated.
+    mem = GlaVacOprMem(CPUKerOpt(), _vol4)
+    opr = GlaOprVac(mem)
+    @test !isgpu(opr)
+    @test occursin("CPU", sprint(show, opr))
+
+    mem.cmpInf = GPUKerOpt()
+    @test isgpu(opr)
+    @test occursin("GPU", sprint(show, opr))
+
+    mem.cmpInf = CPUKerOpt()
+    @test !isgpu(opr)
+end
+
 @testset "AsyGlaOprVac / SymGlaOprVac constructors" begin
     gSelf = _g0()
     gExt  = _gExt()

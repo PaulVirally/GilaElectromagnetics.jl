@@ -819,7 +819,9 @@ Checks if the operator is using GPU computation.
 # Returns
 - `true` if the operator is using GPU computation, `false` otherwise.
 """
-isgpu(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = bckEnd(opr.mem.cmpInf) isa GPUKerOpt
+# cmpInf itself is the GlaKerOpt; bckEnd(cmpInf) is a KernelAbstractions backend,
+# which is never a GlaKerOpt
+isgpu(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = opr.mem.cmpInf isa GPUKerOpt
 isgpu(opr::MulRegGlaOprVac) = all(isgpu.(opr.oprMat))
 isgpu(opr::InvSctOpr) = isgpu(opr.oprVac)
 isgpu(opr::SctOpr) = isgpu(opr.invSctOpr)
