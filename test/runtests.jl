@@ -7,10 +7,12 @@ include("tstHlp.jl")
 
 @testset "GilaElectromagnetics" begin
     include("volTest.jl")
+    include("cmpVolTest.jl")
     include("vacTest.jl")
     include("slvTest.jl")
     include("oprTest.jl")
     include("linAlgTest.jl")
     include("extOpsTest.jl")
+    include("crsSclTest.jl")
     include("physTest.jl")
 end

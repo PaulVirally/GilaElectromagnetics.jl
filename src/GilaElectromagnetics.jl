@@ -15,6 +15,7 @@ export GlaSlv, AbstractGlaOpr
 include("glaVol.jl")
 using .GilaVolumes
 export GlaVol
+export GlaCmpVol, CompositeVolume, refine, regions, nregions, coordinates, cellvolumes, finest
 
 include("vacuum/glaVac.jl")
 using .GilaVacuum
