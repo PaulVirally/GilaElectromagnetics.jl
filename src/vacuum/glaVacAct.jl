@@ -16,7 +16,10 @@ Applies the electric Green function operator to a polarization current density v
 - `AbstractArray{ComplexF64}`: The resulting electric field vector with shape (trgCelX, trgCelY, trgCelZ, 3)
 """
 function egoOpr!(egoMem::GlaVacOprMem, actVec::AbstractArray{ComplexF64})
-    if (egoMem.mixInf.srcCel..., 3) != size(actVec)
+    # srcCel counts the cells of one source partition, so the full input size is
+    # the per-partition count times the number of partitions in each direction
+    srcCelTot = egoMem.mixInf.srcCel .* egoMem.mixInf.srcDiv
+    if (srcCelTot..., 3) != size(actVec)
         throw(ArgumentError("Size of input vector does not match size of source volume. Required data layout is (srcCelX, srcCelY, srcCelZ, 3)."))
     end
     return egoBrn!(egoMem, 0, 0, actVec, egoMem.cmpInf)
@@ -127,7 +130,7 @@ function egoBrn!(egoMem::GlaVacOprMem, lvl::Integer, bId::Integer, actVec::Abstr
         if parNumTrg == 1
             return reshape(retVec, egoMem.mixInf.trgCel..., 3)
         else
-            return mrgPrt!(egoMem.mixInf, egoMem.cmpInf, retVec)
+            return mrgPrt!(egoMem.mixInf, egoMem.cmpInf, parNumTrg, retVec)
         end
     end
     return retVec
