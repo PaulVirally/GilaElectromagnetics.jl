@@ -221,9 +221,11 @@ end
     # Overlapping
     v3 = GlaVol((4,4,4), stdScl, (2//32, 2//32, 2//32))
     @test ovrChk(v1, v3)
-    # Touching (boundary: edges meet but volumes don't share interior)
+    # Touching: edges meet but the volumes share no interior, so this is not
+    # overlap. The external construction corrects for cell contact directly.
     v4 = GlaVol((4,4,4), stdScl, (4//32, 0//1, 0//1))
-    @test ovrChk(v1, v4)
+    @test !ovrChk(v1, v4)
+    @test isexternaloperator(GlaOprVac(v1, v4))
     # mskRng
     bigVol = GlaVol((8,4,4), stdScl, (2//32, 0//1, 0//1))
     rng = mskRng(v1, bigVol)
