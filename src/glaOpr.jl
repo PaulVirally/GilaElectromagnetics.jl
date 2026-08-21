@@ -145,7 +145,9 @@ const InverseScatteringOperator = InvSctOpr
 const ScatteringOperator = SctOpr
 const GreenOperator = GlaOpr
 
-# Returns true if the volumes overlap
+# Returns true if the volumes share interior. Face, edge, and corner contact is
+# not overlap: the external construction has contact corrections for it, and the
+# union path cannot represent contact between volumes at different cell scales.
 function ovrChk(vol1::GlaVol, vol2::GlaVol)
     # Upper/lower edges of the volumes
     lwrEdg1 = first.(vol1.grd) .- (vol1.scl .// 2)
@@ -154,7 +156,7 @@ function ovrChk(vol1::GlaVol, vol2::GlaVol)
     uprEdg2 = last.(vol2.grd) .+ (vol2.scl .//2)
 
     # Volume overlap check
-    return all(max.(lwrEdg1, lwrEdg2) .<= min.(uprEdg1, uprEdg2))
+    return all(max.(lwrEdg1, lwrEdg2) .< min.(uprEdg1, uprEdg2)) # < not <= to exclude contact
 end
 
 # Returns the region where subVol is contained within vol
