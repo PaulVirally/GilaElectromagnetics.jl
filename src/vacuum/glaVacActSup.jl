@@ -8,8 +8,8 @@ function genPrt!(actVec::AbstractArray{ComplexF64, 4}, cmpInf::GlaKerOpt, mixInf
     orgVec = similar(actVec, maxItr..., 3, parNum)
     ker = genPrtKer!(bckEnd(cmpInf))
     for parItr in 1:parNum, dirItr in 1:3
-        stp = mixInf.srcDiv
-        off = mixInf.srcPar[parItr]
+        stp = Tuple(mixInf.srcDiv)
+        off = Tuple(mixInf.srcPar[parItr])
         ker(stp, off, dirItr, parItr, actVec, orgVec; ndrange=maxItr)
     end
     memCln!(actVec)
@@ -278,39 +278,38 @@ end
 merge partitions and return output vector 
 =#
 function mrgPrt!(mixInf::GlaExtInf, cmpInf::GlaKerOpt, parNum::Integer, prtVec::AbstractArray{ComplexF64, 5})
-    @warn "This function should not be called"
-    # restructure partitioned vector
+    maxItr = mixInf.trgCel
     mrgVec = similar(prtVec, (mixInf.trgDiv .* mixInf.trgCel)..., 3)
     sncGpu(cmpInf)
-    # perform partitioning
     ker = mrgPrtKer!(bckEnd(cmpInf))
-    for parItr ∈ eachindex(1:parNum)
-        for dirItr ∈ eachindex(1:3)
-            ker(mixInf.trgDiv, mixInf.trgPar[parItr].I, dirItr, paritr, mrgVec, prtVec, ndrange=-1)
-        end
+    for parItr in 1:parNum, dirItr in 1:3
+        stp = Tuple(mixInf.trgDiv)
+        off = Tuple(mixInf.trgPar[parItr])
+        ker(stp, off, dirItr, parItr, mrgVec, prtVec; ndrange=maxItr)
     end
-    # release active vector to reduce memory pressure
+    sncGpu(cmpInf)
     memCln!(prtVec)
     return mrgVec
 end
-@kernel function mrgPrtKer!(stp::NTuple{3, Integer}, off::NTuple{3, Integer}, dirItr::Integer, parItr::Integer, mrgVec::AbstractArray{ComplexF64, 4}, prtVec::AbstractArray{ComplexF64, 5})
-    # Linear index
+@kernel function mrgPrtKer!(stp::NTuple{3,Integer}, off::NTuple{3,Integer}, dirItr::Integer, parItr::Integer, mrgVec::AbstractArray{ComplexF64,4}, prtVec::AbstractArray{ComplexF64,5})
+    # get the global linear index
     itr = @index(Global)
 
-    # Convert linear to 3D indices
-    idX = (itr - 1) % max[1] + 1
-    idY = ((itr - 1) ÷ max[1]) % max[2] + 1
-    idZ = (itr - 1) ÷ (max[1] * max[2]) + 1
+    # pull out the 3D dimensions of prtVec
+    dims = size(prtVec)
+    maxX, maxY = dims[1], dims[2]
 
-    maxX, maxY, maxZ = size(prtVec)[1:3]
-    stpX, stpY, stpZ = stp
-    offX, offY, offZ = off
+    # convert to zero-based and then to 3D coords
+    idx = itr - 1
+    itrX = (idx % maxX) + 1
+    itrY = ((idx ÷ maxX) % maxY) + 1
+    itrZ = (idx ÷ (maxX * maxY)) + 1
 
-    @inbounds for itrZ = idZ:strZ:maxZ, itrY = idY:strY:maxY, itrX = idX:strX:maxX
-        mrgVec[(itrX - 1) * stpX + offX + 1, 
-            (itrY - 1) * stpY + offY + 1, 
-            (itrZ - 1) * stpZ + offZ + 1, 
-            dirItr] = prtVec[itrX, itrY, itrZ, dirItr, parItr]
+    @inbounds begin
+        trgX = (itrX - 1) * stp[1] + off[1] + 1
+        trgY = (itrY - 1) * stp[2] + off[2] + 1
+        trgZ = (itrZ - 1) * stp[3] + off[3] + 1
+        mrgVec[trgX, trgY, trgZ, dirItr] = prtVec[itrX, itrY, itrZ, dirItr, parItr]
     end
 end
 
