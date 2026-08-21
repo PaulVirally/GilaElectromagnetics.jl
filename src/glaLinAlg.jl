@@ -213,7 +213,9 @@ function adjoint!(opr::GlaOprVac)
     opr.mem.mixInf = GlaExtInf(opr.mem.trgVol, opr.mem.srcVol)
 
     # Take the conjugate of the Fourier coefficients (conjugate transpose)
-    opr.mem.egoFur = collect(map(arr -> conj.(arr), opr.mem.egoFur))
+    # Also swap the last two axes because they hold the source and target
+    # partition of a cross-scale pair (which must be transposed for the adjoint)
+    opr.mem.egoFur = collect(map(arr -> conj.(permutedims(arr, (1, 2, 3, 4, 6, 5))), opr.mem.egoFur))
     return opr
 end
 adjoint!(opr::Union{AsyGlaOprVac, SymGlaOprVac}) = opr # These operators are Hermitian (self-adjoint)
