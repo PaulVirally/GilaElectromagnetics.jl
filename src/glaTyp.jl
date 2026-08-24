@@ -8,7 +8,7 @@ module GilaTypes
 
 using LinearAlgebra
 
-export GlaSlv, AbstractGlaOpr
+export GlaSlv, AbstractGlaOpr, AbstractGlaVacOpr
 
 """
     GlaSlv
@@ -26,4 +26,35 @@ must subtype this type and implement the AbstractMatrix interface.
 """
 abstract type AbstractGlaOpr <: AbstractMatrix{ComplexF64} end
 
-end # module 
+"""
+    AbstractGlaVacOpr
+
+Abstract base type for the vacuum Green operators, the ones built from geometry
+alone with no material in them. Scattering operators are not vacuum operators;
+they subtype `AbstractGlaOpr` directly.
+
+Traits shared by every vacuum operator are defined once on this type, so a
+subtype only overrides the ones where it differs.
+
+# Interface
+
+A subtype has to implement:
+- `Base.size(opr)`: The number of rows and columns of the operator as a matrix
+- `Base.:*(opr, inp::AbstractVector{ComplexF64})`: The matrix-vector product. An
+  operator with a single source volume also takes a 4-tensor of size
+  `(cel..., 3)` and returns one on the target volume
+- `adjoint!(opr)`: The adjoint, with the value semantics of its docstring
+- `arrTyp(opr)`: `Array` or `CuArray`, whichever the operator computes with
+- `isadjoint(opr)`: Whether the operator is the adjoint of the Green operator
+- `isselfoperator(opr)`: Whether the source and target geometry are the same
+- `isexternaloperator(opr)`: Whether the source and target geometry are disjoint
+- `isgpu(opr)`: Whether the operator computes on the GPU
+- `glaSze(opr)`: The target and source sizes in tensor form
+
+`isoverlappingoperator` defaults to `false` here, `eltype` to `ComplexF64` on
+`AbstractGlaOpr`, and `slv` to a `BiCGStabSolver`. Override any of the three when
+it does not hold.
+"""
+abstract type AbstractGlaVacOpr <: AbstractGlaOpr end
+
+end # module

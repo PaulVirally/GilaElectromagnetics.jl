@@ -1,13 +1,14 @@
 """
     GilaFields
 
-This module provides the field type that lives on a composite volume.
+This module provides the field type that lives on a volume, plain or composite.
 
 # Types
-- `GlaCmpFld`: A vector of current density coefficients over a `GlaCmpVol`
+- `GlaFld`: A vector of current density coefficients over a `GlaCmpVol`, or over
+  a `GlaVol` taken as a tiling of one region
 
 # Type Aliases
-- `MultiScaleField`: Alias for `GlaCmpFld`
+- `MultiScaleField`: Alias for `GlaFld`
 
 # Functions
 - `zerofield`: Allocate a zero field over a composite volume
@@ -24,7 +25,7 @@ using CUDA
 
 import ..GilaVolumes: _lwrEdg, _uprEdg
 
-export GlaCmpFld, MultiScaleField, zerofield, discretize!, regionview, eachregion, regrid
+export GlaFld, MultiScaleField, zerofield, discretize!, regionview, eachregion, regrid
 
 # Start of each region block in the flat buffer, plus the total length at the end
 function _dofOff(cvol::GlaCmpVol)
@@ -36,9 +37,13 @@ function _dofOff(cvol::GlaCmpVol)
 end
 
 """
-    GlaCmpFld
+    GlaFld
 
-A field (in the physics sense, i.e., a vector at each point in space) over a composite volume, stored as a flat buffer.
+A field (in the physics sense, i.e., a vector at each point in space) over a volume, stored as a flat buffer.
+
+The volume is always a `GlaCmpVol`. A plain `GlaVol` is wrapped into a tiling of
+one region, so a field over an ordinary volume is the same type as a field over a
+refined one.
 
 The buffer holds √ΔV times the current density coefficient of each degree of
 freedom, with ΔV the cell volume of the region the degree of freedom belongs to.
@@ -58,12 +63,12 @@ an array of size `(reg.cel..., 3)`.
 - `off::Vector{Int}`: Buffer offset of each region block, with the total length
   as a last entry
 """
-struct GlaCmpFld{T<:AbstractVector{ComplexF64}} <: AbstractVector{ComplexF64}
+struct GlaFld{T<:AbstractVector{ComplexF64}} <: AbstractVector{ComplexF64}
     dat::T
     cvol::GlaCmpVol
     off::Vector{Int}
 
-    function GlaCmpFld(dat::T, cvol::GlaCmpVol) where T<:AbstractVector{ComplexF64}
+    function GlaFld(dat::T, cvol::GlaCmpVol) where T<:AbstractVector{ComplexF64}
         off = _dofOff(cvol)
         if length(dat) != off[end]
             throw(ArgumentError("A buffer of length $(length(dat)) does not fit a composite volume with $(off[end]) degrees of freedom."))
@@ -72,10 +77,10 @@ struct GlaCmpFld{T<:AbstractVector{ComplexF64}} <: AbstractVector{ComplexF64}
     end
 end
 
-const MultiScaleField = GlaCmpFld
+const MultiScaleField = GlaFld
 
 """
-    GlaCmpFld(cvol::GlaCmpVol; useGpu::Bool=false)
+    GlaFld(cvol::GlaCmpVol; useGpu::Bool=false)
 
 Construct the zero field over a composite volume. Same as `zerofield`.
 
@@ -84,79 +89,100 @@ Construct the zero field over a composite volume. Same as `zerofield`.
 - `useGpu::Bool=false`: Whether to put the buffer on the GPU
 
 # Returns
-- `GlaCmpFld`: A field of zeros with one entry per degree of freedom
+- `GlaFld`: A field of zeros with one entry per degree of freedom
 """
-GlaCmpFld(cvol::GlaCmpVol; useGpu::Bool=false) = zerofield(cvol; useGpu=useGpu)
+GlaFld(cvol::GlaCmpVol; useGpu::Bool=false) = zerofield(cvol; useGpu=useGpu)
 
-Base.zero(fld::GlaCmpFld) = GlaCmpFld(zero(fld.dat), fld.cvol)
+"""
+    GlaFld(vol::GlaVol; useGpu::Bool=false)
+
+Construct the zero field over a plain volume. Same as `zerofield`.
+
+# Arguments
+- `vol::GlaVol`: The volume
+- `useGpu::Bool=false`: Whether to put the buffer on the GPU
+
+# Returns
+- `GlaFld`: A field of zeros with one entry per degree of freedom
+"""
+GlaFld(vol::GlaVol; useGpu::Bool=false) = zerofield(GlaCmpVol(vol); useGpu=useGpu)
+
+Base.zero(fld::GlaFld) = GlaFld(zero(fld.dat), fld.cvol)
 
 # Region blocks only line up if the two fields agree on the tiling
 _eqvCvl(cvolA::GlaCmpVol, cvolB::GlaCmpVol) = cvolA === cvolB || cvolA == cvolB
 
-function _chkCvl(fldA::GlaCmpFld, fldB::GlaCmpFld)
+function _chkCvl(fldA::GlaFld, fldB::GlaFld)
     if !_eqvCvl(fldA.cvol, fldB.cvol)
         throw(ArgumentError("The two fields live on different composite volumes. Operations that mix fields need a common tiling."))
     end
     return nothing
 end
 
-Base.size(fld::GlaCmpFld) = size(fld.dat)
-Base.IndexStyle(::Type{<:GlaCmpFld}) = IndexLinear()
-Base.getindex(fld::GlaCmpFld, idx::Int) = fld.dat[idx]
-Base.setindex!(fld::GlaCmpFld, val, idx::Int) = setindex!(fld.dat, val, idx)
-Base.parent(fld::GlaCmpFld) = fld.dat
+Base.size(fld::GlaFld) = size(fld.dat)
+Base.IndexStyle(::Type{<:GlaFld}) = IndexLinear()
+Base.getindex(fld::GlaFld, idx::Int) = fld.dat[idx]
+Base.setindex!(fld::GlaFld, val, idx::Int) = setindex!(fld.dat, val, idx)
+Base.parent(fld::GlaFld) = fld.dat
 
-Base.similar(fld::GlaCmpFld) = GlaCmpFld(similar(fld.dat), fld.cvol)
-Base.similar(fld::GlaCmpFld, ::Type{ComplexF64}) =
-    GlaCmpFld(similar(fld.dat), fld.cvol)
+Base.similar(fld::GlaFld) = GlaFld(similar(fld.dat), fld.cvol)
+Base.similar(fld::GlaFld, ::Type{ComplexF64}) =
+    GlaFld(similar(fld.dat), fld.cvol)
 # Only ComplexF64 buffers can be wrapped, so any other eltype comes back raw
-Base.similar(fld::GlaCmpFld, ::Type{T}) where T = similar(fld.dat, T)
-Base.copy(fld::GlaCmpFld) = GlaCmpFld(copy(fld.dat), fld.cvol)
+Base.similar(fld::GlaFld, ::Type{T}) where T = similar(fld.dat, T)
+Base.copy(fld::GlaFld) = GlaFld(copy(fld.dat), fld.cvol)
 
-function Base.show(io::IO, fld::GlaCmpFld)
-    print(io, "Composite field ($(length(fld)) degrees of freedom, ", isa(fld.dat, CuArray) ? "GPU" : "CPU", ")\n  ", fld.cvol)
+function Base.show(io::IO, fld::GlaFld)
+    dev = isa(fld.dat, CuArray) ? "GPU" : "CPU"
+    if nregions(fld.cvol) == 1
+        reg = regions(fld.cvol)[1]
+        print(io, "Field ($(length(fld)) degrees of freedom, $dev) on a (" *
+            join(reg.cel, "×") * ") cells, (" * join(reg.scl, "×") * ")λ³ volume")
+        return
+    end
+    print(io, "Composite field ($(length(fld)) degrees of freedom, $dev)\n  ", fld.cvol)
 end
-Base.show(io::IO, ::MIME"text/plain", fld::GlaCmpFld) = show(io, fld)
+Base.show(io::IO, ::MIME"text/plain", fld::GlaFld) = show(io, fld)
 
-LinearAlgebra.dot(fldA::GlaCmpFld, fldB::GlaCmpFld) =
+LinearAlgebra.dot(fldA::GlaFld, fldB::GlaFld) =
     (_chkCvl(fldA, fldB); dot(fldA.dat, fldB.dat))
-LinearAlgebra.norm(fld::GlaCmpFld, p::Real=2) = norm(fld.dat, p)
+LinearAlgebra.norm(fld::GlaFld, p::Real=2) = norm(fld.dat, p)
 
-function LinearAlgebra.axpy!(alp, fldX::GlaCmpFld, fldY::GlaCmpFld)
+function LinearAlgebra.axpy!(alp, fldX::GlaFld, fldY::GlaFld)
     _chkCvl(fldX, fldY)
     axpy!(alp, fldX.dat, fldY.dat)
     return fldY
 end
 
-function LinearAlgebra.axpby!(alp, fldX::GlaCmpFld, bet, fldY::GlaCmpFld)
+function LinearAlgebra.axpby!(alp, fldX::GlaFld, bet, fldY::GlaFld)
     _chkCvl(fldX, fldY)
     axpby!(alp, fldX.dat, bet, fldY.dat)
     return fldY
 end
 
-LinearAlgebra.rmul!(fld::GlaCmpFld, alp::Number) = (rmul!(fld.dat, alp); fld)
-Base.fill!(fld::GlaCmpFld, val) = (fill!(fld.dat, val); fld)
+LinearAlgebra.rmul!(fld::GlaFld, alp::Number) = (rmul!(fld.dat, alp); fld)
+Base.fill!(fld::GlaFld, val) = (fill!(fld.dat, val); fld)
 
-function Base.copyto!(fldDst::GlaCmpFld, fldSrc::GlaCmpFld)
+function Base.copyto!(fldDst::GlaFld, fldSrc::GlaFld)
     _chkCvl(fldDst, fldSrc)
     copyto!(fldDst.dat, fldSrc.dat)
     return fldDst
 end
 
-Base.BroadcastStyle(::Type{<:GlaCmpFld}) = Broadcast.ArrayStyle{GlaCmpFld}()
+Base.BroadcastStyle(::Type{<:GlaFld}) = Broadcast.ArrayStyle{GlaFld}()
 
 #= Replace every field in a broadcast tree by its buffer. Rebuilding with
 broadcasted rather than reusing the wrapper style hands the work to the buffer,
 so a GPU field goes through a GPU kernel instead of scalar indexing. =#
 _bcUnw(arg) = arg
-_bcUnw(fld::GlaCmpFld) = fld.dat
+_bcUnw(fld::GlaFld) = fld.dat
 _bcUnw(bc::Broadcast.Broadcasted) =
     Broadcast.broadcasted(bc.f, map(_bcUnw, bc.args)...)
 
 # Walk the same tree for the common composite volume, complaining on a mismatch
 _bcCvl(cvol, arg) = cvol
 _bcCvl(cvol, bc::Broadcast.Broadcasted) = foldl(_bcCvl, bc.args; init=cvol)
-function _bcCvl(cvol, fld::GlaCmpFld)
+function _bcCvl(cvol, fld::GlaFld)
     if !isnothing(cvol) && !_eqvCvl(cvol, fld.cvol)
         throw(ArgumentError("A broadcast mixes fields that live on different composite volumes. Operations that mix fields need a common tiling."))
     end
@@ -165,23 +191,23 @@ end
 
 _bcCvl(bc::Broadcast.Broadcasted) = foldl(_bcCvl, bc.args; init=nothing)
 
-function Base.similar(bc::Broadcast.Broadcasted{Broadcast.ArrayStyle{GlaCmpFld}},
+function Base.similar(bc::Broadcast.Broadcasted{Broadcast.ArrayStyle{GlaFld}},
     ::Type{T}) where T
     cvol = _bcCvl(bc)
     dat = similar(Broadcast.instantiate(_bcUnw(bc)), T)
     T === ComplexF64 || return dat
-    return GlaCmpFld(dat, cvol)
+    return GlaFld(dat, cvol)
 end
 
-function Base.copy(bc::Broadcast.Broadcasted{Broadcast.ArrayStyle{GlaCmpFld}})
+function Base.copy(bc::Broadcast.Broadcasted{Broadcast.ArrayStyle{GlaFld}})
     cvol = _bcCvl(bc)
     dat = Broadcast.materialize(_bcUnw(bc))
     eltype(dat) === ComplexF64 || return dat
-    return GlaCmpFld(dat, cvol)
+    return GlaFld(dat, cvol)
 end
 
-function Base.copyto!(fld::GlaCmpFld,
-    bc::Broadcast.Broadcasted{Broadcast.ArrayStyle{GlaCmpFld}})
+function Base.copyto!(fld::GlaFld,
+    bc::Broadcast.Broadcasted{Broadcast.ArrayStyle{GlaFld}})
     foldl(_bcCvl, bc.args; init=fld.cvol)
     Broadcast.materialize!(fld.dat, _bcUnw(bc))
     return fld
@@ -197,16 +223,33 @@ Allocate a zero field over a composite volume.
 - `useGpu::Bool=false`: Whether to put the buffer on the GPU
 
 # Returns
-- `GlaCmpFld`: A field of zeros with one entry per degree of freedom
+- `GlaFld`: A field of zeros with one entry per degree of freedom
 """
 function zerofield(cvol::GlaCmpVol; useGpu::Bool=false)
     len = sum(3 * prod(reg.cel) for reg in regions(cvol))
     dat = useGpu ? CUDA.zeros(ComplexF64, len) : zeros(ComplexF64, len)
-    return GlaCmpFld(dat, cvol)
+    return GlaFld(dat, cvol)
 end
 
 """
-    regionview(fld::GlaCmpFld, idx::Integer)
+    zerofield(vol::GlaVol; useGpu::Bool=false)
+
+Allocate a zero field over a plain volume.
+
+The volume is taken as a tiling of one region, so the result is an ordinary
+`GlaFld` and every operation defined on fields applies to it.
+
+# Arguments
+- `vol::GlaVol`: The volume
+- `useGpu::Bool=false`: Whether to put the buffer on the GPU
+
+# Returns
+- `GlaFld`: A field of zeros with one entry per degree of freedom
+"""
+zerofield(vol::GlaVol; useGpu::Bool=false) = zerofield(GlaCmpVol(vol); useGpu=useGpu)
+
+"""
+    regionview(fld::GlaFld, idx::Integer)
 
 View the block of one region as a 4-tensor.
 
@@ -220,33 +263,33 @@ The shape and the index order are the ones `GlaOprVac` expects of a source or
 target array, so the view can be handed straight to an operator.
 
 # Arguments
-- `fld::GlaCmpFld`: The field
+- `fld::GlaFld`: The field
 - `idx::Integer`: The region index, in the order of `regions(fld.cvol)`
 
 # Returns
 - A 4-tensor view of size `(reg.cel..., 3)` into the field buffer
 """
-function regionview(fld::GlaCmpFld, idx::Integer)
+function regionview(fld::GlaFld, idx::Integer)
     reg = regions(fld.cvol)[idx]
     blk = view(fld.dat, (fld.off[idx] + 1):fld.off[idx + 1])
     return reshape(blk, (Int.(reg.cel)..., 3))
 end
 
 """
-    eachregion(fld::GlaCmpFld)
+    eachregion(fld::GlaFld)
 
 Iterate over the region views of a field, in `regions` order.
 
 # Arguments
-- `fld::GlaCmpFld`: The field
+- `fld::GlaFld`: The field
 
 # Returns
 - An iterator of the `regionview` of every region
 """
-eachregion(fld::GlaCmpFld) = (regionview(fld, idx) for idx in 1:nregions(fld.cvol))
+eachregion(fld::GlaFld) = (regionview(fld, idx) for idx in 1:nregions(fld.cvol))
 
 """
-    discretize!(fld::GlaCmpFld, f)
+    discretize!(fld::GlaFld, f)
 
 Fill a field from a function of position.
 
@@ -258,13 +301,13 @@ density to a stored coefficient. Sampling is setup code, so the values are
 always built on the CPU and copied to the buffer at the end.
 
 # Arguments
-- `fld::GlaCmpFld`: The field to fill
+- `fld::GlaFld`: The field to fill
 - `f`: The current density as a function of position
 
 # Returns
-- `GlaCmpFld`: The field, filled
+- `GlaFld`: The field, filled
 """
-function discretize!(fld::GlaCmpFld, f)
+function discretize!(fld::GlaFld, f)
     buf = Vector{ComplexF64}(undef, length(fld))
     for (regIdx, reg) in enumerate(regions(fld.cvol))
         celNum = prod(reg.cel)
@@ -283,7 +326,7 @@ function discretize!(fld::GlaCmpFld, f)
 end
 
 """
-    regrid(fld::GlaCmpFld, scl::NTuple{3,Rational}=finest(fld.cvol))
+    regrid(fld::GlaFld, scl::NTuple{3,Rational}=finest(fld.cvol))
 
 Read a field off as current densities on a uniform grid.
 
@@ -296,7 +339,7 @@ divides every region scale, cell boundaries never cut across a source cell.
 The returned array holds densities, not stored coefficients.
 
 # Arguments
-- `fld::GlaCmpFld`: The field to read
+- `fld::GlaFld`: The field to read
 - `scl::NTuple{3,Rational}=finest(fld.cvol)`: The uniform cell size
 
 # Returns
@@ -306,7 +349,7 @@ The returned array holds densities, not stored coefficients.
 - `ArgumentError`: If `scl` is coarser than or incommensurate with the cell size
   of any region, or if it does not evenly divide the bounding box
 """
-function regrid(fld::GlaCmpFld, scl::NTuple{3,Rational}=finest(fld.cvol))
+function regrid(fld::GlaFld, scl::NTuple{3,Rational}=finest(fld.cvol))
     regs = regions(fld.cvol)
     for (idx, reg) in enumerate(regs)
         rat = reg.scl .// scl

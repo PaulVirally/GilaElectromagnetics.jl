@@ -48,7 +48,7 @@ interactions in free space.
 - `trgMsk::NTuple{StepRage{Int64, Int64}, 3}`: Tuple of ranges defining the mask for
   the output volume (for overlapping operators only)
 """
-struct GlaOprVac <: AbstractGlaOpr
+struct GlaOprVac <: AbstractGlaVacOpr
     mem::GlaVacOprMem
     srcMsk::NTuple{3, OrdinalRange{Int64, Int64}}
     trgMsk::NTuple{3, OrdinalRange{Int64, Int64}}
@@ -62,7 +62,7 @@ Represents the vacuum Green function operator G₀ for multiple disjoint domains
 # Fields
 - oprMat::Matrix{GlaOprVac}: Matrix of vacuum Green function operators for each disjoint region pair
 """
-struct MulRegGlaOprVac <: AbstractGlaOpr
+struct MulRegGlaOprVac <: AbstractGlaVacOpr
     oprMat::Matrix{GlaOprVac}
 end
 
@@ -75,7 +75,7 @@ Represents the anti-Hermitian part of the vacuum Green function operator.
 - `mem::GlaVacOprMem`: Memory structure containing the operator's data, including
   volume information and Fourier coefficients
 """
-struct AsyGlaOprVac <: AbstractGlaOpr
+struct AsyGlaOprVac <: AbstractGlaVacOpr
     mem::GlaVacOprMem
 end
 
@@ -88,7 +88,7 @@ Represents the Hermitian part of the vacuum Green function operator.
 - `mem::GlaVacOprMem`: Memory structure containing the operator's data, including
   volume information and Fourier coefficients
 """
-struct SymGlaOprVac <: AbstractGlaOpr
+struct SymGlaOprVac <: AbstractGlaVacOpr
     mem::GlaVacOprMem
 end
 
@@ -100,12 +100,12 @@ tensor. This operator describes how electromagnetic fields interact with a mater
 medium.
 
 # Fields
-- `oprVac::GlaOprVac`: The vacuum Green function operator
+- `oprVac::AbstractGlaVacOpr`: The vacuum Green function operator
 - `sus::AbstractArray{ComplexF64, 3}`: The susceptibility tensor (isotropic medium)
   representing the material response
 """
 mutable struct InvSctOpr <: AbstractGlaOpr
-    oprVac::GlaOprVac
+    oprVac::AbstractGlaVacOpr
     sus::AbstractArray{ComplexF64, 3}
 end
 
@@ -659,32 +659,12 @@ Construct a full Green function operator from an inverse scattering operator.
 """
 GlaOpr(opr::InvSctOpr) = GlaOpr(SctOpr(opr))
 
-function useCpu!(opr::GlaOprVac)
+function useCpu!(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac})
     useCpu!(opr.mem)
     return opr
 end
 
-function useGpu!(opr::GlaOprVac)
-    useGpu!(opr.mem)
-    return opr
-end
-
-function useCpu!(opr::AsyGlaOprVac)
-    useCpu!(opr.mem)
-    return opr
-end
-
-function useGpu!(opr::AsyGlaOprVac)
-    useGpu!(opr.mem)
-    return opr
-end
-
-function useCpu!(opr::SymGlaOprVac)
-    useCpu!(opr.mem)
-    return opr
-end
-
-function useGpu!(opr::SymGlaOprVac)
+function useGpu!(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac})
     useGpu!(opr.mem)
     return opr
 end
@@ -731,9 +711,7 @@ function useGpu!(opr::GlaOpr)
     return opr
 end
 
-GilaVacuum.arrTyp(opr::GlaOprVac) = arrTyp(opr.mem.cmpInf)
-GilaVacuum.arrTyp(opr::AsyGlaOprVac) = arrTyp(opr.mem.cmpInf)
-GilaVacuum.arrTyp(opr::SymGlaOprVac) = arrTyp(opr.mem.cmpInf)
+GilaVacuum.arrTyp(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = arrTyp(opr.mem.cmpInf)
 GilaVacuum.arrTyp(opr::MulRegGlaOprVac) = arrTyp(first(opr.oprMat))
 GilaVacuum.arrTyp(opr::InvSctOpr) = arrTyp(opr.oprVac)
 GilaVacuum.arrTyp(opr::SctOpr) = arrTyp(opr.invSctOpr)
@@ -777,8 +755,7 @@ Checks if the operator is the adjoint of the Green operator.
 - `true` if the operator is the adjoint, `false` otherwise.
 """
 isadjoint(opr::GlaOprVac) = opr.mem.cmpInf.adjMod
-isadjoint(opr::AsyGlaOprVac) = false
-isadjoint(opr::SymGlaOprVac) = false
+isadjoint(::Union{AsyGlaOprVac, SymGlaOprVac}) = false
 isadjoint(opr::MulRegGlaOprVac) = all(isadjoint.(opr.oprMat))
 isadjoint(opr::InvSctOpr) = isadjoint(opr.oprVac)
 isadjoint(opr::SctOpr) = isadjoint(opr.invSctOpr)
@@ -796,8 +773,7 @@ Checks if the operator is a self Green operator.
 - `true` if the operator is a self Green operator, `false` otherwise.
 """
 isselfoperator(opr::GlaOprVac) = (opr.mem.srcVol == opr.mem.trgVol) && all(==(0:0), opr.srcMsk) && all(==(0:0), opr.trgMsk)
-isselfoperator(opr::AsyGlaOprVac) = true # AsyGlaOprVac is always a self operator
-isselfoperator(opr::SymGlaOprVac) = true # SymGlaOprVac is always a self operator
+isselfoperator(::Union{AsyGlaOprVac, SymGlaOprVac}) = true # Both are always self operators
 isselfoperator(opr::MulRegGlaOprVac) = all(isselfoperator.(opr.oprMat))
 isselfoperator(opr::InvSctOpr) = isselfoperator(opr.oprVac)
 isselfoperator(opr::SctOpr) = isselfoperator(opr.invSctOpr)
@@ -815,8 +791,7 @@ Checks if the operator is an external Green operator.
 - `true` if the operator is an external Green operator, `false` otherwise.
 """
 isexternaloperator(opr::GlaOprVac) = opr.mem.srcVol != opr.mem.trgVol && all(==(0:0), opr.srcMsk) && all(==(0:0), opr.trgMsk)
-isexternaloperator(opr::AsyGlaOprVac) = false # AsyGlaOprVac is always a self operator
-isexternaloperator(opr::SymGlaOprVac) = false # SymGlaOprVac is always a self operator
+isexternaloperator(::Union{AsyGlaOprVac, SymGlaOprVac}) = false # Both are always self operators
 isexternaloperator(opr::MulRegGlaOprVac) = any(isexternaloperator.(opr.oprMat))
 isexternaloperator(opr::InvSctOpr) = isexternaloperator(opr.oprVac)
 isexternaloperator(opr::SctOpr) = isexternaloperator(opr.invSctOpr)
@@ -833,9 +808,8 @@ Checks if the operator is an overlapping Green operator.
 # Returns
 - `true` if the operator is an overlapping Green operator, `false` otherwise.
 """
+isoverlappingoperator(::AbstractGlaVacOpr) = false # Only the masked routes overlap
 isoverlappingoperator(opr::GlaOprVac) = !(isselfoperator(opr) || isexternaloperator(opr))
-isoverlappingoperator(opr::AsyGlaOprVac) = false # AsyGlaOprVac is always a self operator
-isoverlappingoperator(opr::SymGlaOprVac) = false # SymGlaOprVac is always a self operator
 isoverlappingoperator(opr::MulRegGlaOprVac) = any(isoverlappingoperator.(opr.oprMat))
 isoverlappingoperator(opr::InvSctOpr) = isoverlappingoperator(opr.oprVac)
 isoverlappingoperator(opr::SctOpr) = isoverlappingoperator(opr.invSctOpr)
@@ -926,8 +900,7 @@ Returns the solver associated with the operator.
 # Returns
 - The solver used by the operator, which is always a `GlaSlv` instance.
 """
-slv(::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = GilaSolvers.BiCGStabSolver() # Default solver
-slv(opr::MulRegGlaOprVac) = slv(first(opr.oprMat)) # Assume all operators in the matrix use the same solver
+slv(::AbstractGlaVacOpr) = GilaSolvers.BiCGStabSolver() # Default solver
 slv(opr::InvSctOpr) = slv(opr.oprVac)
 slv(opr::SctOpr) = opr.slv
 slv(opr::GlaOpr) = opr.sctOpr.slv

@@ -10,16 +10,16 @@ module GilaElectromagnetics
 
 include("glaTyp.jl")
 using .GilaTypes
-export GlaSlv, AbstractGlaOpr
+export GlaSlv, AbstractGlaOpr, AbstractGlaVacOpr
 
 include("glaVol.jl")
 using .GilaVolumes
 export GlaVol
 export GlaCmpVol, CompositeVolume, refine, regions, nregions, coordinates, cellvolumes, finest
 
-include("glaCmpFld.jl")
+include("glaFld.jl")
 using .GilaFields
-export GlaCmpFld, MultiScaleField, zerofield, discretize!, regionview, eachregion, regrid
+export GlaFld, MultiScaleField, zerofield, discretize!, regionview, eachregion, regrid
 
 include("vacuum/glaVac.jl")
 using .GilaVacuum

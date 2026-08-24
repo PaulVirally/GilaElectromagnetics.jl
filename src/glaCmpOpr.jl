@@ -25,7 +25,7 @@ same shape with the two ratios exchanged and `wgt` conjugated.
 - `srcRat::NTuple{3,Int}`: Fine cells per source cell in each dimension
 - `wgt::ComplexF64`: The scalar multiplying the block
 """
-struct GlaSndOprVac <: AbstractGlaOpr
+struct GlaSndOprVac <: AbstractGlaVacOpr
     opr::GlaOprVac
     trgRat::NTuple{3,Int}
     srcRat::NTuple{3,Int}
@@ -42,7 +42,7 @@ the two tilings. Pulse basis functions of disjoint regions do not overlap, so th
 block matrix is the Galerkin discretization of the Green operator on the
 non-uniform mesh, with no stitching at region boundaries.
 
-Blocks work in the √ΔV normalized basis of `GlaCmpFld`, so block `(i, j)` carries
+Blocks work in the √ΔV normalized basis of `GlaFld`, so block `(i, j)` carries
 a factor `sqrt(ΔV_i / ΔV_j)`. A region has one cell size, so that factor is one
 scalar per block. In this basis the Euclidean inner product is the physical L²
 pairing and the self operator is complex-symmetric.
@@ -55,7 +55,7 @@ pairing and the self operator is complex-symmetric.
   a `GlaSndOprVac`, and same-scale pairs whose kind of contact the external
   construction does not cover are a `GlaOprVac` on the union of the two regions
 """
-struct GlaCmpOprVac <: AbstractGlaOpr
+struct GlaCmpOprVac <: AbstractGlaVacOpr
     trgCvl::GlaCmpVol
     srcCvl::GlaCmpVol
     blkMat::Matrix{AbstractGlaOpr}
@@ -197,9 +197,7 @@ GlaCmpOprVac(cvol::GlaCmpVol; useGpu::Bool=false) = GlaCmpOprVac(cvol, cvol; use
 Construct the self vacuum Green function operator of a composite volume.
 
 A composite volume needs a block matrix rather than one circulant, so the result
-is a `GlaCmpOprVac` and not a `GlaOprVac`.
-
-TODO: Should we make an abstract vacuum type from which both derive?
+is a `GlaCmpOprVac` and not a `GlaOprVac`. Both are `AbstractGlaVacOpr`.
 
 # Arguments
 - `cvol::GlaCmpVol`: The composite volume
@@ -269,60 +267,35 @@ Base.:*(opr::GlaCmpOprVac, innVec::AbstractVector{ComplexF64}) =
     _cmpMul(opr, innVec)
 
 """
-    *(opr::GlaCmpOprVac, fld::GlaCmpFld)
+    *(opr::GlaCmpOprVac, fld::GlaFld)
 
 Apply a composite operator to a composite field.
 
 # Arguments
 - `opr::GlaCmpOprVac`: The operator
-- `fld::GlaCmpFld`: The field, which must live on the source volume of `opr`
+- `fld::GlaFld`: The field, which must live on the source volume of `opr`
 
 # Returns
-- `GlaCmpFld`: The result, on the target volume of `opr`
+- `GlaFld`: The result, on the target volume of `opr`
 
 # Throws
 - `ArgumentError`: If the field lives on a different tiling than the source
   volume of the operator
 """
-function Base.:*(opr::GlaCmpOprVac, fld::GlaCmpFld)
+function Base.:*(opr::GlaCmpOprVac, fld::GlaFld)
     if !(fld.cvol === opr.srcCvl || fld.cvol == opr.srcCvl)
         throw(ArgumentError("The field lives on a different composite volume than the source volume of the operator. An operator only applies to fields on the tiling it was built for."))
     end
-    return GlaCmpFld(_cmpMul(opr, fld.dat), opr.trgCvl)
-end
-
-#= The generic densification of an AbstractGlaOpr builds rows by adjointing the
-operator in place and undoing it afterwards. Neither of these two rearranges in
-place, since one moves blocks and the other exchanges its two ratios, so the
-columns are always built forward here. =#
-function Base.getindex(opr::Union{GlaCmpOprVac,GlaSndOprVac}, row::IType,
-    col::IType) where IType <: Union{Integer, AbstractUnitRange{<:Integer}, AbstractVector{<:Integer}, Colon}
-    numRow, numCol = size(opr)
-    rowSel = row === Colon() ? collect(1:numRow) : (row isa Integer ? [row] : collect(row))
-    colSel = col === Colon() ? collect(1:numCol) : (col isa Integer ? [col] : collect(col))
-    idt = fill!(similar(opr, (numCol, length(colSel))), zero(ComplexF64))
-    for (idx, colItr) in enumerate(colSel)
-        CUDA.@allowscalar idt[colItr, idx] = one(ComplexF64)
-    end
-    out = (opr * idt)[rowSel, :]
-    return row isa Integer && col isa Integer ? CUDA.@allowscalar(out[1, 1]) : out
-end
-
-#= adjoint! swaps the volumes of a block but leaves its masks alone, so a masked
-block needs the swap done by hand. =#
-_adjBlk(opr::AbstractGlaOpr) = adjoint!(opr)
-function _adjBlk(opr::GlaOprVac)
-    isoverlappingoperator(opr) || return adjoint!(opr)
-    return GlaOprVac(adjoint!(opr).mem, opr.trgMsk, opr.srcMsk)
+    return GlaFld(_cmpMul(opr, fld.dat), opr.trgCvl)
 end
 
 adjoint!(opr::GlaSndOprVac) =
-    GlaSndOprVac(_adjBlk(opr.opr), opr.srcRat, opr.trgRat, conj(opr.wgt))
+    GlaSndOprVac(adjoint!(opr.opr), opr.srcRat, opr.trgRat, conj(opr.wgt))
 
 function adjoint!(opr::GlaCmpOprVac)
     adjMat = Matrix{AbstractGlaOpr}(undef, reverse(size(opr.blkMat)))
     for trgIdx in axes(opr.blkMat, 1), srcIdx in axes(opr.blkMat, 2)
-        adjMat[srcIdx, trgIdx] = _adjBlk(opr.blkMat[trgIdx, srcIdx])
+        adjMat[srcIdx, trgIdx] = adjoint!(opr.blkMat[trgIdx, srcIdx])
     end
     return GlaCmpOprVac(opr.srcCvl, opr.trgCvl, adjMat)
 end
@@ -357,12 +330,8 @@ isselfoperator(opr::GlaCmpOprVac) =
     opr.trgCvl === opr.srcCvl || opr.trgCvl == opr.srcCvl
 isexternaloperator(opr::GlaSndOprVac) = true
 isexternaloperator(opr::GlaCmpOprVac) = !isselfoperator(opr)
-isoverlappingoperator(opr::GlaSndOprVac) = false
-isoverlappingoperator(opr::GlaCmpOprVac) = false
 isgpu(opr::GlaSndOprVac) = isgpu(opr.opr)
 isgpu(opr::GlaCmpOprVac) = all(isgpu, opr.blkMat)
-slv(opr::GlaSndOprVac) = slv(opr.opr)
-slv(opr::GlaCmpOprVac) = slv(first(opr.blkMat))
 
 _strKnd(opr::GlaSndOprVac) = "fine mesh G₀"
 _strKnd(opr::GlaCmpOprVac) = "composite G₀"

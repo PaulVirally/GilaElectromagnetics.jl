@@ -1,4 +1,4 @@
-# GlaCmpFld (composite field) tests
+# GlaFld (field over a plain or composite volume) tests
 using Test, GilaElectromagnetics, LinearAlgebra, CUDA
 
 const fldScl16 = (1//16, 1//16, 1//16)
@@ -31,11 +31,11 @@ fldDofOff(cvol, idx) =
 fldCelOff(cvol, idx) =
     sum(prod(regions(cvol)[r].cel) for r in 1:(idx - 1); init=0)
 
-@testset "GlaCmpFld zerofield" begin
+@testset "GlaFld zerofield" begin
     cvol = mkFldRef()
     fld = zerofield(cvol)
-    @test fld isa GlaCmpFld
-    @test MultiScaleField === GlaCmpFld
+    @test fld isa GlaFld
+    @test MultiScaleField === GlaFld
     @test eltype(fld) == ComplexF64
     @test length(fld) == fldLen(cvol)
     @test size(fld) == (fldLen(cvol),)
@@ -48,24 +48,47 @@ fldCelOff(cvol, idx) =
     # A trivial composite has one block of the whole volume
     @test length(zerofield(mkFldUni())) == 3 * prod(mkFldVol().cel)
     # The buffer has to match the tiling
-    @test_throws ArgumentError GlaCmpFld(zeros(ComplexF64, 7), cvol)
+    @test_throws ArgumentError GlaFld(zeros(ComplexF64, 7), cvol)
 end
 
-@testset "GlaCmpFld zero and constructor" begin
+@testset "GlaFld over a plain volume" begin
+    vol = mkFldVol()
+    fld = zerofield(vol)
+    @test fld isa GlaFld
+    @test nregions(fld.cvol) == 1
+    @test regions(fld.cvol)[1] == vol
+    @test length(fld) == 3 * prod(vol.cel)
+    @test GlaFld(vol) == fld
+    @test fld == zerofield(GlaCmpVol(vol))
+    @test discretize!(zerofield(vol), fldStp) == discretize!(zerofield(GlaCmpVol(vol)), fldStp)
+    # A one-region field never mentions a composite
+    str = sprint(show, fld)
+    @test str == "Field (1536 degrees of freedom, CPU) on a (8×8×8) cells, (1//16×1//16×1//16)λ³ volume"
+    @test !occursin("composite", lowercase(str))
+    # A tiling of several regions still lists them
+    strRef = sprint(show, zerofield(mkFldRef()))
+    @test occursin("Composite field", strRef)
+    @test occursin("Composite volume (7 regions)", strRef)
+    if CUDA.functional()
+        @test occursin("GPU", sprint(show, zerofield(vol; useGpu=true)))
+    end
+end
+
+@testset "GlaFld zero and constructor" begin
     cvol = mkFldRef()
-    fld = GlaCmpFld(cvol)
-    @test fld isa GlaCmpFld
+    fld = GlaFld(cvol)
+    @test fld isa GlaFld
     @test all(iszero, fld)
     @test fld == zerofield(cvol)
     fld = discretize!(zerofield(cvol), pos -> (1.0 + 0im, 0, 0))
     zro = zero(fld)
-    @test zro isa GlaCmpFld
+    @test zro isa GlaFld
     @test zro.cvol == cvol
     @test iszero(norm(zro))
     @test !iszero(norm(fld))
 end
 
-@testset "GlaCmpFld eachregion" begin
+@testset "GlaFld eachregion" begin
     cvol = mkFldRef()
     fld = discretize!(zerofield(cvol), pos -> (pos[1] + 0im, pos[2], pos[3]))
     vws = collect(eachregion(fld))
@@ -78,7 +101,7 @@ end
     @test fld[1] == 7
 end
 
-@testset "GlaCmpFld norm is the L2 norm" begin
+@testset "GlaFld norm is the L2 norm" begin
     # Unit modulus density on a (4,4,4) volume of 1/8 λ cells
     vol = GlaVol((4, 4, 4), (1//8, 1//8, 1//8), fldOrg0)
     fld = discretize!(zerofield(GlaCmpVol(vol)), pos -> (exp(2im * pi * pos[1]), 0, 0))
@@ -91,7 +114,7 @@ end
     @test norm(fld2) ≈ 3 * norm(fld)
 end
 
-@testset "GlaCmpFld mesh invariance" begin
+@testset "GlaFld mesh invariance" begin
     cvolUni = mkFldUni()
     cvolRef = mkFldRef()
     @test nregions(cvolRef) == 7
@@ -110,7 +133,7 @@ end
     @test norm(stpUni) ≈ stpNrm rtol=1e-12
 end
 
-@testset "GlaCmpFld regionview" begin
+@testset "GlaFld regionview" begin
     cvol = mkFldRef()
     fld = zerofield(cvol)
     for (idx, reg) in enumerate(regions(cvol))
@@ -139,7 +162,7 @@ end
     @test celVol ≈ Float64(prod(reg.scl))
 end
 
-@testset "GlaCmpFld physical convention" begin
+@testset "GlaFld physical convention" begin
     cvol = mkFldRef()
     fld = discretize!(zerofield(cvol), pos -> (1, 0, 0))
     # Dividing a region block by the square root of its cell volume gives the
@@ -158,7 +181,7 @@ end
     @test norm(fld)^2 ≈ Float64(prod(mkFldVol().cel .* mkFldVol().scl)) rtol=1e-12
 end
 
-@testset "GlaCmpFld regrid" begin
+@testset "GlaFld regrid" begin
     cvolRef = mkFldRef()
     volFin = GlaVol((16, 16, 16), fldScl32, fldOrg0)
     stpRef = discretize!(zerofield(cvolRef), fldStp)
@@ -185,7 +208,7 @@ end
     @test_throws ArgumentError regrid(stpRef, (1//32, 1//32, 1//24))
 end
 
-@testset "GlaCmpFld linear algebra" begin
+@testset "GlaFld linear algebra" begin
     cvol = mkFldRef()
     fldX = discretize!(zerofield(cvol), fldSmt)
     fldY = discretize!(zerofield(cvol), fldStp)
@@ -195,7 +218,7 @@ end
     @test norm(fldX, Inf) ≈ norm(fldX.dat, Inf)
     # axpy! and axpby! match their broadcast equivalents
     axp = axpy!(2.0 + 1im, fldX, copy(fldY))
-    @test axp isa GlaCmpFld
+    @test axp isa GlaFld
     @test norm(axp .- ((2.0 + 1im) .* fldX .+ fldY)) < 1e-12 * norm(axp)
     axb = axpby!(2.0, fldX, 3.0, copy(fldY))
     @test norm(axb .- (2 .* fldX .+ 3 .* fldY)) < 1e-12 * norm(axb)
@@ -206,26 +229,26 @@ end
     @test copy(fldX) == fldX
     @test copy(fldX).dat !== fldX.dat
     sim = similar(fldX)
-    @test sim isa GlaCmpFld
+    @test sim isa GlaFld
     @test length(sim) == length(fldX)
-    @test similar(fldX, ComplexF64) isa GlaCmpFld
+    @test similar(fldX, ComplexF64) isa GlaFld
     @test similar(fldX, Float64) isa Vector{Float64}
     # vec is not overloaded, so it gives the field itself back
     @test vec(fldX) === fldX
 end
 
-@testset "GlaCmpFld broadcasting" begin
+@testset "GlaFld broadcasting" begin
     cvol = mkFldRef()
     fldX = discretize!(zerofield(cvol), fldSmt)
     fldY = 2 .* fldX
-    @test fldY isa GlaCmpFld
+    @test fldY isa GlaFld
     @test fldY.cvol == cvol
     @test norm(fldY) ≈ 2 * norm(fldX)
     @test norm(fldX .+ fldX .- fldY) < 1e-12 * norm(fldY)
     # In place forms
     fldZ = zerofield(cvol)
     fldZ .= 2 .* fldX
-    @test fldZ isa GlaCmpFld
+    @test fldZ isa GlaFld
     @test norm(fldZ .- fldY) < 1e-12 * norm(fldY)
     fldZ .= 0
     @test iszero(norm(fldZ))
@@ -237,7 +260,7 @@ end
     @test (fldX .== fldX) isa AbstractVector{Bool}
 end
 
-@testset "GlaCmpFld mismatched volumes" begin
+@testset "GlaFld mismatched volumes" begin
     cvolA = GlaCmpVol(GlaVol((8, 8, 8), fldScl16, fldOrg0))
     # Same number of degrees of freedom, different geometry
     cvolB = GlaCmpVol(GlaVol((8, 8, 8), fldScl32, fldOrg0))
@@ -255,7 +278,7 @@ end
     @test_throws ArgumentError dot(fldA, fldRef)
 end
 
-@testset "GlaCmpFld GPU" begin
+@testset "GlaFld GPU" begin
     if CUDA.functional()
         cvol = mkFldRef()
         fldGpu = zerofield(cvol; useGpu=true)
@@ -268,7 +291,7 @@ end
         @test dot(fldGpu, fldGpu) ≈ dot(fldCpu, fldCpu)
         # Broadcasting stays on the device
         fldTwo = 2 .* fldGpu
-        @test fldTwo isa GlaCmpFld
+        @test fldTwo isa GlaFld
         @test parent(fldTwo) isa CuVector{ComplexF64}
         @test norm(fldTwo) ≈ 2 * norm(fldCpu)
         fldTwo .= fldGpu .+ fldGpu

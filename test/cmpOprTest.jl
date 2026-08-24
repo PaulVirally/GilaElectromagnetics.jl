@@ -141,7 +141,7 @@ end
 @testset "Composite operator on a field" begin
     fld = discretize!(zerofield(mnyCvl), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
     out = mnyOpr * fld
-    @test out isa GlaCmpFld
+    @test out isa GlaFld
     @test out.cvol === mnyCvl
     @test length(out) == 864
     @test all(isfinite, out.dat)
@@ -274,6 +274,19 @@ end
     @test occursin("composite G₀", sprint(show, opr))
 end
 
+@testset "Plain operator on a field" begin
+    #= A plain operator over one region is the one region composite, so the two
+    have to agree on a field, including the sqrt(ΔV_trg / ΔV_src) of the basis. =#
+    srcVol = GlaVol((2, 2, 2), cmpScl16, cmpOrg0)
+    trgVol = GlaVol((4, 4, 4), cmpScl32, (3//8, 0//1, 0//1))
+    fld = discretize!(zerofield(srcVol), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+    cmpOut = GlaCmpOprVac(GlaCmpVol(trgVol), GlaCmpVol(srcVol)) * fld
+    plnOut = GlaOprVac(trgVol, srcVol) * fld
+    @test plnOut isa GlaFld
+    @test regions(plnOut.cvol)[1] == trgVol
+    @test norm(plnOut.dat - cmpOut.dat) < 1e-13 * norm(cmpOut.dat)
+end
+
 @testset "Composite operator GPU" begin
     if CUDA.functional()
         oprGpu = GlaCmpOprVac(mnyCvl; useGpu=true)
@@ -282,7 +295,7 @@ end
         fldGpu = discretize!(zerofield(mnyCvl; useGpu=true),
             pos -> (exp(2im * pi * pos[1]), pos[2], 0))
         outGpu = oprGpu * fldGpu
-        @test outGpu isa GlaCmpFld
+        @test outGpu isa GlaFld
         @test parent(outGpu) isa CuVector{ComplexF64}
         fldCpu = discretize!(zerofield(mnyCvl),
             pos -> (exp(2im * pi * pos[1]), pos[2], 0))

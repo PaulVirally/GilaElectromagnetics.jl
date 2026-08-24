@@ -255,6 +255,45 @@ end
     @test isexternaloperator(GlaOprVac(_vol4, GlaVol((4,4,4), stdScl, (4//32, 0//1, 0//1))))
 end
 
+@testset "Masked operator adjoint" begin
+    # The mismatched extent pair of the testset above, which the constructor sends
+    # through the union route, so the operator carries a source and a target mask
+    slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
+    box = GlaVol((2,2,2), (1//16,1//16,1//16), (2//16, 0//1, 0//1))
+    opr = GlaOprVac(slb, box)
+    @test isoverlappingoperator(opr)
+    fwdMat = dnsMat(opr)
+    # The adjoint has to exchange the two masks along with the volumes
+    adjMat = dnsMat(opr')
+    @test size(adjMat) == reverse(size(fwdMat))
+    @test norm(adjMat - fwdMat') / norm(fwdMat) < 1e-13
+    # In place, and the round trip back
+    adjOpr = adjoint!(deepcopy(opr))
+    @test glaSze(adjOpr, 2) == glaSze(opr, 1)
+    @test norm(dnsMat(adjOpr) - fwdMat') / norm(fwdMat) < 1e-13
+    @test norm(dnsMat(adjoint!(adjOpr)) - fwdMat) / norm(fwdMat) < 1e-15
+end
+
+@testset "GlaOprVac on a field" begin
+    opr = _g0()
+    vol = opr.mem.srcVol
+    fld = discretize!(zerofield(vol), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+    out = opr * fld
+    @test out isa GlaFld
+    @test nregions(out.cvol) == 1
+    @test regions(out.cvol)[1] == opr.mem.trgVol
+    @test out.dat ≈ opr * fld.dat
+    # A field over another volume, or over a tiling of several regions
+    @test_throws ArgumentError opr * zerofield(GlaVol((2,2,2), stdScl, stdOrg))
+    @test_throws ArgumentError opr * zerofield(GlaCmpVol(
+        [GlaVol((2,2,2), stdScl, (-1//32, 0//1, 0//1)),
+         GlaVol((2,2,2), stdScl, (1//32, 0//1, 0//1))]))
+    # The masked route reads its input through a mask, so it takes no field
+    slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
+    box = GlaVol((2,2,2), (1//16,1//16,1//16), (2//16, 0//1, 0//1))
+    @test_throws ArgumentError GlaOprVac(slb, box) * zerofield(box)
+end
+
 @testset "rszSus" begin
     cel   = (4,4,4)
     sus3d = rand(ComplexF64, cel...)
