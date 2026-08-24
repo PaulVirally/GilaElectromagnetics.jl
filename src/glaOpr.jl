@@ -161,35 +161,6 @@ function ovrChk(vol1::GlaVol, vol2::GlaVol)
     return all(max.(lwrEdg1, lwrEdg2) .< min.(uprEdg1, uprEdg2)) # < not <= to exclude contact
 end
 
-# Returns true if the closed bounding boxes meet: overlap or face, edge, or corner contact
-function cntChk(vol1::GlaVol, vol2::GlaVol)
-    lwrEdg1 = first.(vol1.grd) .- (vol1.scl .// 2)
-    uprEdg1 = last.(vol1.grd) .+ (vol1.scl .// 2)
-    lwrEdg2 = first.(vol2.grd) .- (vol2.scl .// 2)
-    uprEdg2 = last.(vol2.grd) .+ (vol2.scl .// 2)
-    return all(max.(lwrEdg1, lwrEdg2) .<= min.(uprEdg1, uprEdg2))
-end
-
-#= The contact correction of the external construction only runs when a corner of
-the target box lands on the boundary of the source box in every dimension. For any
-other kind of contact the external construction either throws or silently drops
-the correction, so those pairs have to go through the union path instead. =#
-function cntFitChk(trgVol::GlaVol, srcVol::GlaVol)
-    srcLwr = first.(srcVol.grd) .- (srcVol.scl .// 2)
-    srcUpr = last.(srcVol.grd) .+ (srcVol.scl .// 2)
-    trgLwr = first.(trgVol.grd) .- (trgVol.scl .// 2)
-    trgUpr = last.(trgVol.grd) .+ (trgVol.scl .// 2)
-    cinChk = all((srcLwr .<= trgLwr) .& (trgLwr .<= srcUpr)) ||
-        all((srcLwr .<= trgUpr) .& (trgUpr .<= srcUpr))
-    ovrCnt = sum((srcLwr .< trgLwr) .& (trgLwr .< srcUpr)) +
-        sum((srcLwr .< trgUpr) .& (trgUpr .< srcUpr))
-    return cinChk && ovrCnt == 0
-end
-
-# Returns true if the pair needs the union/mask route rather than the external construction
-uniChk(trgVol::GlaVol, srcVol::GlaVol) = ovrChk(trgVol, srcVol) ||
-    (cntChk(trgVol, srcVol) && !cntFitChk(trgVol, srcVol))
-
 # Returns the region where subVol is contained within vol
 function mskRng(subVol::GlaVol, vol::GlaVol)
     stpVol = Rational.(step.(vol.grd))
@@ -227,8 +198,8 @@ This constructor creates an external Green function operator that describes elec
 function GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false)
     innMsk = ntuple(_ -> 0:0, 3)
     outMsk = ntuple(_ -> 0:0, 3)
-    if trgVol != srcVol && uniChk(trgVol, srcVol)
-        # Overlap or unsupported contact: create the union volume and mask out the input/output regions
+    if trgVol != srcVol && ovrChk(trgVol, srcVol)
+        # Overlap: create the union volume and mask out the input/output regions
         vol = uniVol(trgVol, srcVol)
         innMsk = mskRng(srcVol, vol)
         outMsk = mskRng(trgVol, vol)
@@ -255,8 +226,8 @@ function GlaOprVac(mem::GlaVacOprMem)
     innMsk = ntuple(_ -> 0:0, 3)
     outMsk = ntuple(_ -> 0:0, 3)
     trgVol, srcVol = mem.trgVol, mem.srcVol
-    if trgVol != srcVol && uniChk(trgVol, srcVol)
-        # Overlap or unsupported contact: create the union volume and mask out the input/output regions
+    if trgVol != srcVol && ovrChk(trgVol, srcVol)
+        # Overlap: create the union volume and mask out the input/output regions
         vol = uniVol(trgVol, srcVol)
         innMsk = mskRng(srcVol, vol)
         outMsk = mskRng(trgVol, vol)

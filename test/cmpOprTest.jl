@@ -228,14 +228,14 @@ end
     @test all(isfinite, dnsMat(tchOpr))
 end
 
-@testset "Composite operator masked contact" begin
+@testset "Composite operator contact block" begin
     #= A small volume face to face with a taller one. The external construction
-    has no contact correction for that shape, so the block is the self operator
-    of the union of the two, masked down. =#
+    corrects for the cells in contact, and the answer is the self operator of the
+    union of the two, masked down. =#
     trgCvl = GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, cmpOrg0))
     srcCvl = GlaCmpVol(GlaVol((2, 4, 4), cmpScl16, (1//8, 0//1, 0//1)))
     opr = GlaCmpOprVac(trgCvl, srcCvl)
-    @test cmpBlkCnt(opr) == (0, 0, 1, 0)
+    @test cmpBlkCnt(opr) == (0, 1, 0, 0)
     mat = dnsMat(opr)
     @test size(mat) == (24, 96)
     @test all(isfinite, mat)
@@ -246,8 +246,7 @@ end
     colCel = vec([lin[xItr, yItr, zItr] for xItr in 3:4, yItr in 1:4, zItr in 1:4])
     rowDof = vcat([(dir - 1) * 64 .+ rowCel for dir in 1:3]...)
     colDof = vcat([(dir - 1) * 64 .+ colCel for dir in 1:3]...)
-    @test mat == uniMat[rowDof, colDof]
-    # The adjoint has to exchange the two masks along with the volumes
+    @test cmpRelFro(mat, uniMat[rowDof, colDof]) < 1e-12
     @test cmpRelFro(dnsMat(adjoint(opr)), mat') < 1e-13
 end
 

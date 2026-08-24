@@ -129,10 +129,15 @@ end
         GilaElectromagnetics.GilaVolumes.GlaExtInf
 end
 
-@testset "Cross-scale touching throws" begin
-    # Known gap: the contact quadrature produces NaN for partitioned sub-lattices
-    # in contact. Phase 3 works around it with the sandwich construction, and a
-    # fix to the quadrature retires that workaround.
+@testset "Cross-scale touching" begin
+    #= Partitioned sub-lattices in contact go through the contact quadrature, at
+    the accuracy of the cross-scale path rather than the machine precision of
+    the same-scale one, which is why the composite layer prefers the sandwich. =#
     volTch = GlaVol((4,4,4), _xsSclFin, (4//32, 0//1, 0//1))
-    @test_throws Exception GlaOprVac(_xsVolCrs, volTch)
+    opr = GlaOprVac(_xsVolCrs, volTch)
+    @test isexternaloperator(opr)
+    matTch = dnsMat(opr)
+    @test all(isfinite, matTch)
+    # the coarse volume remeshed at the fine scale gives the exact answer
+    @test relFro(matTch, (_xsAgr ./ 8) * dnsMat(GlaOprVac(_xsVolRef, volTch))) < 1e-4
 end

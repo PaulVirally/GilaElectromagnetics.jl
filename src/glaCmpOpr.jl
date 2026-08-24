@@ -104,9 +104,9 @@ function _cntPar(trgReg::GlaVol, srcReg::GlaVol)
 end
 
 #= A block between two volumes of the same cell size, in contact or not. The
-GlaOprVac constructor routes pairs whose kind of contact the external correction
-does not cover through the union of the two volumes; the two routes agree to
-machine precision where both apply. =#
+external construction corrects for cell contact of any shape at a common cell
+size, so the union route of the GlaOprVac constructor is left for volumes that
+genuinely overlap. =#
 _extBlk(trgVol::GlaVol, srcVol::GlaVol, useGpu::Bool) = GlaOprVac(trgVol, srcVol; useGpu=useGpu)
 
 # The cross-scale contact block, computed on the finer of the two meshes

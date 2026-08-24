@@ -16,5 +16,6 @@ include("tstHlp.jl")
     include("linAlgTest.jl")
     include("extOpsTest.jl")
     include("crsSclTest.jl")
+    include("cntTest.jl")
     include("physTest.jl")
 end

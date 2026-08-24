@@ -104,10 +104,13 @@ function genEgoSlf!(egoCrcSlf::AbstractArray{ComplexF64,5}, slfVol::GlaVol, cmpI
     return genEgoCrcSlf!(slfVol, egoCrcSlf, srcGrd, trgFac, srcFac, facLst, cmpInf)
 end
 #=
-Generate the circulant vector of the Green function between a pair of distinct 
-domains, checking for possible domain contact. For the procedure to function 
-correctly, whenever the domains are in contact, the ratio of scales between the 
-source and target volumes must all be integers, and cell corners must match up.  
+Generate the circulant vector of the Green function between a pair of distinct
+domains. Volumes that share interior are rejected. The contact branch runs when
+the two bounding boxes come within cntTol plus half the sum of the cell scales
+in every dimension, and the two grids sit on a common lattice: integer scale
+ratios per dimension, and lower corners a whole number of gcd cells apart. Near
+but unaligned pairs take the regular quadrature. Which cell pairs actually get
+the contact treatment is decided inside egoFunExtCnt!.
 =#
 function genEgoCrcExt!(egoCrcExt::AbstractArray{ComplexF64,5}, 
     trgVol::GlaVol, srcVol::GlaVol, sepGrdTrg::AbstractVector{<:StepRange}, 
@@ -121,16 +124,18 @@ function genEgoCrcExt!(egoCrcExt::AbstractArray{ComplexF64,5},
     # upper and lower edges of the target volume
     trgEdg = (getproperty.(trgVol.grd, :start) .- (trgVol.scl .//2), 
             getproperty.(trgVol.grd, :stop) .+ (trgVol.scl .//2))
-    # check for volume coincidence
-    cinChk = prod((srcEdg[1] .<= trgEdg[1]) .* (trgEdg[1] .<= srcEdg[2])) || 
-        prod((srcEdg[1] .<= trgEdg[2]) .* (trgEdg[2] .<= srcEdg[2]))
-    # check for volume overlap
-    ovrChk = sum((srcEdg[1] .< trgEdg[1]) .* (trgEdg[1] .< srcEdg[2])) +
-        sum((srcEdg[1] .< trgEdg[2]) .* (trgEdg[2] .< srcEdg[2]))
-    if cinChk 
-        if ovrChk > 0
-            throw(ArgumentError("Source and target volumes are overlapping."))
-        end
+    # shared interior in every dimension is overlap
+    if all(max.(srcEdg[1], trgEdg[1]) .< min.(srcEdg[2], trgEdg[2]))
+        throw(ArgumentError("Source and target volumes are overlapping."))
+    end
+    # separation of the closed boxes, negative where the projections meet
+    sepBox = max.(srcEdg[1] .- trgEdg[2], trgEdg[1] .- srcEdg[2])
+    cntChk = all(sepBox .< (cntTol .+ ((trgVol.scl .+ srcVol.scl) ./ 2)))
+    # contact quadrature needs both grids on a common lattice
+    fitChk = all(isinteger, max.(trgVol.scl, srcVol.scl) .//
+            min.(trgVol.scl, srcVol.scl)) &&
+        all(isinteger, (trgEdg[1] .- srcEdg[1]) .// gcd.(trgVol.scl, srcVol.scl))
+    if cntChk && fitChk
         # generate self Green function for contact cells
         cntVol = genCntVol(trgVol, srcVol) 
         egoCrcCnt = Array{eltype(egoCrcExt)}(undef, 3, 3, (2 .* cntVol.cel)...)

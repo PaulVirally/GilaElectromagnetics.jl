@@ -237,8 +237,8 @@ end
 
 @testset "Touching with mismatched extents" begin
     # A small box flush against the face of a wider slab: the external contact
-    # correction does not cover this contact, so the constructor has to take the
-    # union route in both orientations
+    # correction covers this shape, so both orientations take the external route
+    # and reproduce the union of the two volumes
     slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
     box = GlaVol((2,2,2), (1//16,1//16,1//16), (2//16, 0//1, 0//1))
     uni = uniVol(slb, box)
@@ -248,18 +248,19 @@ end
     slbDof, boxDof = dofIdx(slb), dofIdx(box)
     for (trg, src, rowDof, colDof) in ((slb, box, slbDof, boxDof), (box, slb, boxDof, slbDof))
         opr = GlaOprVac(trg, src)
-        @test isoverlappingoperator(opr)
-        @test norm(dnsMat(opr) - uniMat[rowDof, colDof]) / norm(uniMat[rowDof, colDof]) < 1e-13
+        @test isexternaloperator(opr)
+        @test !isoverlappingoperator(opr)
+        @test norm(dnsMat(opr) - uniMat[rowDof, colDof]) / norm(uniMat[rowDof, colDof]) < 1e-12
     end
     # A corner-fitting touching pair still takes the external route
     @test isexternaloperator(GlaOprVac(_vol4, GlaVol((4,4,4), stdScl, (4//32, 0//1, 0//1))))
 end
 
 @testset "Masked operator adjoint" begin
-    # The mismatched extent pair of the testset above, which the constructor sends
-    # through the union route, so the operator carries a source and a target mask
+    # A slab and a box sharing interior, which the constructor sends through the
+    # union route, so the operator carries a source and a target mask
     slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
-    box = GlaVol((2,2,2), (1//16,1//16,1//16), (2//16, 0//1, 0//1))
+    box = GlaVol((2,2,2), (1//16,1//16,1//16), (1//16, 0//1, 0//1))
     opr = GlaOprVac(slb, box)
     @test isoverlappingoperator(opr)
     fwdMat = dnsMat(opr)
@@ -290,7 +291,7 @@ end
          GlaVol((2,2,2), stdScl, (1//32, 0//1, 0//1))]))
     # The masked route reads its input through a mask, so it takes no field
     slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
-    box = GlaVol((2,2,2), (1//16,1//16,1//16), (2//16, 0//1, 0//1))
+    box = GlaVol((2,2,2), (1//16,1//16,1//16), (1//16, 0//1, 0//1))
     @test_throws ArgumentError GlaOprVac(slb, box) * zerofield(box)
 end
 
