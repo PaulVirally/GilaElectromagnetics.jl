@@ -235,6 +235,26 @@ end
     @test_throws AssertionError mskRng(badSub, bigVol)
 end
 
+@testset "Touching with mismatched extents" begin
+    # A small box flush against the face of a wider slab: the external contact
+    # correction does not cover this contact, so the constructor has to take the
+    # union route in both orientations
+    slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
+    box = GlaVol((2,2,2), (1//16,1//16,1//16), (2//16, 0//1, 0//1))
+    uni = uniVol(slb, box)
+    uniMat = dnsMat(GlaOprVac(uni))
+    li = LinearIndices((uni.cel..., 3))
+    dofIdx(v) = (r = mskRng(v, uni); vec([li[i,j,k,d] for i in r[1], j in r[2], k in r[3], d in 1:3]))
+    slbDof, boxDof = dofIdx(slb), dofIdx(box)
+    for (trg, src, rowDof, colDof) in ((slb, box, slbDof, boxDof), (box, slb, boxDof, slbDof))
+        opr = GlaOprVac(trg, src)
+        @test isoverlappingoperator(opr)
+        @test norm(dnsMat(opr) - uniMat[rowDof, colDof]) / norm(uniMat[rowDof, colDof]) < 1e-13
+    end
+    # A corner-fitting touching pair still takes the external route
+    @test isexternaloperator(GlaOprVac(_vol4, GlaVol((4,4,4), stdScl, (4//32, 0//1, 0//1))))
+end
+
 @testset "rszSus" begin
     cel   = (4,4,4)
     sus3d = rand(ComplexF64, cel...)

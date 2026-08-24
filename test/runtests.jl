@@ -8,6 +8,8 @@ include("tstHlp.jl")
 @testset "GilaElectromagnetics" begin
     include("volTest.jl")
     include("cmpVolTest.jl")
+    include("cmpFldTest.jl")
+    include("cmpOprTest.jl")
     include("vacTest.jl")
     include("slvTest.jl")
     include("oprTest.jl")
