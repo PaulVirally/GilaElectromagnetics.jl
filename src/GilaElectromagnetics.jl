@@ -10,11 +10,16 @@ module GilaElectromagnetics
 
 include("glaTyp.jl")
 using .GilaTypes
-export GlaSlv, AbstractGlaOpr
+export GlaSlv, AbstractGlaOpr, AbstractGlaVacOpr
 
 include("glaVol.jl")
 using .GilaVolumes
 export GlaVol
+export GlaCmpVol, CompositeVolume, refine, regions, nregions, coordinates, cellvolumes, finest
+
+include("glaFld.jl")
+using .GilaFields
+export GlaFld, MultiScaleField, zerofield, discretize!, regionview, eachregion, regrid
 
 include("vacuum/glaVac.jl")
 using .GilaVacuum
@@ -26,8 +31,8 @@ export GMRESSolver, BiCGStabSolver, solve, ini!
 
 include("glaOpr.jl")
 using .GilaOperators
-export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, MulRegGlaOprVac, InvSctOpr, SctOpr, GlaOpr
-export VacuumGreenOperator, AsymVacuumGreenOperator, SymVacuumGreenOperator, MultiRegionVacuumGreenOperator, InverseScatteringOperator, ScatteringOperator, GreenOperator
+export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, MulRegGlaOprVac, GlaCmpOprVac, InvSctOpr, SctOpr, GlaOpr
+export VacuumGreenOperator, AsymVacuumGreenOperator, SymVacuumGreenOperator, MultiRegionVacuumGreenOperator, CompositeVacuumGreenOperator, InverseScatteringOperator, ScatteringOperator, GreenOperator
 export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, adjoint!, glaSze, slv, asym
 
 #

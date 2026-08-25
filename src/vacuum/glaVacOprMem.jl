@@ -72,7 +72,7 @@ function GlaVacOprMem(cmpInf::GlaKerOpt, egoFur::AbstractVector{<:AbstractArray{
     eoDim = 2^lvl
     # verify that egoFur contains only numeric values
     for eoItr ∈ eachindex(1:eoDim)
-        if !all(isfinite.(egoFur[eoItr]))
+        if !all(isfinite, egoFur[eoItr])
             throw(ArgumentError("Fourier information contains non-numeric values."))
         end
     end
@@ -103,29 +103,22 @@ function GlaVacOprMem(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol=trgVol)
     totParTrg = prod(mixInf.trgDiv)
     totParSrc = prod(mixInf.srcDiv)
 
-    # memory for circulant green function vector
-    egoCrc = Array{ComplexF64}(undef, 3, 3, totCelCrc..., totParSrc, totParTrg) # FIXME: Should this be a CuArray if we have access to a GPU?
+    # memory for circulant green function vector. The integral kernels want
+    # the 3×3 tensor block contiguous per cell, so the fill keeps this layout
+    egoCrc = Array{ComplexF64}(undef, 3, 3, totCelCrc..., totParSrc, totParTrg)
     genEgoCrc!(egoCrc, trgVol, srcVol, mixInf, cmpInf)
     # verify that egoCrc contains numeric values
-    if !all(isfinite.(egoCrc))
+    if !all(isfinite, egoCrc)
         throw(ArgumentError("Computed circulant contains non-numeric values."))
     end
-    # Fourier transform of circulant green function
-    egoFurPrp = Array{eltype(egoCrc)}(undef, totCelCrc..., 6, totParSrc, totParTrg)
-    # plan Fourier transform
-    fftCrcOut = plan_fft(egoCrc[1,1,:,:,:,1,1], (1, 2, 3))
-    # Fourier transform of the green function, making use of real space 
-    # symmetry under transposition--entries are xx, yy, zz, xy, xz, yz
-    for trgItr ∈ eachindex(1:totParTrg), srcItr ∈ eachindex(1:totParSrc), colItr ∈ eachindex(1:3), rowItr ∈ eachindex(1:colItr)
-        # vector direction moved to outer volume index---largest stride
-        egoFurPrp[:, :, :, blkEgoItr(3 * (colItr - 1) + rowItr), srcItr, trgItr] = fftCrcOut * egoCrc[rowItr, colItr, :, :, :, srcItr, trgItr]
-    end
-    # verify integrity of Fourier transform data
-    if !all(isfinite.(egoFurPrp))
-        throw(ArgumentError("Fourier transform of circulant contains non-numeric values."))
-    end
-    # number of unique green function blocks
-    ddDim = 6
+    # gather the six unique tensor components (real space symmetry under
+    # transposition)---entries are xx, yy, zz, xy, xz, yz---into a cells-first
+    # array so that a single batched plan transforms every component and
+    # partition pair
+    egoCrcCmp = Array{ComplexF64}(undef, totCelCrc..., 6, totParSrc, totParTrg)
+    gthEgoCmp!(egoCrcCmp, egoCrc)
+    # allow the 9-component fill array to be reclaimed before the transform
+    egoCrc = nothing
     # number of unique elements in each cartesian index for a branch
     truInf = Array{Int}(undef, 3)
     for dirItr ∈ eachindex(1:3)
@@ -135,32 +128,137 @@ function GlaVacOprMem(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol=trgVol)
             truInf[dirItr] = max(Integer(ceil(mixInf.trgCel[dirItr] / 2)) + iseven(mixInf.trgCel[dirItr]), 2)
             continue
         end
-        # genVolEve enforces that number of cells is even 
+        # genVolEve enforces that number of cells is even
         truInf[dirItr] = totCelCrc[dirItr] ÷ 2
     end
-    # branching depth of multiplication
-    lvl = 3
-    # number of multiplication branches     
-    eoDim = 2^lvl
-    # final Fourier coefficients for a given branch
-    egoFur = Array{arrTyp(cmpInf)}(undef, eoDim)
-    # intermediate storage
-    egoFurInt = Array{ComplexF64}(undef, max.(div.(totCelCrc, 2), (2,2,2))..., 
-        ddDim, totParSrc, totParTrg)
-    # only one one eighth of the green function is unique 
-    for eoItr ∈ 0:(eoDim - 1)
-        # odd / even branch extraction
-        # egoFur[eoItr + 1] = Array{ComplexF64}(undef, truInf..., ddDim, totParSrc, totParTrg)
-        egoFur[eoItr + 1] = arrTyp(cmpInf)(undef, truInf..., ddDim, totParSrc, totParTrg)
-        # first division is along smallest stride -> largest binary division
-        egoFurInt .= ComplexF64.(egoFurPrp[(1 + 
-            mod(div(eoItr, 4), 2)):2:(end - 1 + mod(div(eoItr, 4), 2)), 
-            (1 + mod(div(eoItr, 2), 2)):2:(end - 1 + mod(div(eoItr, 2), 2)),
-            (1 + mod(eoItr, 2)):2:(end - 1 + mod(eoItr, 2)),:,:,:])
-        itr = CartesianIndices(egoFur[eoItr + 1])
-        copyto!(egoFur[eoItr + 1], itr, egoFurInt, itr)
-    end
+    # Fourier transform of the circulant and even/odd branch extraction on the
+    # backend selected by cmpInf
+    egoFur = genEgoFur(egoCrcCmp, truInf, cmpInf)
     return GlaVacOprMem(cmpInf, egoFur, trgVol, srcVol)
+end
+
+# (row, col) position in the 3×3 tensor block of each of the six unique
+# components, in the xx, yy, zz, xy, xz, yz storage order of egoFur
+const egoCmpPos = ((1, 1), (2, 2), (3, 3), (1, 2), (1, 3), (2, 3))
+
+#=
+Gather the six unique tensor components of the circulant from the
+(3, 3, cells...) fill layout into the cells-first component layout
+(cells..., 6, partition pairs) used by the Fourier stage.
+=#
+function gthEgoCmp!(egoCrcCmp::AbstractArray{ComplexF64,6}, egoCrc::AbstractArray{ComplexF64,7})
+    gthItr = CartesianIndices((size(egoCrc, 5), 6, size(egoCrc, 6), size(egoCrc, 7)))
+    @threads for gthInd ∈ gthItr
+        zItr, cmpItr, srcItr, trgItr = Tuple(gthInd)
+        rowItr, colItr = egoCmpPos[cmpItr]
+        @views egoCrcCmp[:, :, zItr, cmpItr, srcItr, trgItr] .= egoCrc[rowItr, colItr, :, :, zItr, srcItr, trgItr]
+    end
+    return nothing
+end
+
+#=
+Extract one even/odd Fourier branch: copy the strided branch corner of the
+transformed circulant into the branch array. Views plus broadcast express the
+copy once for both Array (CPU) and CuArray (GPU) backends. The trailing
+(component / partition) dimensions of the two arrays must agree. When a
+dimension of the circulant holds a single unique coefficient the length-1 view
+broadcasts up to the minimum branch extent of 2.
+=#
+function extEgoBrn!(egoFurBrn::AbstractArray{ComplexF64}, egoFurPrp::AbstractArray{ComplexF64}, eoItr::Integer)
+    totCelCrc = size(egoFurPrp)[1:3]
+    truInf = size(egoFurBrn)[1:3]
+    # even/odd offsets of the three axes: eoItr bit 2 → x, bit 1 → y, bit 0 → z
+    # first division is along smallest stride -> largest binary division
+    eoOff = (mod(div(eoItr, 4), 2), mod(div(eoItr, 2), 2), mod(eoItr, 2))
+    brnRng = ntuple(dirItr -> (1 + eoOff[dirItr]):2:(totCelCrc[dirItr] - 1 + eoOff[dirItr]), 3)
+    # keep only the unique leading corner (self operators store roughly half)
+    truRng = ntuple(dirItr -> length(brnRng[dirItr]) > truInf[dirItr] ?
+        brnRng[dirItr][1:truInf[dirItr]] : brnRng[dirItr], 3)
+    trlCln = ntuple(_ -> Colon(), ndims(egoFurPrp) - 3)
+    egoFurBrn .= @view egoFurPrp[truRng..., trlCln...]
+    return nothing
+end
+
+#=
+Fourier stage of operator creation: transform the gathered six-component
+circulant over its three cell dimensions with one batched in-place plan (all
+6 × totParSrc × totParTrg blocks in a single plan execution) and extract the
+eight even/odd branches. Dispatch on cmpInf selects the backend.
+=#
+function genEgoFur(egoCrcCmp::Array{ComplexF64,6}, truInf::AbstractVector{<:Integer}, cmpInf::CPUKerOpt)
+    ddDim, totParSrc, totParTrg = size(egoCrcCmp)[4:6]
+    # thread the creation-time FFT, restoring the global FFTW state afterwards
+    fftwThr = FFTW.get_num_threads()
+    FFTW.set_num_threads(Threads.nthreads())
+    try
+        plan_fft!(egoCrcCmp, 1:3) * egoCrcCmp
+    finally
+        FFTW.set_num_threads(fftwThr)
+    end
+    # verify integrity of Fourier transform data
+    if !all(isfinite, egoCrcCmp)
+        throw(ArgumentError("Fourier transform of circulant contains non-numeric values."))
+    end
+    # final Fourier coefficients for a given branch
+    egoFur = Array{Array{ComplexF64}}(undef, 8)
+    # only one eighth of the green function is unique; the eight branch
+    # extractions are independent
+    @threads for eoItr ∈ 0:7
+        egoFurBrn = Array{ComplexF64}(undef, truInf..., ddDim, totParSrc, totParTrg)
+        extEgoBrn!(egoFurBrn, egoCrcCmp, eoItr)
+        egoFur[eoItr + 1] = egoFurBrn
+    end
+    return egoFur
+end
+
+#=
+GPU Fourier stage: upload the gathered circulant once and run the transform
+(CUFFT) and branch extraction on device. The branches already end up as
+CuArrays, so this removes the former big host → device copy of the Fourier
+coefficients rather than adding transfers. When the full circulant does not
+fit on device next to the branches (large multi-partition external operators),
+fall back to batching per partition pair with a single reused plan.
+=#
+function genEgoFur(egoCrcCmp::Array{ComplexF64,6}, truInf::AbstractVector{<:Integer}, cmpInf::GPUKerOpt)
+    ddDim, totParSrc, totParTrg = size(egoCrcCmp)[4:6]
+    egoFur = Array{CuArray{ComplexF64}}(undef, 8)
+    for eoItr ∈ 0:7
+        egoFur[eoItr + 1] = CuArray{ComplexF64}(undef, truInf..., ddDim, totParSrc, totParTrg)
+    end
+    # leave headroom: the transform itself needs device workspace
+    if sizeof(egoCrcCmp) <= 3 * (CUDA.available_memory() ÷ 4)
+        egoFurPrp = CuArray(egoCrcCmp)
+        plan_fft!(egoFurPrp, 1:3) * egoFurPrp
+        # verify integrity of Fourier transform data
+        if !all(isfinite, egoFurPrp)
+            throw(ArgumentError("Fourier transform of circulant contains non-numeric values."))
+        end
+        for eoItr ∈ 0:7
+            extEgoBrn!(egoFur[eoItr + 1], egoFurPrp, eoItr)
+        end
+        CUDA.unsafe_free!(egoFurPrp)
+    else
+        # one slab and one plan reused for every partition pair
+        slbDev = CuArray{ComplexF64}(undef, size(egoCrcCmp)[1:4])
+        slbPln = plan_fft!(slbDev, 1:3)
+        slbLen = length(slbDev)
+        egoCrcVec = vec(egoCrcCmp)
+        for parItr ∈ 0:(totParSrc * totParTrg - 1)
+            srcItr = mod(parItr, totParSrc) + 1
+            trgItr = div(parItr, totParSrc) + 1
+            copyto!(slbDev, 1, egoCrcVec, 1 + parItr * slbLen, slbLen)
+            slbPln * slbDev
+            # verify integrity of Fourier transform data
+            if !all(isfinite, slbDev)
+                throw(ArgumentError("Fourier transform of circulant contains non-numeric values."))
+            end
+            for eoItr ∈ 0:7
+                extEgoBrn!(view(egoFur[eoItr + 1], :, :, :, :, srcItr, trgItr), slbDev, eoItr)
+            end
+        end
+        CUDA.unsafe_free!(slbDev)
+    end
+    return egoFur
 end
 
 # Create Fourier transform plans
@@ -221,24 +319,6 @@ function glaOprPrp(egoFur::AbstractVector{<:AbstractArray{ComplexF64}}, trgVol::
         copyto!(phzInf[itr], phzInfHst)
     end
     return GlaVacOprMem(cmpInf, trgVol, srcVol, mixInf, brnSze, egoFur, fftPlnFwd, fftPlnRev, adjFftPlnFwd, adjFftPlnRev, phzInf)
-end
-
-# Block index for a given Cartesian index.
-@inline function blkEgoItr(crtInd::Integer)
-    if crtInd == 1
-        return 1
-    elseif crtInd == 2 || crtInd == 4
-        return 4
-    elseif crtInd == 5 
-        return 2    
-    elseif crtInd == 7 || crtInd == 3
-        return 5
-    elseif crtInd == 8 || crtInd == 6
-        return 6
-    elseif crtInd == 9 
-        return 3
-    end
-    throw(ArgumentError("Improper use case, there are only nine blocks."))
 end
 
 isadjoint(vacOprMem::GlaVacOprMem) = adjMod(vacOprMem.cmpInf)
@@ -327,7 +407,35 @@ function useGpu!(mem::GlaVacOprMem)
     return mem
 end
 
-# Add serialization support for GlaVacOprMem
+# As with deepcopy above, serialization must regenerate the FFTW plans rather
+# than write out the raw C pointers, which are only meaningful inside the
+# process that created them. Only the Fourier data, volumes, and kernel options
+# are written, and glaOprPrp rebuilds the plans on load. These methods cover
+# mems reached through the generic serializer (struct fields, array elements);
+# the io::IO methods below are the top level format used for preload files.
+function Serialization.serialize(s::AbstractSerializer, mem::GlaVacOprMem)
+    Serialization.serialize_type(s, GlaVacOprMem)
+    serialize(s, mem.cmpInf isa GPUKerOpt ? collect(map(Array, mem.egoFur)) : mem.egoFur)
+    cmpInf = useCpu(mem.cmpInf)
+    serialize(s, cmpInf.frqPhz)
+    serialize(s, cmpInf.intOrd)
+    serialize(s, cmpInf.adjMod)
+    serialize(s, mem.trgVol)
+    serialize(s, mem.srcVol)
+    serialize(s, mem.mixInf)
+end
+
+function Serialization.deserialize(s::AbstractSerializer, ::Type{GlaVacOprMem})
+    egoFur = deserialize(s)
+    frqPhz = deserialize(s)
+    intOrd = deserialize(s)
+    adjMod = deserialize(s)
+    trgVol = deserialize(s)
+    srcVol = deserialize(s)
+    mixInf = deserialize(s)
+    return glaOprPrp(egoFur, trgVol, srcVol, mixInf, CPUKerOpt(frqPhz, intOrd, adjMod, CPU()))
+end
+
 function Serialization.serialize(io::IO, mem::GlaVacOprMem)
     wasGpu = false
     if mem.cmpInf isa GPUKerOpt

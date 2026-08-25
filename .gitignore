@@ -21,6 +21,8 @@ docs/site/
 
 # Benchmark data
 benchmark/*.jld2
+benchmark/*.png
+benchmark/results/
 
 # Profiling
 statprof

@@ -19,8 +19,8 @@ function wekSInt(rPts::AbstractMatrix{<:AbstractFloat},
     # integral
     itr = CartesianIndices((1:3, 1:8, 1:glqOrd))
     out = Array{ComplexF64}(undef, length(itr))
-    @inbounds @threads for (i, idx) in collect(enumerate(itr))
-        out[i] = wekSIntKer(idx, glqOrd, rPts, glQud, cmpInf)
+    @inbounds @threads for i in eachindex(out)
+        out[i] = wekSIntKer(itr[i], glqOrd, rPts, glQud, cmpInf)
     end
     return eqvJacS(rPts) * sum(out)
 end
@@ -52,8 +52,8 @@ function wekEInt(rPts::AbstractMatrix{<:AbstractFloat},
     # integral
     itr = CartesianIndices((1:6, 1:glqOrd))
     out = Array{ComplexF64}(undef, length(itr))
-    @inbounds @threads for (i, idx) in collect(enumerate(itr))
-        out[i] = wekEIntKer(idx, glqOrd, rPts, glQud, cmpInf)
+    @inbounds @threads for i in eachindex(out)
+        out[i] = wekEIntKer(itr[i], glqOrd, rPts, glQud, cmpInf)
     end
     return eqvJacEV(rPts) * sum(out)
 end
@@ -87,8 +87,8 @@ function wekVInt(sngMod::Bool, rPts::AbstractMatrix{<:AbstractFloat},
     # integral
     itr = CartesianIndices((1:glqOrd, 1:glqOrd, 1:glqOrd))
     out = Array{ComplexF64}(undef, length(itr))
-    @inbounds @threads for (i, idx) in collect(enumerate(itr))
-        out[i] = wekVIntKer(idx, glqOrd, sngMod, rPts, glQud, cmpInf)
+    @inbounds @threads for i in eachindex(out)
+        out[i] = wekVIntKer(itr[i], glqOrd, sngMod, rPts, glQud, cmpInf)
     end
     return eqvJacEV(rPts) * π^2 * sum(out) / 144.0
 end

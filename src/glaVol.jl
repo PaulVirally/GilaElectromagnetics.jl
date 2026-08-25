@@ -19,6 +19,7 @@ handling grid layouts, and computing volume interactions.
 """
 
 export GlaVol, GlaExtInf, genVolEve, genEveExtInf, genCntVol, sepGrd, crcIndClc, uniVol
+export GlaCmpVol, CompositeVolume, refine, regions, nregions, coordinates, cellvolumes, finest
 
 """
     GlaVol
@@ -225,10 +226,13 @@ Generate mixed information for source and target volumes, regenerating the volum
 # Notes
 - If the sum of cells in source and target volumes is odd, both volumes are regenerated
   to have an even number of cells
+
+# Throws
+- `ArgumentError`: If any dimension has an odd sum of target and source cells per partition
 """
 function genEveExtInf(trgVol::GlaVol, srcVol::GlaVol)
     # ensure that sum number of cells is even, regenerate if not
-    if sum(mod.(trgVol.cel .+ srcVol.cel, 2)) != 0  
+    if sum(mod.(trgVol.cel .+ srcVol.cel, 2)) != 0
         # regenerate target volume so that number of cells is even
         trgVol = genVolEve(trgVol)
         # regenerate source volume so that number of cells is even
@@ -236,7 +240,23 @@ function genEveExtInf(trgVol::GlaVol, srcVol::GlaVol)
     end
     # useful information for aligning source and target volumes
     mixInf = GlaExtInf(trgVol, srcVol)
+    chkParExtInf(mixInf) # Make sure we have an even sum of cells per partition
     return mixInf
+end
+
+#=
+The branching Fourier algorithm needs an even sum of target and source cells in
+every dimension. For a cross-scale pair the counts that matter are the ones per
+partition, not the ones of the full volumes. Having an odd sum of cells would
+normally give incorrect results without throw an error, so here we throw.
+=#
+function chkParExtInf(mixInf::GlaExtInf)
+    celSum = mixInf.trgCel .+ mixInf.srcCel
+    if any(isodd.(celSum))
+        badDir = findall(isodd.(celSum))
+        throw(ArgumentError("Cells per partition sum to an odd number in dimension(s) $(badDir): target $(mixInf.trgCel) plus source $(mixInf.srcCel) gives $(celSum), with $(mixInf.trgDiv) target and $(mixInf.srcDiv) grid divisions. Adjust the cell counts of the volumes, or the refinement factor between them, so that every dimension sums to an even number."))
+    end
+    return nothing
 end
 
 """
@@ -334,5 +354,7 @@ Calculate circulant index for self Green function vector.
     return cellInd + CartesianIndex(ntuple(itr -> (cellInd[itr] < 0) * 2 * 
         cntVol.cel[itr] + 1, 3))
 end
+
+include("glaCmpVol.jl")
 
 end # module

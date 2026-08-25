@@ -283,13 +283,13 @@ end
 Generate all unique pairs of cube faces. 
 =#
 function facPar()
-    fPairs = Array{Integer,2}(undef, 2, 36)
+    fPairs = Array{Int,2}(undef, 2, 36)
     for i ∈ 1:6, j ∈ 1:6
         k = (i - 1) * 6 + j
         fPairs[1, k] = i
-        fPairs[2, k] = j 
+        fPairs[2, k] = j
     end
-    return SMatrix{2, 36}(fPairs)
+    return SMatrix{2, 36, Int}(fPairs)
 end
 #=
 Determine scaling factors for surface integrals.

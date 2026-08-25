@@ -20,6 +20,7 @@ scattering operators, and their compositions.
 module GilaOperators
 
 using ..GilaVolumes
+using ..GilaFields
 using ..GilaVacuum
 using ..GilaTypes
 using ..GilaSolvers
@@ -27,9 +28,10 @@ using CUDA
 using Serialization
 
 import ..GilaVacuum: useCpu!, useGpu!
+import ..GilaVolumes: _lwrEdg, _uprEdg, _ovrLap
 
-export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, MulRegGlaOprVac, InvSctOpr, SctOpr, GlaOpr
-export VacuumGreenOperator, AsymVacuumGreenOperator, SymVacuumGreenOperator, MultiRegionVacuumGreenOperator, InverseScatteringOperator, ScatteringOperator, GreenOperator
+export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, MulRegGlaOprVac, GlaCmpOprVac, InvSctOpr, SctOpr, GlaOpr
+export VacuumGreenOperator, AsymVacuumGreenOperator, SymVacuumGreenOperator, MultiRegionVacuumGreenOperator, CompositeVacuumGreenOperator, InverseScatteringOperator, ScatteringOperator, GreenOperator
 export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, adjoint!, glaSze, slv, asym
 
 """
@@ -46,7 +48,7 @@ interactions in free space.
 - `trgMsk::NTuple{StepRage{Int64, Int64}, 3}`: Tuple of ranges defining the mask for
   the output volume (for overlapping operators only)
 """
-struct GlaOprVac <: AbstractGlaOpr
+struct GlaOprVac <: AbstractGlaVacOpr
     mem::GlaVacOprMem
     srcMsk::NTuple{3, OrdinalRange{Int64, Int64}}
     trgMsk::NTuple{3, OrdinalRange{Int64, Int64}}
@@ -60,7 +62,7 @@ Represents the vacuum Green function operator G₀ for multiple disjoint domains
 # Fields
 - oprMat::Matrix{GlaOprVac}: Matrix of vacuum Green function operators for each disjoint region pair
 """
-struct MulRegGlaOprVac <: AbstractGlaOpr
+struct MulRegGlaOprVac <: AbstractGlaVacOpr
     oprMat::Matrix{GlaOprVac}
 end
 
@@ -73,7 +75,7 @@ Represents the anti-Hermitian part of the vacuum Green function operator.
 - `mem::GlaVacOprMem`: Memory structure containing the operator's data, including
   volume information and Fourier coefficients
 """
-struct AsyGlaOprVac <: AbstractGlaOpr
+struct AsyGlaOprVac <: AbstractGlaVacOpr
     mem::GlaVacOprMem
 end
 
@@ -86,7 +88,7 @@ Represents the Hermitian part of the vacuum Green function operator.
 - `mem::GlaVacOprMem`: Memory structure containing the operator's data, including
   volume information and Fourier coefficients
 """
-struct SymGlaOprVac <: AbstractGlaOpr
+struct SymGlaOprVac <: AbstractGlaVacOpr
     mem::GlaVacOprMem
 end
 
@@ -98,13 +100,25 @@ tensor. This operator describes how electromagnetic fields interact with a mater
 medium.
 
 # Fields
-- `oprVac::GlaOprVac`: The vacuum Green function operator
-- `sus::AbstractArray{ComplexF64, 3}`: The susceptibility tensor (isotropic medium)
-  representing the material response
+- `oprVac::AbstractGlaVacOpr`: The vacuum Green function operator
+- `sus::AbstractArray{ComplexF64}`: The susceptibility (isotropic medium)
+  representing the material response. Over a single volume it is a 3-tensor of
+  cell values, over a composite volume a flat vector with one entry per degree of
+  freedom
 """
 mutable struct InvSctOpr <: AbstractGlaOpr
-    oprVac::GlaOprVac
-    sus::AbstractArray{ComplexF64, 3}
+    oprVac::AbstractGlaVacOpr
+    sus::AbstractArray{ComplexF64}
+
+    #= A composite operator takes the susceptibility in any of the forms _cmpSus
+    accepts and stores it in the flat degree of freedom layout of GlaFld. =#
+    function InvSctOpr(oprVac::AbstractGlaVacOpr, sus)
+        oprVac isa GlaCmpOprVac || return new(oprVac, sus)
+        if !isselfoperator(oprVac)
+            throw(ArgumentError("An inverse scattering operator needs a self operator, and this composite operator maps between two different tilings."))
+        end
+        return new(oprVac, _cmpSus(oprVac.srcCvl, sus, isgpu(oprVac)))
+    end
 end
 
 """
@@ -145,7 +159,9 @@ const InverseScatteringOperator = InvSctOpr
 const ScatteringOperator = SctOpr
 const GreenOperator = GlaOpr
 
-# Returns true if the volumes overlap
+# Returns true if the volumes share interior. Face, edge, and corner contact is
+# not overlap: the external construction has contact corrections for it, and the
+# union path cannot represent contact between volumes at different cell scales.
 function ovrChk(vol1::GlaVol, vol2::GlaVol)
     # Upper/lower edges of the volumes
     lwrEdg1 = first.(vol1.grd) .- (vol1.scl .// 2)
@@ -154,7 +170,33 @@ function ovrChk(vol1::GlaVol, vol2::GlaVol)
     uprEdg2 = last.(vol2.grd) .+ (vol2.scl .//2)
 
     # Volume overlap check
-    return all(max.(lwrEdg1, lwrEdg2) .<= min.(uprEdg1, uprEdg2))
+    return all(max.(lwrEdg1, lwrEdg2) .< min.(uprEdg1, uprEdg2)) # < not <= to exclude contact
+end
+
+#= Six cells of the coarser interface scale is where the relative Frobenius
+error between two separated volumes drops under 1e-8, measured across mesh
+scales, same and mixed scale pairs, and body sizes. =#
+const prxCelMin = 6
+
+#= Separation of two volumes in cells of the coarser interface scale, paired
+with that scale, or nothing when the volumes touch or overlap. A touching pair
+runs the contact quadrature, which is exact, so it carries no proximity cost. =#
+function _prxGap(volA::GlaVol, volB::GlaVol)
+    sep = max.(_lwrEdg(volB) .- _uprEdg(volA), _lwrEdg(volA) .- _uprEdg(volB))
+    all(sep .<= 0) && return nothing
+    sclCrs = max.(volA.scl, volB.scl)
+    dir = argmax(idx -> max(sep[idx], 0//1) // sclCrs[idx], 1:3)
+    return (sep[dir] // sclCrs[dir], sclCrs[dir])
+end
+
+# Warn about a separated pair sitting closer than the measured accuracy bound
+function prxChk(trgVol::GlaVol, srcVol::GlaVol)
+    gap = _prxGap(trgVol, srcVol)
+    (isnothing(gap) || gap[1] >= prxCelMin) && return nothing
+
+    celStr = (isone(denominator(gap[1])) ? string(numerator(gap[1])) : string(round(Float64(gap[1]); digits=2))) * (isone(gap[1]) ? " cell" : " cells")
+    @warn "The target and source are separated by $celStr of the coarser $(gap[2]) interface scale. Operator entries this close are quadrature limited, and the relative error only reaches about 1e-8 at a gap of $prxCelMin cells. It is strongly recommended to refine the facing surfaces with `refine` to increase the accuracy of the operator."
+    return nothing
 end
 
 # Returns the region where subVol is contained within vol
@@ -176,26 +218,31 @@ function mskRng(subVol::GlaVol, vol::GlaVol)
 end
 
 """
-    GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false)
+    GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false, prxWrn::Bool=true)
 
 Construct a vacuum Green function operator for external interactions between different volumes.
 
 This constructor creates an external Green function operator that describes electromagnetic interactions between distinct regions in free space. The operator maps sources in the source volume to fields in the target volume, enabling the modeling of coupling effects between different parts of an electromagnetic system. For the computation to work correctly, the source and target volumes must share a common scale grid.
 
+Two volumes separated by fewer than six cells of the coarser interface scale are quadrature limited, so the constructor warns. The six cell bound is measured, and holds across mesh scales and body sizes. Touching volumes are handled by the contact quadrature and never warn.
+
 # Arguments
 - `trgVol::GlaVol`: The target volume where the field will be computed
 - `srcVol::GlaVol`: The source volume containing the sources
 - `useGpu::Bool=false`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
+- `prxWrn::Bool=true`: Whether to warn about a separation under the accuracy bound
 
 # Returns
 - `GlaOprVac`: The vacuum Green function operator
 
 """
-function GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false)
+function GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false,
+    prxWrn::Bool=true)
+    prxWrn && prxChk(trgVol, srcVol)
     innMsk = ntuple(_ -> 0:0, 3)
     outMsk = ntuple(_ -> 0:0, 3)
     if trgVol != srcVol && ovrChk(trgVol, srcVol)
-        # Volumes overlap: create the union volume and mask out the input/output regions
+        # Overlap: create the union volume and mask out the input/output regions
         vol = uniVol(trgVol, srcVol)
         innMsk = mskRng(srcVol, vol)
         outMsk = mskRng(trgVol, vol)
@@ -223,7 +270,7 @@ function GlaOprVac(mem::GlaVacOprMem)
     outMsk = ntuple(_ -> 0:0, 3)
     trgVol, srcVol = mem.trgVol, mem.srcVol
     if trgVol != srcVol && ovrChk(trgVol, srcVol)
-        # Volumes overlap: create the union volume and mask out the input/output regions
+        # Overlap: create the union volume and mask out the input/output regions
         vol = uniVol(trgVol, srcVol)
         innMsk = mskRng(srcVol, vol)
         outMsk = mskRng(trgVol, vol)
@@ -626,32 +673,12 @@ Construct a full Green function operator from an inverse scattering operator.
 """
 GlaOpr(opr::InvSctOpr) = GlaOpr(SctOpr(opr))
 
-function useCpu!(opr::GlaOprVac)
+function useCpu!(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac})
     useCpu!(opr.mem)
     return opr
 end
 
-function useGpu!(opr::GlaOprVac)
-    useGpu!(opr.mem)
-    return opr
-end
-
-function useCpu!(opr::AsyGlaOprVac)
-    useCpu!(opr.mem)
-    return opr
-end
-
-function useGpu!(opr::AsyGlaOprVac)
-    useGpu!(opr.mem)
-    return opr
-end
-
-function useCpu!(opr::SymGlaOprVac)
-    useCpu!(opr.mem)
-    return opr
-end
-
-function useGpu!(opr::SymGlaOprVac)
+function useGpu!(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac})
     useGpu!(opr.mem)
     return opr
 end
@@ -698,9 +725,7 @@ function useGpu!(opr::GlaOpr)
     return opr
 end
 
-GilaVacuum.arrTyp(opr::GlaOprVac) = arrTyp(opr.mem.cmpInf)
-GilaVacuum.arrTyp(opr::AsyGlaOprVac) = arrTyp(opr.mem.cmpInf)
-GilaVacuum.arrTyp(opr::SymGlaOprVac) = arrTyp(opr.mem.cmpInf)
+GilaVacuum.arrTyp(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = arrTyp(opr.mem.cmpInf)
 GilaVacuum.arrTyp(opr::MulRegGlaOprVac) = arrTyp(first(opr.oprMat))
 GilaVacuum.arrTyp(opr::InvSctOpr) = arrTyp(opr.oprVac)
 GilaVacuum.arrTyp(opr::SctOpr) = arrTyp(opr.invSctOpr)
@@ -744,8 +769,7 @@ Checks if the operator is the adjoint of the Green operator.
 - `true` if the operator is the adjoint, `false` otherwise.
 """
 isadjoint(opr::GlaOprVac) = opr.mem.cmpInf.adjMod
-isadjoint(opr::AsyGlaOprVac) = false
-isadjoint(opr::SymGlaOprVac) = false
+isadjoint(::Union{AsyGlaOprVac, SymGlaOprVac}) = false
 isadjoint(opr::MulRegGlaOprVac) = all(isadjoint.(opr.oprMat))
 isadjoint(opr::InvSctOpr) = isadjoint(opr.oprVac)
 isadjoint(opr::SctOpr) = isadjoint(opr.invSctOpr)
@@ -763,8 +787,7 @@ Checks if the operator is a self Green operator.
 - `true` if the operator is a self Green operator, `false` otherwise.
 """
 isselfoperator(opr::GlaOprVac) = (opr.mem.srcVol == opr.mem.trgVol) && all(==(0:0), opr.srcMsk) && all(==(0:0), opr.trgMsk)
-isselfoperator(opr::AsyGlaOprVac) = true # AsyGlaOprVac is always a self operator
-isselfoperator(opr::SymGlaOprVac) = true # SymGlaOprVac is always a self operator
+isselfoperator(::Union{AsyGlaOprVac, SymGlaOprVac}) = true # Both are always self operators
 isselfoperator(opr::MulRegGlaOprVac) = all(isselfoperator.(opr.oprMat))
 isselfoperator(opr::InvSctOpr) = isselfoperator(opr.oprVac)
 isselfoperator(opr::SctOpr) = isselfoperator(opr.invSctOpr)
@@ -782,8 +805,7 @@ Checks if the operator is an external Green operator.
 - `true` if the operator is an external Green operator, `false` otherwise.
 """
 isexternaloperator(opr::GlaOprVac) = opr.mem.srcVol != opr.mem.trgVol && all(==(0:0), opr.srcMsk) && all(==(0:0), opr.trgMsk)
-isexternaloperator(opr::AsyGlaOprVac) = false # AsyGlaOprVac is always a self operator
-isexternaloperator(opr::SymGlaOprVac) = false # SymGlaOprVac is always a self operator
+isexternaloperator(::Union{AsyGlaOprVac, SymGlaOprVac}) = false # Both are always self operators
 isexternaloperator(opr::MulRegGlaOprVac) = any(isexternaloperator.(opr.oprMat))
 isexternaloperator(opr::InvSctOpr) = isexternaloperator(opr.oprVac)
 isexternaloperator(opr::SctOpr) = isexternaloperator(opr.invSctOpr)
@@ -800,9 +822,8 @@ Checks if the operator is an overlapping Green operator.
 # Returns
 - `true` if the operator is an overlapping Green operator, `false` otherwise.
 """
+isoverlappingoperator(::AbstractGlaVacOpr) = false # Only the masked routes overlap
 isoverlappingoperator(opr::GlaOprVac) = !(isselfoperator(opr) || isexternaloperator(opr))
-isoverlappingoperator(opr::AsyGlaOprVac) = false # AsyGlaOprVac is always a self operator
-isoverlappingoperator(opr::SymGlaOprVac) = false # SymGlaOprVac is always a self operator
 isoverlappingoperator(opr::MulRegGlaOprVac) = any(isoverlappingoperator.(opr.oprMat))
 isoverlappingoperator(opr::InvSctOpr) = isoverlappingoperator(opr.oprVac)
 isoverlappingoperator(opr::SctOpr) = isoverlappingoperator(opr.invSctOpr)
@@ -819,7 +840,9 @@ Checks if the operator is using GPU computation.
 # Returns
 - `true` if the operator is using GPU computation, `false` otherwise.
 """
-isgpu(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = bckEnd(opr.mem.cmpInf) isa GPUKerOpt
+# cmpInf itself is the GlaKerOpt; bckEnd(cmpInf) is a KernelAbstractions backend,
+# which is never a GlaKerOpt
+isgpu(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = opr.mem.cmpInf isa GPUKerOpt
 isgpu(opr::MulRegGlaOprVac) = all(isgpu.(opr.oprMat))
 isgpu(opr::InvSctOpr) = isgpu(opr.oprVac)
 isgpu(opr::SctOpr) = isgpu(opr.invSctOpr)
@@ -837,7 +860,11 @@ Sets the susceptibility tensor for the inverse scattering operator.
 # Returns
 - The modified operator with the new susceptibility tensor set.
 """
-setSus!(opr::InvSctOpr, sus::AbstractArray{ComplexF64}) = begin
+function setSus!(opr::InvSctOpr, sus)
+    if opr.oprVac isa GlaCmpOprVac
+        opr.sus = _cmpSus(opr.oprVac.srcCvl, sus, isgpu(opr.oprVac))
+        return opr
+    end
     # Reshape susceptibility if needed and validate size
     if size(sus) != opr.oprVac.mem.srcVol.cel
         throw(ArgumentError("Susceptibility tensor dimensions $(size(sus)) do not match source volume dimensions $(opr.oprVac.mem.srcVol.cel)"))
@@ -858,7 +885,7 @@ Sets the susceptibility tensor for the scattering operator.
 # Returns
 - The modified operator with the new susceptibility tensor set.
 """
-function setSus!(opr::SctOpr, sus::AbstractArray{ComplexF64})
+function setSus!(opr::SctOpr, sus)
     setSus!(opr.invSctOpr, sus)
     return opr
 end
@@ -875,7 +902,7 @@ Sets the susceptibility tensor for the full Green function operator.
 # Returns
 - The modified operator with the new susceptibility tensor set.
 """
-function setSus!(opr::GlaOpr, sus::AbstractArray{ComplexF64})
+function setSus!(opr::GlaOpr, sus)
     setSus!(opr.sctOpr, sus)
     return opr
 end
@@ -891,8 +918,7 @@ Returns the solver associated with the operator.
 # Returns
 - The solver used by the operator, which is always a `GlaSlv` instance.
 """
-slv(::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = GilaSolvers.BiCGStabSolver() # Default solver
-slv(opr::MulRegGlaOprVac) = slv(first(opr.oprMat)) # Assume all operators in the matrix use the same solver
+slv(::AbstractGlaVacOpr) = GilaSolvers.BiCGStabSolver() # Default solver
 slv(opr::InvSctOpr) = slv(opr.oprVac)
 slv(opr::SctOpr) = opr.slv
 slv(opr::GlaOpr) = opr.sctOpr.slv
@@ -914,7 +940,21 @@ _trgVol(opr::InvSctOpr) = _trgVol(opr.oprVac)
 _trgVol(opr::SctOpr) = _trgVol(opr.invSctOpr)
 _trgVol(opr::GlaOpr) = _trgVol(opr.sctOpr)
 
-function Base.show(io::IO, opr::AbstractGlaOpr)
+Base.show(io::IO, opr::AbstractGlaOpr) = _shwOpr(io, opr)
+
+#= A scattering operator over a composite volume has no single source volume to
+print, so it borrows the layout of the composite vacuum operator instead. =#
+function Base.show(io::IO, opr::Union{InvSctOpr, SctOpr, GlaOpr})
+    oprVac = GlaOprVac(opr)
+    oprVac isa GlaCmpOprVac || return _shwOpr(io, opr)
+    isadjoint(opr) && print(io, "Adjoint ")
+    print(io, isgpu(opr) ? "GPU " : "CPU ")
+    print(io, "composite ", _strKnd(opr))
+    print(io, "\n  $(size(opr, 1)) × $(size(opr, 2)) degrees of freedom")
+    print(io, "\n  ", oprVac.srcCvl)
+end
+
+function _shwOpr(io::IO, opr::AbstractGlaOpr)
     if isadjoint(opr)
         print(io, "Adjoint ")
     end
@@ -970,6 +1010,7 @@ end
 Base.show(io::IO, ::MIME"text/plain", opr::MulRegGlaOprVac) = show(io, opr)
 
 include("glaLinAlg.jl")
+include("glaCmpOpr.jl")
 
 Serialization.serialize(io::IO, opr::GlaOprVac) = serialize(io, opr.mem)
 Serialization.deserialize(io::IO, ::Type{GlaOprVac}) = GlaOprVac(deserialize(io, GlaVacOprMem))
@@ -978,14 +1019,16 @@ Serialization.deserialize(io::IO, ::Type{AsyGlaOprVac}) = AsyGlaOprVac(deseriali
 Serialization.serialize(io::IO, opr::SymGlaOprVac) = serialize(io, opr.mem)
 Serialization.deserialize(io::IO, ::Type{SymGlaOprVac}) = SymGlaOprVac(deserialize(io, GlaVacOprMem))
 Serialization.serialize(io::IO, opr::MulRegGlaOprVac) = serialize(io, opr.oprMat)
-Serialization.deserialize(io::IO, ::Type{MulRegGlaOprVac}) = MulRegGlaOprVac(deserialize(io, Matrix{GlaOprVac}))
+# The blocks go through the generic serializer, which rebuilds their FFTW plans
+# on load, see vacuum/glaVacOprMem.jl
+Serialization.deserialize(io::IO, ::Type{MulRegGlaOprVac}) = MulRegGlaOprVac(deserialize(io))
 function Serialization.serialize(io::IO, opr::InvSctOpr)
     serialize(io, opr.oprVac)
     sus = opr.sus
     if sus isa CuArray
         sus = Array(sus) # Convert to CPU array for serialization
     end
-    serialize(io, opr.sus)
+    serialize(io, sus)
 end
 function Serialization.deserialize(io::IO, ::Type{InvSctOpr})
     oprVac = deserialize(io, GlaOprVac)

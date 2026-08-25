@@ -46,6 +46,24 @@ const _volOvr4 = GlaVol((4,4,4), stdScl, _ovrOrg4)
     end
 end
 
+@testset "isgpu follows cmpInf" begin
+    # useGpu!/useCpu! swap mem.cmpInf between GPUKerOpt and CPUKerOpt, so isgpu
+    # only needs to check the type of the options. Swapping the options by hand
+    # avoids needing a GPU; nothing here applies the operator. Fresh mem so the
+    # shared _selfMem4 is not mutated.
+    mem = GlaVacOprMem(CPUKerOpt(), _vol4)
+    opr = GlaOprVac(mem)
+    @test !isgpu(opr)
+    @test occursin("CPU", sprint(show, opr))
+
+    mem.cmpInf = GPUKerOpt()
+    @test isgpu(opr)
+    @test occursin("GPU", sprint(show, opr))
+
+    mem.cmpInf = CPUKerOpt()
+    @test !isgpu(opr)
+end
+
 @testset "AsyGlaOprVac / SymGlaOprVac constructors" begin
     gSelf = _g0()
     gExt  = _gExt()
@@ -203,9 +221,11 @@ end
     # Overlapping
     v3 = GlaVol((4,4,4), stdScl, (2//32, 2//32, 2//32))
     @test ovrChk(v1, v3)
-    # Touching (boundary: edges meet but volumes don't share interior)
+    # Touching: edges meet but the volumes share no interior, so this is not
+    # overlap. The external construction corrects for cell contact directly.
     v4 = GlaVol((4,4,4), stdScl, (4//32, 0//1, 0//1))
-    @test ovrChk(v1, v4)
+    @test !ovrChk(v1, v4)
+    @test isexternaloperator(GlaOprVac(v1, v4))
     # mskRng
     bigVol = GlaVol((8,4,4), stdScl, (2//32, 0//1, 0//1))
     rng = mskRng(v1, bigVol)
@@ -213,6 +233,66 @@ end
     # Misaligned sub-volume throws AssertionError
     badSub = GlaVol((4,4,4), stdScl, (1//64, 0//1, 0//1))
     @test_throws AssertionError mskRng(badSub, bigVol)
+end
+
+@testset "Touching with mismatched extents" begin
+    # A small box flush against the face of a wider slab: the external contact
+    # correction covers this shape, so both orientations take the external route
+    # and reproduce the union of the two volumes
+    slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
+    box = GlaVol((2,2,2), (1//16,1//16,1//16), (2//16, 0//1, 0//1))
+    uni = uniVol(slb, box)
+    uniMat = dnsMat(GlaOprVac(uni))
+    li = LinearIndices((uni.cel..., 3))
+    dofIdx(v) = (r = mskRng(v, uni); vec([li[i,j,k,d] for i in r[1], j in r[2], k in r[3], d in 1:3]))
+    slbDof, boxDof = dofIdx(slb), dofIdx(box)
+    for (trg, src, rowDof, colDof) in ((slb, box, slbDof, boxDof), (box, slb, boxDof, slbDof))
+        opr = GlaOprVac(trg, src)
+        @test isexternaloperator(opr)
+        @test !isoverlappingoperator(opr)
+        @test norm(dnsMat(opr) - uniMat[rowDof, colDof]) / norm(uniMat[rowDof, colDof]) < 1e-12
+    end
+    # A corner-fitting touching pair still takes the external route
+    @test isexternaloperator(GlaOprVac(_vol4, GlaVol((4,4,4), stdScl, (4//32, 0//1, 0//1))))
+end
+
+@testset "Masked operator adjoint" begin
+    # A slab and a box sharing interior, which the constructor sends through the
+    # union route, so the operator carries a source and a target mask
+    slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
+    box = GlaVol((2,2,2), (1//16,1//16,1//16), (1//16, 0//1, 0//1))
+    opr = GlaOprVac(slb, box)
+    @test isoverlappingoperator(opr)
+    fwdMat = dnsMat(opr)
+    # The adjoint has to exchange the two masks along with the volumes
+    adjMat = dnsMat(opr')
+    @test size(adjMat) == reverse(size(fwdMat))
+    @test norm(adjMat - fwdMat') / norm(fwdMat) < 1e-13
+    # In place, and the round trip back
+    adjOpr = adjoint!(deepcopy(opr))
+    @test glaSze(adjOpr, 2) == glaSze(opr, 1)
+    @test norm(dnsMat(adjOpr) - fwdMat') / norm(fwdMat) < 1e-13
+    @test norm(dnsMat(adjoint!(adjOpr)) - fwdMat) / norm(fwdMat) < 1e-15
+end
+
+@testset "GlaOprVac on a field" begin
+    opr = _g0()
+    vol = opr.mem.srcVol
+    fld = discretize!(zerofield(vol), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+    out = opr * fld
+    @test out isa GlaFld
+    @test nregions(out.cvol) == 1
+    @test regions(out.cvol)[1] == opr.mem.trgVol
+    @test out.dat ≈ opr * fld.dat
+    # A field over another volume, or over a tiling of several regions
+    @test_throws ArgumentError opr * zerofield(GlaVol((2,2,2), stdScl, stdOrg))
+    @test_throws ArgumentError opr * zerofield(GlaCmpVol(
+        [GlaVol((2,2,2), stdScl, (-1//32, 0//1, 0//1)),
+         GlaVol((2,2,2), stdScl, (1//32, 0//1, 0//1))]))
+    # The masked route reads its input through a mask, so it takes no field
+    slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
+    box = GlaVol((2,2,2), (1//16,1//16,1//16), (1//16, 0//1, 0//1))
+    @test_throws ArgumentError GlaOprVac(slb, box) * zerofield(box)
 end
 
 @testset "rszSus" begin
@@ -341,13 +421,27 @@ end
         end
     end
 
-    # Source bug: MulRegGlaOprVac.deserialize calls `deserialize(io, Matrix{GlaOprVac})`
-    # which has no method defined — the custom deserialize implementation is incomplete.
+    # Multi-region blocks go through the generic serializer, which must rebuild
+    # the FFTW plans on load rather than restore the written pointers
     tmpFil = tempname()
     mr = MulRegGlaOprVac([_vol4, _trgV4], [_vol4, _trgV4])
+    vMr = rand(ComplexF64, size(mr, 2))
     try
         open(tmpFil, "w") do io; serialize(io, mr); end
-        @test_throws MethodError open(tmpFil, "r") do io; deserialize(io, MulRegGlaOprVac); end
+        desMr = open(tmpFil, "r") do io; deserialize(io, MulRegGlaOprVac); end
+        @test desMr * vMr ≈ mr * vMr
+    finally
+        isfile(tmpFil) && rm(tmpFil)
+    end
+
+    # Same path for operators nested in a container
+    tmpFil = tempname()
+    opr = _g0()
+    try
+        open(tmpFil, "w") do io; serialize(io, [opr]); end
+        @test isnothing(findfirst(codeunits("FFTW"), read(tmpFil)))
+        desOpr = only(open(deserialize, tmpFil))
+        @test desOpr * v ≈ opr * v
     finally
         isfile(tmpFil) && rm(tmpFil)
     end
