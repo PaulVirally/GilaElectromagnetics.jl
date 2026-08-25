@@ -174,7 +174,8 @@ function ovrChk(vol1::GlaVol, vol2::GlaVol)
 end
 
 #= Six cells of the coarser interface scale is where the relative Frobenius
-error between two separated volumes drops under 1e-8; see utl/valGapRes.md. =#
+error between two separated volumes drops under 1e-8, measured across mesh
+scales, same and mixed scale pairs, and body sizes. =#
 const prxCelMin = 6
 
 #= Separation of two volumes in cells of the coarser interface scale, paired
@@ -223,7 +224,7 @@ Construct a vacuum Green function operator for external interactions between dif
 
 This constructor creates an external Green function operator that describes electromagnetic interactions between distinct regions in free space. The operator maps sources in the source volume to fields in the target volume, enabling the modeling of coupling effects between different parts of an electromagnetic system. For the computation to work correctly, the source and target volumes must share a common scale grid.
 
-Two volumes separated by fewer than six cells of the coarser interface scale are quadrature limited, so the constructor warns. utl/valGapRes.md holds the measurements behind that bound. Touching volumes are handled by the contact quadrature and never warn.
+Two volumes separated by fewer than six cells of the coarser interface scale are quadrature limited, so the constructor warns. The six cell bound is measured, and holds across mesh scales and body sizes. Touching volumes are handled by the contact quadrature and never warn.
 
 # Arguments
 - `trgVol::GlaVol`: The target volume where the field will be computed

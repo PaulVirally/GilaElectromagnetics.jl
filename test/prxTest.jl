@@ -1,7 +1,7 @@
 # Proximity warning tests
-# The bound is six cells of the coarser interface scale, measured in
-# utl/valGapRes.md. Touching pairs go through the contact quadrature and are
-# exempt, so only a strictly positive gap under six cells warns.
+# The bound is six cells of the coarser interface scale, where the measured
+# error drops under 1e-8. Touching pairs go through the contact quadrature and
+# are exempt, so only a strictly positive gap under six cells warns.
 const prxScl16 = (1//16, 1//16, 1//16)
 const prxScl32 = (1//32, 1//32, 1//32)
 const prxScl64 = (1//64, 1//64, 1//64)

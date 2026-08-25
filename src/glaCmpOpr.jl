@@ -159,8 +159,8 @@ the diagonal of a self operator, uses the self path.
 
 Passing the same composite volume twice gives the self operator of one body.
 Passing two different ones gives the operator between two bodies, which have to
-be disjoint. Two bodies whose closest separated cross pair of regions sits under
-the six cell accuracy bound of utl/valGapRes.md draw one warning.
+be disjoint. A warning is emitted for two bodies with fewer than 6 cells of
+separation.
 
 # Arguments
 - `trgCvl::GlaCmpVol`: The composite volume the fields land on
