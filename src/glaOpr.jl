@@ -173,6 +173,31 @@ function ovrChk(vol1::GlaVol, vol2::GlaVol)
     return all(max.(lwrEdg1, lwrEdg2) .< min.(uprEdg1, uprEdg2)) # < not <= to exclude contact
 end
 
+#= Six cells of the coarser interface scale is where the relative Frobenius
+error between two separated volumes drops under 1e-8; see utl/valGapRes.md. =#
+const prxCelMin = 6
+
+#= Separation of two volumes in cells of the coarser interface scale, paired
+with that scale, or nothing when the volumes touch or overlap. A touching pair
+runs the contact quadrature, which is exact, so it carries no proximity cost. =#
+function _prxGap(volA::GlaVol, volB::GlaVol)
+    sep = max.(_lwrEdg(volB) .- _uprEdg(volA), _lwrEdg(volA) .- _uprEdg(volB))
+    all(sep .<= 0) && return nothing
+    sclCrs = max.(volA.scl, volB.scl)
+    dir = argmax(idx -> max(sep[idx], 0//1) // sclCrs[idx], 1:3)
+    return (sep[dir] // sclCrs[dir], sclCrs[dir])
+end
+
+# Warn about a separated pair sitting closer than the measured accuracy bound
+function prxChk(trgVol::GlaVol, srcVol::GlaVol)
+    gap = _prxGap(trgVol, srcVol)
+    (isnothing(gap) || gap[1] >= prxCelMin) && return nothing
+
+    celStr = (isone(denominator(gap[1])) ? string(numerator(gap[1])) : string(round(Float64(gap[1]); digits=2))) * (isone(gap[1]) ? " cell" : " cells")
+    @warn "The target and source are separated by $celStr of the coarser $(gap[2]) interface scale. Operator entries this close are quadrature limited, and the relative error only reaches about 1e-8 at a gap of $prxCelMin cells. It is strongly recommended to refine the facing surfaces with `refine` to increase the accuracy of the operator."
+    return nothing
+end
+
 # Returns the region where subVol is contained within vol
 function mskRng(subVol::GlaVol, vol::GlaVol)
     stpVol = Rational.(step.(vol.grd))
@@ -192,22 +217,27 @@ function mskRng(subVol::GlaVol, vol::GlaVol)
 end
 
 """
-    GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false)
+    GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false, prxWrn::Bool=true)
 
 Construct a vacuum Green function operator for external interactions between different volumes.
 
 This constructor creates an external Green function operator that describes electromagnetic interactions between distinct regions in free space. The operator maps sources in the source volume to fields in the target volume, enabling the modeling of coupling effects between different parts of an electromagnetic system. For the computation to work correctly, the source and target volumes must share a common scale grid.
 
+Two volumes separated by fewer than six cells of the coarser interface scale are quadrature limited, so the constructor warns. utl/valGapRes.md holds the measurements behind that bound. Touching volumes are handled by the contact quadrature and never warn.
+
 # Arguments
 - `trgVol::GlaVol`: The target volume where the field will be computed
 - `srcVol::GlaVol`: The source volume containing the sources
 - `useGpu::Bool=false`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
+- `prxWrn::Bool=true`: Whether to warn about a separation under the accuracy bound
 
 # Returns
 - `GlaOprVac`: The vacuum Green function operator
 
 """
-function GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false)
+function GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false,
+    prxWrn::Bool=true)
+    prxWrn && prxChk(trgVol, srcVol)
     innMsk = ntuple(_ -> 0:0, 3)
     outMsk = ntuple(_ -> 0:0, 3)
     if trgVol != srcVol && ovrChk(trgVol, srcVol)

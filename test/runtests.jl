@@ -18,5 +18,6 @@ include("tstHlp.jl")
     include("extOpsTest.jl")
     include("crsSclTest.jl")
     include("cntTest.jl")
+    include("prxTest.jl")
     include("physTest.jl")
 end

@@ -98,11 +98,23 @@ subroutine (sandwich). =#
 _cntChk(trgReg::GlaVol, srcReg::GlaVol) =
     all(max.(_lwrEdg(trgReg), _lwrEdg(srcReg)) .<= min.(_uprEdg(trgReg), _uprEdg(srcReg)))
 
-#= A block between two volumes of the same cell size, in contact or not. The
-external construction corrects for cell contact of any shape at a common cell
-size, so the union route of the GlaOprVac constructor is left for volumes that
-genuinely overlap. =#
-_extBlk(trgVol::GlaVol, srcVol::GlaVol, useGpu::Bool) = GlaOprVac(trgVol, srcVol; useGpu=useGpu)
+#= The closest cross pair of two tilings, warned about once. Regions of one
+tiling touch each other by construction, so only target against source pairs
+are measured, and touching cross pairs are skipped rather than exempting the
+whole check. =#
+function prxChk(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol)
+    gapMin = nothing
+    for trgReg in regions(trgCvl), srcReg in regions(srcCvl)
+        gap = _prxGap(trgReg, srcReg)
+        isnothing(gap) && continue
+        (isnothing(gapMin) || gap[1] < gapMin[1]) && (gapMin = gap)
+    end
+    (isnothing(gapMin) || gapMin[1] >= prxCelMin) && return nothing
+
+    celStr = (isone(denominator(gapMin[1])) ? string(numerator(gapMin[1])) : string(round(Float64(gapMin[1]); digits=2))) * (isone(gapMin[1]) ? " cell" : " cells")
+    @warn "The target and source are separated by $celStr of the coarser $(gapMin[2]) interface scale. Operator entries this close are quadrature limited, and the relative error only reaches about 1e-8 at a gap of $prxCelMin cells. It is strongly recommended to refine the facing surfaces with `refine` to increase the accuracy of the operator."
+    return nothing
+end
 
 # The cross-scale contact block, computed on the finer of the two meshes
 function _sndBlk(trgReg::GlaVol, srcReg::GlaVol, useGpu::Bool)
@@ -111,7 +123,7 @@ function _sndBlk(trgReg::GlaVol, srcReg::GlaVol, useGpu::Bool)
     srcRat = ntuple(dir -> Int(srcReg.scl[dir] // sclFin[dir]), 3)
     trgFin = GlaVol(Tuple(trgReg.cel .* trgRat), sclFin, trgReg.org)
     srcFin = GlaVol(Tuple(srcReg.cel .* srcRat), sclFin, srcReg.org)
-    innOpr = _extBlk(trgFin, srcFin, useGpu)
+    innOpr = GlaOprVac(trgFin, srcFin; useGpu=useGpu, prxWrn=false)
     return GlaSndOprVac(innOpr, trgRat, srcRat,
         _nrmWgt(trgReg, srcReg) / prod(trgRat))
 end
@@ -124,8 +136,7 @@ function _cmpBlk(trgReg::GlaVol, srcReg::GlaVol, isSlf::Bool, slfCmp::Bool,
     end
     trgReg.scl != srcReg.scl && _cntChk(trgReg, srcReg) &&
         return _sndBlk(trgReg, srcReg, useGpu)
-    opr = trgReg.scl == srcReg.scl ? _extBlk(trgReg, srcReg, useGpu) :
-        GlaOprVac(trgReg, srcReg; useGpu=useGpu)
+    opr = GlaOprVac(trgReg, srcReg; useGpu=useGpu, prxWrn=false)
     nrm = _nrmWgt(trgReg, srcReg)
     # A real scalar on the Fourier coefficients survives adjoint! untouched
     nrm != 1 && map!(fur -> nrm .* fur, opr.mem.egoFur)
@@ -133,7 +144,7 @@ function _cmpBlk(trgReg::GlaVol, srcReg::GlaVol, isSlf::Bool, slfCmp::Bool,
 end
 
 """
-    GlaCmpOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false)
+    GlaCmpOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false, prxWrn::Bool=true)
 
 Construct the vacuum Green function operator between two composite volumes.
 
@@ -148,12 +159,14 @@ the diagonal of a self operator, uses the self path.
 
 Passing the same composite volume twice gives the self operator of one body.
 Passing two different ones gives the operator between two bodies, which have to
-be disjoint.
+be disjoint. Two bodies whose closest separated cross pair of regions sits under
+the six cell accuracy bound of utl/valGapRes.md draw one warning.
 
 # Arguments
 - `trgCvl::GlaCmpVol`: The composite volume the fields land on
 - `srcCvl::GlaCmpVol`: The composite volume the currents live on
 - `useGpu::Bool=false`: Whether to build the blocks on the GPU
+- `prxWrn::Bool=true`: Whether to warn about a separation under the accuracy bound
 
 # Returns
 - `GlaCmpOprVac`: The composite operator
@@ -161,8 +174,10 @@ be disjoint.
 # Throws
 - `ArgumentError`: If a region of one volume overlaps a region of the other
 """
-function GlaCmpOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false)
+function GlaCmpOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false,
+    prxWrn::Bool=true)
     slfCmp = trgCvl === srcCvl || trgCvl == srcCvl
+    prxWrn && !slfCmp && prxChk(trgCvl, srcCvl)
     trgRegs, srcRegs = regions(trgCvl), regions(srcCvl)
     blkMat = Matrix{AbstractGlaOpr}(undef, length(trgRegs), length(srcRegs))
     for trgIdx in eachindex(trgRegs), srcIdx in eachindex(srcRegs)
@@ -204,7 +219,7 @@ is a `GlaCmpOprVac` and not a `GlaOprVac`. Both are `AbstractGlaVacOpr`.
 GlaOprVac(cvol::GlaCmpVol; useGpu::Bool=false) = GlaCmpOprVac(cvol; useGpu=useGpu)
 
 """
-    GlaOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false)
+    GlaOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false, prxWrn::Bool=true)
 
 Construct the vacuum Green function operator between two composite volumes.
 
@@ -214,12 +229,14 @@ The result is a `GlaCmpOprVac`, for the reason given in the single volume method
 - `trgCvl::GlaCmpVol`: The composite volume the fields land on
 - `srcCvl::GlaCmpVol`: The composite volume the currents live on
 - `useGpu::Bool=false`: Whether to build the blocks on the GPU
+- `prxWrn::Bool=true`: Whether to warn about a separation under the accuracy bound
 
 # Returns
 - `GlaCmpOprVac`: The composite operator
 """
-GlaOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false) =
-    GlaCmpOprVac(trgCvl, srcCvl; useGpu=useGpu)
+GlaOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false,
+    prxWrn::Bool=true) =
+    GlaCmpOprVac(trgCvl, srcCvl; useGpu=useGpu, prxWrn=prxWrn)
 
 glaSze(opr::GlaSndOprVac) =
     ((glaSze(opr.opr, 1)[1:3] .÷ opr.trgRat..., 3),
