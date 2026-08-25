@@ -346,6 +346,240 @@ function Base.show(io::IO, opr::GlaSndOprVac)
 end
 Base.show(io::IO, ::MIME"text/plain", opr::GlaSndOprVac) = show(io, opr)
 
+#= The susceptibility of one cell, repeated over the three vector components of
+that cell. A region block of the flat layout is the vec of a (cel..., 3) array,
+so the three copies of a block sit one after the other. =#
+function _expSus(cvol::GlaCmpVol, susCel::Vector{ComplexF64})
+    susDof = Vector{ComplexF64}(undef, 3 * length(susCel))
+    celOff, dofOff = 0, 0
+    for reg in regions(cvol)
+        celNum = prod(reg.cel)
+        blk = view(susCel, (celOff + 1):(celOff + celNum))
+        for dir in 1:3
+            copyto!(view(susDof, (dofOff + (dir - 1) * celNum + 1):(dofOff + dir * celNum)), blk)
+        end
+        celOff += celNum
+        dofOff += 3 * celNum
+    end
+    return susDof
+end
+
+# Per-region susceptibility tensors, checked against the cell counts of the tiling
+function _tenSus(cvol::GlaCmpVol, sus::AbstractVector)
+    regs = regions(cvol)
+    if length(sus) != length(regs)
+        throw(ArgumentError("Got $(length(sus)) susceptibility tensors for a composite volume of $(length(regs)) regions."))
+    end
+    susCel = Vector{ComplexF64}(undef, sum(prod(reg.cel) for reg in regs))
+    celOff = 0
+    for (idx, reg) in enumerate(regs)
+        ten = sus[idx]
+        if size(ten) != Tuple(reg.cel)
+            throw(ArgumentError("The susceptibility tensor of region $idx has size $(size(ten)), but region $idx has $(join(reg.cel, "×")) cells."))
+        end
+        celNum = prod(reg.cel)
+        copyto!(view(susCel, (celOff + 1):(celOff + celNum)), vec(Array{ComplexF64}(ten)))
+        celOff += celNum
+    end
+    return susCel
+end
+
+# Any accepted susceptibility, read into the flat degree of freedom layout
+function _cmpSus(cvol::GlaCmpVol, sus, useGpu::Bool=false)
+    susDof = _cmpSusCpu(cvol, sus)
+    return useGpu ? CuArray(susDof) : susDof
+end
+
+function _cmpSusCpu(cvol::GlaCmpVol, sus)
+    celNum = sum(prod(reg.cel) for reg in regions(cvol))
+    sus isa Number && return _expSus(cvol, fill(ComplexF64(sus), celNum))
+    if sus isa AbstractVector{<:Number}
+        length(sus) == 3 * celNum && return Vector{ComplexF64}(Array(sus))
+        length(sus) == celNum && return _expSus(cvol, Vector{ComplexF64}(Array(sus)))
+        throw(ArgumentError("A susceptibility vector of length $(length(sus)) fits neither the $(3 * celNum) degrees of freedom nor the $celNum cells of this composite volume."))
+    end
+    if sus isa AbstractArray{<:Number, 3}
+        if nregions(cvol) != 1
+            throw(ArgumentError("A single susceptibility tensor only fits a composite volume of one region, and this one has $(nregions(cvol)). Pass one tensor per region as a vector."))
+        end
+        return _expSus(cvol, _tenSus(cvol, [sus]))
+    end
+    sus isa AbstractVector && return _expSus(cvol, _tenSus(cvol, sus))
+    susCel = Vector{ComplexF64}(undef, celNum)
+    for (idx, (pos, _, _)) in enumerate(coordinates(cvol))
+        susCel[idx] = ComplexF64(sus(pos))
+    end
+    return _expSus(cvol, susCel)
+end
+
+"""
+    InvSctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false)
+
+Construct the inverse scattering operator `(I - XG₀)` over a composite volume.
+
+The vacuum operator is built for the tiling, and the susceptibility is stored in
+the flat degree of freedom layout of `GlaFld`. Since the susceptibility and the
+√ΔV normalization are both diagonal, they commute, and the operator in the
+normalized basis is the same expression as on a uniform mesh.
+
+The susceptibility is one scalar per cell, and it can be given as a number for a
+uniform medium, a function of the cell center returning that scalar, a vector of
+one 3-tensor per region, a vector of one value per cell in layout order, or a
+vector already in the degree of freedom layout. Every other composite scattering
+constructor takes the same forms.
+
+# Arguments
+- `cvol::GlaCmpVol`: The composite volume
+- `sus`: The susceptibility, in any of the forms above
+- `useGpu::Bool=false`: Whether to build the operator on the GPU
+
+# Returns
+- `InvSctOpr`: The inverse scattering operator
+
+# Throws
+- `ArgumentError`: If the shape of `sus` does not fit the tiling
+"""
+InvSctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false) =
+    InvSctOpr(GlaCmpOprVac(cvol; useGpu=useGpu), sus)
+
+"""
+    SctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
+
+Construct the scattering operator `(I - XG₀)⁻¹` over a composite volume.
+
+# Arguments
+- `cvol::GlaCmpVol`: The composite volume
+- `sus`: The susceptibility, in any of the forms `InvSctOpr(::GlaCmpVol, sus)` takes
+- `useGpu::Bool=false`: Whether to build the operator on the GPU
+- `slv::GlaSlv=BiCGStabSolver()`: The solver used for the inverse
+
+# Returns
+- `SctOpr`: The scattering operator
+"""
+SctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver()) =
+    SctOpr(InvSctOpr(cvol, sus; useGpu=useGpu), slv)
+
+"""
+    SctOpr(opr::GlaCmpOprVac, sus; slv::GlaSlv=BiCGStabSolver())
+
+Construct the scattering operator from a composite vacuum operator.
+
+# Arguments
+- `opr::GlaCmpOprVac`: The composite vacuum operator, which has to be a self operator
+- `sus`: The susceptibility, in any of the forms `InvSctOpr(::GlaCmpVol, sus)` takes
+- `slv::GlaSlv=BiCGStabSolver()`: The solver used for the inverse
+
+# Returns
+- `SctOpr`: The scattering operator
+"""
+SctOpr(opr::GlaCmpOprVac, sus; slv::GlaSlv=BiCGStabSolver()) =
+    SctOpr(InvSctOpr(opr, sus), slv)
+
+"""
+    GlaOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
+
+Construct the full Green function operator `G₀(I - XG₀)⁻¹` over a composite volume.
+
+# Arguments
+- `cvol::GlaCmpVol`: The composite volume
+- `sus`: The susceptibility, in any of the forms `InvSctOpr(::GlaCmpVol, sus)` takes
+- `useGpu::Bool=false`: Whether to build the operator on the GPU
+- `slv::GlaSlv=BiCGStabSolver()`: The solver used for the inverse
+
+# Returns
+- `GlaOpr`: The full Green function operator
+"""
+GlaOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver()) =
+    GlaOpr(SctOpr(cvol, sus; useGpu=useGpu, slv=slv))
+
+"""
+    GlaOpr(opr::GlaCmpOprVac, sus; slv::GlaSlv=BiCGStabSolver())
+
+Construct the full Green function operator from a composite vacuum operator.
+
+# Arguments
+- `opr::GlaCmpOprVac`: The composite vacuum operator, which has to be a self operator
+- `sus`: The susceptibility, in any of the forms `InvSctOpr(::GlaCmpVol, sus)` takes
+- `slv::GlaSlv=BiCGStabSolver()`: The solver used for the inverse
+
+# Returns
+- `GlaOpr`: The full Green function operator
+"""
+GlaOpr(opr::GlaCmpOprVac, sus; slv::GlaSlv=BiCGStabSolver()) =
+    GlaOpr(SctOpr(opr, sus; slv=slv))
+
+#= (I - XG₀) on the flat layout. The susceptibility is one scalar per cell
+repeated over the three components, so it multiplies entry by entry. In adjoint
+mode the vacuum operator is already the adjoint and the susceptibility is already
+conjugated, which leaves I - G₀' X̄. =#
+function _cmpSctMul(opr::InvSctOpr, innDat::AbstractVector{ComplexF64})
+    if length(innDat) != size(opr.oprVac, 2)
+        throw(ArgumentError("An input of length $(length(innDat)) does not fit this operator, which has $(size(opr.oprVac, 2)) degrees of freedom."))
+    end
+    isadjoint(opr) && return innDat .- (opr.oprVac * (opr.sus .* innDat))
+    return innDat .- (opr.sus .* (opr.oprVac * innDat))
+end
+
+#= The tiling a scattering operator reads its input on. A plain vacuum operator
+carries a single volume, which is a tiling of one region. =#
+function _sctCvl(oprVac::AbstractGlaVacOpr, fld::GlaFld)
+    oprVac isa GlaCmpOprVac && return oprVac.srcCvl
+    srcVol = oprVac.mem.srcVol
+    if nregions(fld.cvol) != 1 || regions(fld.cvol)[1] != srcVol
+        throw(ArgumentError("The field does not live on the source volume of the operator, which is a ($(join(srcVol.cel, "×"))) cell volume of ($(join(srcVol.scl, "×")))λ³ cells."))
+    end
+    return fld.cvol
+end
+
+function _chkSctFld(oprVac::AbstractGlaVacOpr, fld::GlaFld)
+    cvol = _sctCvl(oprVac, fld)
+    if !(fld.cvol === cvol || fld.cvol == cvol)
+        throw(ArgumentError("The field lives on a different composite volume than the operator. An operator only applies to fields on the tiling it was built for."))
+    end
+    return cvol
+end
+
+"""
+    *(opr::InvSctOpr, fld::GlaFld)
+
+Apply an inverse scattering operator to a field.
+
+# Arguments
+- `opr::InvSctOpr`: The operator, which has to be built on a composite volume
+- `fld::GlaFld`: The field, which has to live on the tiling of `opr`
+
+# Returns
+- `GlaFld`: The result, on the same tiling
+
+# Throws
+- `ArgumentError`: If the field lives on a different tiling
+"""
+function Base.:*(opr::InvSctOpr, fld::GlaFld)
+    cvol = _chkSctFld(opr.oprVac, fld)
+    opr.oprVac isa GlaCmpOprVac || return GlaFld(opr * fld.dat, cvol)
+    return GlaFld(_cmpSctMul(opr, fld.dat), cvol)
+end
+
+"""
+    *(opr::SctOpr, fld::GlaFld)
+
+Apply a scattering operator to a field, which runs the iterative solve.
+
+# Arguments
+- `opr::SctOpr`: The operator, which has to be built on a composite volume
+- `fld::GlaFld`: The field, which has to live on the tiling of `opr`
+
+# Returns
+- `GlaFld`: The result, on the same tiling
+
+# Throws
+- `ArgumentError`: If the field lives on a different tiling
+"""
+function Base.:*(opr::SctOpr, fld::GlaFld)
+    cvol = _chkSctFld(opr.invSctOpr.oprVac, fld)
+    return GlaFld(solve(opr.invSctOpr, fld.dat, opr.slv), cvol)
+end
+
 function Base.show(io::IO, opr::GlaCmpOprVac)
     numTrg, numSrc = size(opr.blkMat)
     isadjoint(opr) && print(io, "Adjoint ")
