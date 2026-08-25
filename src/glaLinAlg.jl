@@ -32,6 +32,9 @@ Returns the size of the input/output arrays for an `AbstractGlaOpr` in tensor fo
 """
 glaSze(opr::AbstractGlaOpr, dim::Int) = glaSze(opr)[dim]
 glaSze(opr::MulRegGlaOprVac, dim::Int) = map(x -> x[dim], glaSze(opr))
+glaSze(opr::InvSctOpr, dim::Int) = glaSze(opr.oprVac, dim)
+glaSze(opr::SctOpr, dim::Int) = glaSze(opr.invSctOpr, dim)
+glaSze(opr::GlaOpr, dim::Int) = glaSze(opr.sctOpr, dim)
 
 # Type and size definitions
 Base.eltype(::AbstractGlaOpr) = ComplexF64
@@ -43,6 +46,10 @@ function Base.size(opr::MulRegGlaOprVac)
 end
 Base.size(opr::AbstractGlaOpr, i::Int) = prod(glaSze(opr, i))
 Base.size(opr::MulRegGlaOprVac, i::Int) = size(opr)[i]
+Base.size(opr::InvSctOpr) = size(opr.oprVac)
+Base.size(opr::SctOpr) = size(opr.invSctOpr)
+Base.size(opr::GlaOpr) = size(opr.sctOpr)
+Base.size(opr::Union{InvSctOpr, SctOpr, GlaOpr}, i::Int) = size(opr)[i]
 
 # Array type definition
 Base.similar(opr::AbstractGlaOpr) = arrTyp(opr)(undef, size(opr, 1), size(opr, 2))
@@ -229,6 +236,7 @@ function Base.:*(opr::InvSctOpr, inp::AbstractArray{ComplexF64, 4})
 end
 function Base.:*(opr::InvSctOpr, inp::AbstractVector{ComplexF64})
     # Compute the matrix-vector product (I - XG₀)⁻¹ * inp for inp in vector form
+    opr.oprVac isa GlaCmpOprVac && return _cmpSctMul(opr, inp)
     if isadjoint(opr)
         return inp - vec(opr.oprVac * (opr.sus .* reshape(inp, glaSze(opr, 2))))
     end
