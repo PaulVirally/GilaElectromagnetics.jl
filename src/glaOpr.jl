@@ -101,12 +101,24 @@ medium.
 
 # Fields
 - `oprVac::AbstractGlaVacOpr`: The vacuum Green function operator
-- `sus::AbstractArray{ComplexF64, 3}`: The susceptibility tensor (isotropic medium)
-  representing the material response
+- `sus::AbstractArray{ComplexF64}`: The susceptibility (isotropic medium)
+  representing the material response. Over a single volume it is a 3-tensor of
+  cell values, over a composite volume a flat vector with one entry per degree of
+  freedom
 """
 mutable struct InvSctOpr <: AbstractGlaOpr
     oprVac::AbstractGlaVacOpr
-    sus::AbstractArray{ComplexF64, 3}
+    sus::AbstractArray{ComplexF64}
+
+    #= A composite operator takes the susceptibility in any of the forms _cmpSus
+    accepts and stores it in the flat degree of freedom layout of GlaFld. =#
+    function InvSctOpr(oprVac::AbstractGlaVacOpr, sus)
+        oprVac isa GlaCmpOprVac || return new(oprVac, sus)
+        if !isselfoperator(oprVac)
+            throw(ArgumentError("An inverse scattering operator needs a self operator, and this composite operator maps between two different tilings."))
+        end
+        return new(oprVac, _cmpSus(oprVac.srcCvl, sus, isgpu(oprVac)))
+    end
 end
 
 """
@@ -817,7 +829,11 @@ Sets the susceptibility tensor for the inverse scattering operator.
 # Returns
 - The modified operator with the new susceptibility tensor set.
 """
-setSus!(opr::InvSctOpr, sus::AbstractArray{ComplexF64}) = begin
+function setSus!(opr::InvSctOpr, sus)
+    if opr.oprVac isa GlaCmpOprVac
+        opr.sus = _cmpSus(opr.oprVac.srcCvl, sus, isgpu(opr.oprVac))
+        return opr
+    end
     # Reshape susceptibility if needed and validate size
     if size(sus) != opr.oprVac.mem.srcVol.cel
         throw(ArgumentError("Susceptibility tensor dimensions $(size(sus)) do not match source volume dimensions $(opr.oprVac.mem.srcVol.cel)"))
@@ -838,7 +854,7 @@ Sets the susceptibility tensor for the scattering operator.
 # Returns
 - The modified operator with the new susceptibility tensor set.
 """
-function setSus!(opr::SctOpr, sus::AbstractArray{ComplexF64})
+function setSus!(opr::SctOpr, sus)
     setSus!(opr.invSctOpr, sus)
     return opr
 end
@@ -855,7 +871,7 @@ Sets the susceptibility tensor for the full Green function operator.
 # Returns
 - The modified operator with the new susceptibility tensor set.
 """
-function setSus!(opr::GlaOpr, sus::AbstractArray{ComplexF64})
+function setSus!(opr::GlaOpr, sus)
     setSus!(opr.sctOpr, sus)
     return opr
 end
@@ -893,7 +909,21 @@ _trgVol(opr::InvSctOpr) = _trgVol(opr.oprVac)
 _trgVol(opr::SctOpr) = _trgVol(opr.invSctOpr)
 _trgVol(opr::GlaOpr) = _trgVol(opr.sctOpr)
 
-function Base.show(io::IO, opr::AbstractGlaOpr)
+Base.show(io::IO, opr::AbstractGlaOpr) = _shwOpr(io, opr)
+
+#= A scattering operator over a composite volume has no single source volume to
+print, so it borrows the layout of the composite vacuum operator instead. =#
+function Base.show(io::IO, opr::Union{InvSctOpr, SctOpr, GlaOpr})
+    oprVac = GlaOprVac(opr)
+    oprVac isa GlaCmpOprVac || return _shwOpr(io, opr)
+    isadjoint(opr) && print(io, "Adjoint ")
+    print(io, isgpu(opr) ? "GPU " : "CPU ")
+    print(io, "composite ", _strKnd(opr))
+    print(io, "\n  $(size(opr, 1)) × $(size(opr, 2)) degrees of freedom")
+    print(io, "\n  ", oprVac.srcCvl)
+end
+
+function _shwOpr(io::IO, opr::AbstractGlaOpr)
     if isadjoint(opr)
         print(io, "Adjoint ")
     end
