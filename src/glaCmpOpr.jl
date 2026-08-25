@@ -93,15 +93,10 @@ end
 _nrmWgt(trgReg::GlaVol, srcReg::GlaVol) =
     sqrt(Float64(prod(trgReg.scl) // prod(srcReg.scl)))
 
-#= The contact quadrature runs whenever a corner of one volume sits inside the
-other, and it produces non-numeric values for a cross-scale pair. The pair is
-kept away from it unless the two volumes are farther apart than half the sum of
-their cell sizes in at least one dimension. =#
-function _cntPar(trgReg::GlaVol, srcReg::GlaVol)
-    sepTol = (trgReg.scl .+ srcReg.scl) .// 2
-    sep = max.(_lwrEdg(trgReg) .- _uprEdg(srcReg), _lwrEdg(srcReg) .- _uprEdg(trgReg))
-    return all(sep .< sepTol)
-end
+#= Check for contact between two regions to then run the contact quadrature
+subroutine (sandwich). =#
+_cntChk(trgReg::GlaVol, srcReg::GlaVol) =
+    all(max.(_lwrEdg(trgReg), _lwrEdg(srcReg)) .<= min.(_uprEdg(trgReg), _uprEdg(srcReg)))
 
 #= A block between two volumes of the same cell size, in contact or not. The
 external construction corrects for cell contact of any shape at a common cell
@@ -127,7 +122,7 @@ function _cmpBlk(trgReg::GlaVol, srcReg::GlaVol, isSlf::Bool, slfCmp::Bool,
     if !slfCmp && _ovrLap(trgReg, srcReg)
         throw(ArgumentError("Target region $trgIdx spans $(_lwrEdg(trgReg)) to $(_uprEdg(trgReg)) and source region $srcIdx spans $(_lwrEdg(srcReg)) to $(_uprEdg(srcReg)), so the two overlap. A composite operator between two bodies needs the bodies to be disjoint."))
     end
-    trgReg.scl != srcReg.scl && _cntPar(trgReg, srcReg) &&
+    trgReg.scl != srcReg.scl && _cntChk(trgReg, srcReg) &&
         return _sndBlk(trgReg, srcReg, useGpu)
     opr = trgReg.scl == srcReg.scl ? _extBlk(trgReg, srcReg, useGpu) :
         GlaOprVac(trgReg, srcReg; useGpu=useGpu)
