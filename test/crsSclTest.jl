@@ -141,3 +141,17 @@ end
     # the coarse volume remeshed at the fine scale gives the exact answer
     @test relFro(matTch, (_xsAgr ./ 8) * dnsMat(GlaOprVac(_xsVolRef, volTch))) < 1e-4
 end
+
+@testset "Cross-scale anisotropic reciprocity" begin
+    #= The srfScl face pair table is consumed keyed as (target face, source
+    face). Written transposed it scales tensor component (a, b) by
+    (sclS[b]/sclT[b]) / (sclS[a]/sclT[a]), which every isotropic and every
+    same-scale pair hides because their scale ratio is direction independent.
+    Volume-weighted reciprocity catches it at order one. =#
+    volAni = GlaVol((4,4,4), (1//64, 1//32, 1//32), stdOrg)
+    volIso = GlaVol((4,4,4), _xsSclFin, (5//32, 0//1, 0//1))
+    matAI = dnsMat(GlaOprVac(volAni, volIso; prxWrn=false))
+    matIA = dnsMat(GlaOprVac(volIso, volAni; prxWrn=false))
+    volA, volI = prod(volAni.scl), prod(volIso.scl)
+    @test relFro(volA .* matAI, transpose(volI .* matIA)) < 1e-5
+end
