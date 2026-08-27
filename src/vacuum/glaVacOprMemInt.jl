@@ -280,7 +280,9 @@ function wekVDir(dir::Integer, scl::NTuple{3,Number},
     grdPts[:,5], grdPts[:,6], grdPts[:,15]), glQud1, cmpInf)]
 end
 #=
-Generate all unique pairs of cube faces. 
+Generate all unique pairs of cube faces. Row 1 is the target face and row 2 the
+source face, the convention srfSum! assembles by: the tensor component (a, b)
+sums the face pairs whose row 1 normal is a and row 2 normal is b.
 =#
 function facPar()
     fPairs = Array{Int,2}(undef, 2, 36)
@@ -305,13 +307,17 @@ function srfScl(sclT::NTuple{3,Number}, sclS::NTuple{3,Number})
         elseif srcFId == 3 || srcFId == 4       srcScl = sclS[1] * sclS[3]
         else                                    srcScl = sclS[1] * sclS[2]
         end
-        # target scaling has been switched to source scaling
-        for trgFId ∈ 1 : 6 
+        #= The face pair key is (target face - 1) * 6 + source face, see the use
+        of fPairs in cubVecAltAdp, so the source area belongs to the second
+        index. Writing it transposed scales tensor component (a, b) by the ratio
+        of the per-direction scale ratios, which is only visible when
+        sclS ./ sclT varies with direction. =#
+        for trgFId ∈ 1 : 6
             if trgFId == 1 || trgFId == 2       trgScl = sclT[1]
             elseif trgFId == 3 || trgFId == 4   trgScl = sclT[2]
             else                                trgScl = sclT[3]
-            end         
-            srfScl[(srcFId - 1) * 6 + trgFId] = Float64(srcScl / trgScl)
+            end
+            srfScl[(trgFId - 1) * 6 + srcFId] = Float64(srcScl / trgScl)
         end
     end
     return SVector{36}(srfScl)
@@ -348,14 +354,14 @@ second pair of entries are coordinates in the target surface.
     fp::Integer, trgFaces::AbstractArray{<:AbstractFloat,3}, 
     srcFaces::AbstractArray{<:AbstractFloat,3}, fPairs::AbstractMatrix{<:Integer})
 
-    srcPairs, trgPairs = fPairs[:, fp]
-    pst = trgFaces[dir, 1, srcPairs] + 
-        ordVec[3] * (trgFaces[dir, 2, srcPairs] - trgFaces[dir, 1, srcPairs]) +
-        ordVec[4] * (trgFaces[dir, 4, srcPairs] - trgFaces[dir, 1, srcPairs]) 
+    trgFId, srcFId = fPairs[:, fp]
+    pst = trgFaces[dir, 1, trgFId] +
+        ordVec[3] * (trgFaces[dir, 2, trgFId] - trgFaces[dir, 1, trgFId]) +
+        ordVec[4] * (trgFaces[dir, 4, trgFId] - trgFaces[dir, 1, trgFId])
 
-    ngt = srcFaces[dir, 1, trgPairs] +
-        ordVec[1] * (srcFaces[dir, 2, trgPairs] - srcFaces[dir, 1, trgPairs]) +
-        ordVec[2] * (srcFaces[dir, 4, trgPairs] - srcFaces[dir, 1, trgPairs])
+    ngt = srcFaces[dir, 1, srcFId] +
+        ordVec[1] * (srcFaces[dir, 2, srcFId] - srcFaces[dir, 1, srcFId]) +
+        ordVec[2] * (srcFaces[dir, 4, srcFId] - srcFaces[dir, 1, srcFId])
 
     return pst - ngt
 end
