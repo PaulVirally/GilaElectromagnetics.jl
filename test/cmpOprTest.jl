@@ -159,6 +159,69 @@ end
     @test cmpRelFro(mnyOpr[1:4, 1:4], mnyMat[1:4, 1:4]) < 1e-12
 end
 
+const cmpSym = GilaElectromagnetics.GilaOperators.sym
+
+#= The two Hermitian parts are read entry by entry off the composite matrix,
+which the complex symmetry of the self operator makes exact. Both are built from
+the same block matrix, so a matvec costs one application of G₀. =#
+@testset "Composite operator Hermitian parts" begin
+    asyOpr, symOpr = asym(mnyOpr), cmpSym(mnyOpr)
+    @test asyOpr isa AsyGlaCmpOprVac
+    @test symOpr isa SymGlaCmpOprVac
+    @test AsymCompositeVacuumGreenOperator === AsyGlaCmpOprVac
+    @test SymCompositeVacuumGreenOperator === SymGlaCmpOprVac
+    @test size(asyOpr) == (864, 864)
+    @test size(asyOpr, 2) == 864
+    @test eltype(asyOpr) == ComplexF64
+    @test glaSze(asyOpr) == glaSze(mnyOpr)
+    @test glaSze(asyOpr, 2)[1, 1] == (4, 8, 8, 3)
+    @test isselfoperator(asyOpr)
+    @test !isexternaloperator(asyOpr)
+    @test !isadjoint(asyOpr)
+    @test !isoverlappingoperator(asyOpr)
+    @test !isgpu(asyOpr)
+    @test arrTyp(asyOpr) <: Array
+    @test useCpu!(asyOpr) === asyOpr
+    @test occursin("composite Asym(G₀)", sprint(show, asyOpr))
+    @test occursin("composite Sym(G₀)", sprint(show, symOpr))
+
+    asyDns, symDns = dnsMat(asyOpr), dnsMat(symOpr)
+    @test all(isfinite, asyDns)
+    @test cmpRelFro(asyDns, asymMat(mnyMat)) < 1e-12
+    @test cmpRelFro(symDns, symMat(mnyMat)) < 1e-12
+    # Both parts are Hermitian, and together they rebuild the operator
+    @test cmpRelFro(asyDns, asyDns') < 1e-12
+    @test cmpRelFro(symDns, symDns') < 1e-12
+    @test cmpRelFro(symDns + im .* asyDns, mnyMat) < 1e-12
+    # The operator the part was taken from is untouched
+    @test dnsMat(mnyOpr) == mnyMat
+
+    # Hermitian, so adjoint! hands the operator back
+    @test GilaElectromagnetics.adjoint!(asyOpr) === asyOpr
+    @test cmpRelFro(dnsMat(adjoint(asyOpr)), asyDns) < 1e-12
+
+    fld = discretize!(zerofield(mnyCvl), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+    out = asyOpr * fld
+    @test out isa GlaFld
+    @test out.cvol === mnyCvl
+    @test norm(out.dat - asyDns * fld.dat) < 1e-12 * norm(out.dat)
+    @test asyOpr * collect(fld.dat) == out.dat
+    @test_throws ArgumentError asyOpr * zerofield(GlaCmpVol(mnyRef))
+    @test_throws ArgumentError asyOpr * zeros(ComplexF64, 863)
+    @test cmpRelFro(asyOpr[1:4, 1:4], asyDns[1:4, 1:4]) < 1e-12
+
+    # A part only makes sense for a self operator, and not in adjoint mode
+    extOpr = GlaCmpOprVac(GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, cmpOrg0)),
+        GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, (1//1, 0//1, 0//1))))
+    @test_throws ArgumentError asym(extOpr)
+    @test_throws ArgumentError cmpSym(extOpr)
+    @test_throws ArgumentError asym(adjoint(mnyOpr))
+
+    # The volume constructor builds the operator it needs
+    @test AsyGlaCmpOprVac(GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, cmpOrg0))) isa AsyGlaCmpOprVac
+    @test SymGlaCmpOprVac(GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, cmpOrg0))) isa SymGlaCmpOprVac
+end
+
 #= A coarse region on each side of a fine one, so a sandwich block appears in
 both orientations and the two coarse regions see each other across a gap. =#
 const triCvl = refine(GlaCmpVol(GlaVol((6, 4, 4), cmpScl16, cmpOrg0)),
@@ -179,6 +242,9 @@ const triRef = GlaVol((12, 8, 8), cmpScl32, cmpOrg0)
     @test cmpRelFro(triMat, triAgr) < 1e-6
     @test cmpRelFro(triMat, transpose(triMat)) < 1e-8
     @test cmpRelFro(dnsMat(adjoint(triOpr)), triMat') < 1e-13
+    # Sandwich blocks in both orientations, plus a same-scale external pair
+    @test cmpRelFro(dnsMat(asym(triOpr)), asymMat(triMat)) < 1e-12
+    @test cmpRelFro(dnsMat(cmpSym(triOpr)), symMat(triMat)) < 1e-12
 end
 
 @testset "Composite operator between two bodies" begin
@@ -267,6 +333,8 @@ end
     @test cmpBlkCnt(opr) == (1, 0, 0, 0)
     # One region means one cell volume, so the normalization is the identity
     @test dnsMat(opr) == dnsMat(GlaOprVac(vol))
+    # One region reproduces the plain anti-Hermitian operator
+    @test cmpRelFro(dnsMat(asym(opr)), dnsMat(AsyGlaOprVac(vol))) < 1e-12
     @test slv(opr) isa GlaSlv
     @test arrTyp(opr) <: Array
     @test useCpu!(opr) === opr
@@ -300,5 +368,12 @@ end
             pos -> (exp(2im * pi * pos[1]), pos[2], 0))
         outCpu = mnyOpr * fldCpu
         @test norm(Array(outGpu.dat) - outCpu.dat) < 1e-10 * norm(outCpu.dat)
+
+        asyGpu = asym(oprGpu)
+        @test isgpu(asyGpu)
+        @test arrTyp(asyGpu) <: CuArray
+        asyOutGpu = asyGpu * fldGpu
+        asyOutCpu = asym(mnyOpr) * fldCpu
+        @test norm(Array(asyOutGpu.dat) - asyOutCpu.dat) < 1e-10 * norm(asyOutCpu.dat)
     end
 end
