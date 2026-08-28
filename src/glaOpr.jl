@@ -27,11 +27,13 @@ using ..GilaSolvers
 using CUDA
 using Serialization
 
-import ..GilaVacuum: useCpu!, useGpu!
+import LinearAlgebra: adjoint!
+
+import ..GilaVacuum: useCpu!, useGpu!, egoCmpPos
 import ..GilaVolumes: _lwrEdg, _uprEdg, _ovrLap
 
-export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, MulRegGlaOprVac, GlaCmpOprVac, InvSctOpr, SctOpr, GlaOpr
-export VacuumGreenOperator, AsymVacuumGreenOperator, SymVacuumGreenOperator, MultiRegionVacuumGreenOperator, CompositeVacuumGreenOperator, InverseScatteringOperator, ScatteringOperator, GreenOperator
+export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, MulRegGlaOprVac, GlaCmpOprVac, AsyGlaCmpOprVac, SymGlaCmpOprVac, InvSctOpr, SctOpr, GlaOpr
+export VacuumGreenOperator, AsymVacuumGreenOperator, SymVacuumGreenOperator, MultiRegionVacuumGreenOperator, CompositeVacuumGreenOperator, AsymCompositeVacuumGreenOperator, SymCompositeVacuumGreenOperator, InverseScatteringOperator, ScatteringOperator, GreenOperator
 export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, adjoint!, glaSze, slv, asym
 
 """
@@ -497,7 +499,7 @@ Construct an inverse scattering operator from a scattering operator.
 # Returns
 - `InvSctOpr`: The inverse scattering operator
 """
-InvSctOpr(opr::SctOpr) = opr.invSctOpt
+InvSctOpr(opr::SctOpr) = opr.invSctOpr
 
 """
     InvSctOpr(opr::GlaOpr)
@@ -1012,8 +1014,19 @@ Base.show(io::IO, ::MIME"text/plain", opr::MulRegGlaOprVac) = show(io, opr)
 include("glaLinAlg.jl")
 include("glaCmpOpr.jl")
 
-Serialization.serialize(io::IO, opr::GlaOprVac) = serialize(io, opr.mem)
-Serialization.deserialize(io::IO, ::Type{GlaOprVac}) = GlaOprVac(deserialize(io, GlaVacOprMem))
+#= An overlapping operator holds the union volume in its memory, so the masks are
+the only record of the two sub-volumes and have to be written alongside it. =#
+function Serialization.serialize(io::IO, opr::GlaOprVac)
+    serialize(io, opr.mem)
+    serialize(io, opr.srcMsk)
+    serialize(io, opr.trgMsk)
+end
+function Serialization.deserialize(io::IO, ::Type{GlaOprVac})
+    mem = deserialize(io, GlaVacOprMem)
+    srcMsk = deserialize(io)
+    trgMsk = deserialize(io)
+    return GlaOprVac(mem, srcMsk, trgMsk)
+end
 Serialization.serialize(io::IO, opr::AsyGlaOprVac) = serialize(io, opr.mem)
 Serialization.deserialize(io::IO, ::Type{AsyGlaOprVac}) = AsyGlaOprVac(deserialize(io, GlaVacOprMem))
 Serialization.serialize(io::IO, opr::SymGlaOprVac) = serialize(io, opr.mem)
@@ -1022,7 +1035,43 @@ Serialization.serialize(io::IO, opr::MulRegGlaOprVac) = serialize(io, opr.oprMat
 # The blocks go through the generic serializer, which rebuilds their FFTW plans
 # on load, see vacuum/glaVacOprMem.jl
 Serialization.deserialize(io::IO, ::Type{MulRegGlaOprVac}) = MulRegGlaOprVac(deserialize(io))
+function Serialization.serialize(io::IO, opr::GlaSndOprVac)
+    serialize(io, opr.opr)
+    serialize(io, opr.trgRat)
+    serialize(io, opr.srcRat)
+    serialize(io, opr.wgt)
+end
+function Serialization.deserialize(io::IO, ::Type{GlaSndOprVac})
+    innOpr = deserialize(io, GlaOprVac)
+    trgRat = deserialize(io)
+    srcRat = deserialize(io)
+    wgt = deserialize(io)
+    return GlaSndOprVac(innOpr, trgRat, srcRat, wgt)
+end
+function Serialization.serialize(io::IO, opr::GlaCmpOprVac)
+    serialize(io, opr.trgCvl)
+    serialize(io, opr.srcCvl)
+    # The blocks go through the generic serializer, as for MulRegGlaOprVac above
+    serialize(io, opr.blkMat)
+end
+function Serialization.deserialize(io::IO, ::Type{GlaCmpOprVac})
+    trgCvl = deserialize(io)
+    srcCvl = deserialize(io)
+    blkMat = deserialize(io)
+    return GlaCmpOprVac(trgCvl, srcCvl, blkMat)
+end
+#= The written blocks already carry the Fourier coefficients of the part, so the
+raw constructor is the one to read them back with. =#
+Serialization.serialize(io::IO, opr::AsyGlaCmpOprVac) = serialize(io, opr.opr)
+Serialization.deserialize(io::IO, ::Type{AsyGlaCmpOprVac}) =
+    AsyGlaCmpOprVac(deserialize(io, GlaCmpOprVac), Val(:raw))
+Serialization.serialize(io::IO, opr::SymGlaCmpOprVac) = serialize(io, opr.opr)
+Serialization.deserialize(io::IO, ::Type{SymGlaCmpOprVac}) =
+    SymGlaCmpOprVac(deserialize(io, GlaCmpOprVac), Val(:raw))
 function Serialization.serialize(io::IO, opr::InvSctOpr)
+    #= The vacuum operator is written by whichever method its runtime type
+    selects, so its type leads the payload and picks the reader. =#
+    serialize(io, typeof(opr.oprVac))
     serialize(io, opr.oprVac)
     sus = opr.sus
     if sus isa CuArray
@@ -1031,7 +1080,8 @@ function Serialization.serialize(io::IO, opr::InvSctOpr)
     serialize(io, sus)
 end
 function Serialization.deserialize(io::IO, ::Type{InvSctOpr})
-    oprVac = deserialize(io, GlaOprVac)
+    vacTyp = deserialize(io)
+    oprVac = deserialize(io, vacTyp)
     sus = deserialize(io)
     return InvSctOpr(oprVac, sus)
 end

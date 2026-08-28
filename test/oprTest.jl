@@ -1,9 +1,6 @@
 # GilaOperators tests
 import GilaElectromagnetics.GilaOperators: ovrChk, mskRng, rszSus, setSus!
 
-# adjoint! is exported by both GilaElectromagnetics and LinearAlgebra — qualify explicitly
-import GilaElectromagnetics: adjoint!
-
 # Shared helpers from tstHlp.jl; oprTest-specific:
 const _ovrOrg4 = ntuple(i -> Rational(4) * stdScl[i] // 2, 3)
 const _volOvr4 = GlaVol((4,4,4), stdScl, _ovrOrg4)
@@ -101,11 +98,8 @@ end
     # but SctOpr(::InvSctOpr, ::GlaSlv) requires an explicit solver argument.
     @test_throws MethodError GlaOpr(sct.invSctOpr)
 
-    # Bug: InvSctOpr(sctOpr::SctOpr) = opr.invSctOpt — typo, should be `invSctOpr`.
-    # Calling InvSctOpr(sct) throws because `invSctOpt` is not a field of SctOpr.
-    @test_throws Exception InvSctOpr(sct)
-    # Same bug cascades: InvSctOpr(glaOpr) calls InvSctOpr(sct) internally.
-    @test_throws Exception InvSctOpr(gla)
+    @test InvSctOpr(sct)    === sct.invSctOpr
+    @test InvSctOpr(gla)    === gla.sctOpr.invSctOpr
 end
 
 @testset "size / glaSze / eltype" begin
