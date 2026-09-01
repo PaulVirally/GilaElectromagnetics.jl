@@ -390,4 +390,41 @@ function adjoint!(opr::GlaOpr)
 end
 Base.adjoint(opr::AbstractGlaOpr) = adjoint!(deepcopy(opr))
 
-include("glaMatFreExtOps.jl")
+# A zero β never reads the output, which may hold anything
+function invMul!(w, opr::AbstractGlaOpr, v, α, β)
+    iszero(β) && return w .= α .* solve(opr, v, slv(opr))
+    return axpby!(α, solve(opr, v, slv(opr)), β, w)
+end
+function invMul!(w, opr::SctOpr, v, α, β)
+    iszero(β) && return w .= α .* (opr.invSctOpr * v)
+    return axpby!(α, opr.invSctOpr * v, β, w)
+end
+function invMul!(w, opr::GlaOpr, v, α, β)
+    actG0Inv = solve(opr.sctOpr.invSctOpr.oprVac, v, slv(opr.sctOpr.invSctOpr))
+    out = opr.sctOpr.invSctOpr.oprVac * actG0Inv
+    iszero(β) && return w .= α .* out
+    return axpby!(α, out, β, w)
+end
+
+function invMulAdj!(w, opr::AbstractGlaOpr, v, α, β)
+    adjOpr = adjoint!(opr) # Compute with the adjoint operator
+    out = invMul!(w, adjOpr, v, α, β) # Inverse adjoint matrix-vector product
+    adjoint!(opr) # Restore the original operator
+    return out
+end
+function invMulAdj!(w, opr::SctOpr, v, α, β)
+    adjOpr = adjoint!(opr.invSctOpr) # Compute with the adjoint operator
+    out = invMul!(w, adjOpr, v, α, β)
+    adjoint!(opr.invSctOpr) # Restore the original operator
+    return out
+end
+function invMulAdj!(w, opr::GlaOpr, v, α, β)
+    adjOpr = adjoint!(opr.sctOpr.invSctOpr) # Compute with the adjoint operator
+    actWInvDag = adjOpr * v
+    adjoint!(opr.sctOpr.invSctOpr) # Restore the original operator
+
+    adjOpr = adjoint!(opr.sctOpr.invSctOpr.oprVac) # Compute with the adjoint operator
+    out = axpby!(α, adjOpr * actWInvDag, β, w)
+    adjoint!(opr.sctOpr.invSctOpr.oprVac) # Restore the original operator
+    return out
+end
