@@ -148,36 +148,6 @@ function ini!(slv::BiCGStabSolver, vec::AbstractVector)
     return slv
 end
 
-# Helper functions for array operations
-"""
-    simFil(arr::AbstractArray{T}, filVal::T) where T
-
-Create a new array of the same type and size as `arr` filled with `filVal`.
-
-# Arguments
-- `arr::AbstractArray{T}`: The array to use as a template
-- `filVal::T`: The value to fill the new array with
-
-# Returns
-- `AbstractArray{T}`: A new array filled with `filVal`
-"""
-simFil(arr::AbstractArray{T}, filVal::T) where T = fill!(similar(arr), filVal)
-
-"""
-    simFil(arr::AbstractArray{T}, dim::NTuple{N, Int}, filVal::T) where {N, T}
-
-Create a new array of type `T` with dimensions `dim` filled with `filVal`.
-
-# Arguments
-- `arr::AbstractArray{T}`: The array to use as a template for type information
-- `dim::NTuple{N, Int}`: The dimensions of the new array
-- `filVal::T`: The value to fill the new array with
-
-# Returns
-- `AbstractArray{T}`: A new array of size `dim` filled with `filVal`
-"""
-simFil(arr::AbstractArray{T}, dim::NTuple{N, Int}, filVal::T) where {N, T} = fill!(similar(arr, dim), filVal)
-
 """
     solve(opr::GlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver) where T
 
@@ -199,17 +169,19 @@ Solve the linear system `opr * out = inp` using the BiCGStab method.
 """
 function solve(opr::GlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver) where T
     ini!(slv, inp)
-    out = simFil(inp, zero(eltype(inp)))
+    out = fill!(similar(inp), zero(T))
 
     ρPrv = zero(T)
     ω = zero(T)
     α = zero(T)
-    v = simFil(inp, zero(T))
-    res = deepcopy(inp) # Residual
+    # Work buffers, allocated once (zeroed so a β = 0 `mul!` never reads garbage)
+    v = fill!(similar(inp), zero(T))
+    t = fill!(similar(inp), zero(T))
+    res = copyto!(similar(inp), inp) # Residual
     absTol = max(slv.absTol, slv.relTol * norm(res))
 
-    resShd = deepcopy(res) # Residual shadow
-    p = deepcopy(res)
+    resShd = copy(res) # Residual shadow
+    p = copy(res)
     s = similar(res)
 
     for numItr in 1:slv.maxItr
@@ -220,27 +192,27 @@ function solve(opr::GlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver) where T
         ρ = dot(resShd, res)
         if numItr > 1
             β = (ρ / ρPrv) * (α / ω)
-            p = res + β*(p - ω*v)
+            p .= res .+ β .* (p .- ω .* v)
         end
         # p̂ = preconditioner \ p # TODO: When we have a preconditioner
         p̂ = p
-        v = opr * p̂
+        mul!(v, opr, p̂)
         α = ρ / dot(resShd, v)
-        res -= α*v
-        s = deepcopy(res)
+        res .-= α .* v
+        s .= res
 
         if norm(res) < absTol
-            out += α*p̂
+            out .+= α .* p̂
             return out
         end
 
         # ŝ = preconditioner \ s # TODO: When we have a preconditioner
         ŝ = s
-        t = opr * ŝ
+        mul!(t, opr, ŝ)
         ω = dot(t, s) / dot(t, t)
         # ω = dot(t, res) / dot(t, t)
-        out += α*p̂ + ω*ŝ
-        res -= ω*t
+        out .+= α .* p̂ .+ ω .* ŝ
+        res .-= ω .* t
         ρPrv = ρ
     end
     @warn "BiCGStab did not converge after $(slv.maxItr) iterations."
@@ -276,7 +248,8 @@ function solve(opr::GlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) where T
     basVec = similar(inp, size(opr, 1), 1 + slv.rstItr) # Krylov basis vectors
     hss = zeros(eltype(inp), 1 + slv.rstItr, slv.rstItr) # Hessenberg matrix (always stored on the CPU)
     nllSpc = ones(eltype(inp), 1 + slv.rstItr) # Vector in the nullspace of the Hessenberg matrix (always stored on the CPU)
-    out = simFil(inp, zero(T)) # Solution vector
+    out = fill!(similar(inp), zero(T)) # Solution vector
+    buf = fill!(similar(out), zero(T)) # Work buffer for the restart residual
 
     # The first basis vector is b (preconditioned)
     k = 1 # Which restart iteration we are on
@@ -328,7 +301,7 @@ function solve(opr::GlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) where T
         don = (res <= absTol || itr == slv.maxItr) # done or not
         if don || k == 1 + slv.rstItr
             # Solve the least squares problem: Hy = βe₁
-            y = simFil(hss, (k,), zero(T))
+            y = fill!(similar(hss, (k,)), zero(T))
             y[1] = β
             lstSqrHss(view(hss, 1:k, 1:k-1), y) # Note: this mutates `hss`, but it's fine because we don't need it anymore
             if out isa CuArray
@@ -343,7 +316,8 @@ function solve(opr::GlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) where T
             # If we have not reached max_iter or converged, restart
             if !don
                 vk = @view basVec[:, k]
-                copyto!(vk, inp - opr * out) # lmul!(vk, preconditioner, inp - opr * out) # TODO: When we have a preconditioner
+                mul!(buf, opr, out)
+                vk .= vec(inp) .- vec(buf) # lmul!(vk, preconditioner, inp - opr * out) # TODO: When we have a preconditioner
                 β = norm(vk)
                 rmul!(vk, inv(β))
                 resAcc = one(real(T))

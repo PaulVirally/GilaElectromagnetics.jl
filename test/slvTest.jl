@@ -77,21 +77,6 @@ end
     end
 end
 
-@testset "simFil" begin
-    arr = zeros(ComplexF64, 3, 4)
-    r1 = GilaElectromagnetics.GilaSolvers.simFil(arr, zero(ComplexF64))
-    @test size(r1) == (3, 4)
-    @test eltype(r1) == ComplexF64
-    @test all(iszero, r1)
-
-    r2 = GilaElectromagnetics.GilaSolvers.simFil(arr, (2, 3), zero(ComplexF64))
-    @test size(r2) == (2, 3)
-    @test eltype(r2) == ComplexF64
-
-    r3 = GilaElectromagnetics.GilaSolvers.simFil(arr, one(ComplexF64))
-    @test all(isone, r3)
-end
-
 @testset "lstSqrHss" begin
     # Build a random upper-Hessenberg (n+1)×n matrix and rhs = β*e₁
     n = 5

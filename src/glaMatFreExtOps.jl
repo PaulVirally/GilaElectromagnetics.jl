@@ -6,11 +6,20 @@ import SciMLOperators: FunctionOperator
 using LinearOperators
 using LinearMaps
 
-invMul!(w, opr::AbstractGlaOpr, v, α, β) = axpby!(α, solve(opr, v, slv(opr)), β, w)
-invMul!(w, opr::SctOpr, v, α, β) = axpby!(α, opr.invSctOpr * v, β, w)
+# A zero β never reads the output, which may hold anything
+function invMul!(w, opr::AbstractGlaOpr, v, α, β)
+    iszero(β) && return w .= α .* solve(opr, v, slv(opr))
+    return axpby!(α, solve(opr, v, slv(opr)), β, w)
+end
+function invMul!(w, opr::SctOpr, v, α, β)
+    iszero(β) && return w .= α .* (opr.invSctOpr * v)
+    return axpby!(α, opr.invSctOpr * v, β, w)
+end
 function invMul!(w, opr::GlaOpr, v, α, β)
     actG0Inv = solve(opr.sctOpr.invSctOpr.oprVac, v, slv(opr.sctOpr.invSctOpr))
-    return axpby!(α, opr.sctOpr.invSctOpr.oprVac * actG0Inv, β, w)
+    out = opr.sctOpr.invSctOpr.oprVac * actG0Inv
+    iszero(β) && return w .= α .* out
+    return axpby!(α, out, β, w)
 end
 
 function invMulAdj!(w, opr::AbstractGlaOpr, v, α, β)

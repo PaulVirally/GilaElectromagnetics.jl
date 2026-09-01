@@ -82,7 +82,8 @@ end
 Base.IndexStyle(::Type{<:AbstractGlaOpr}) = IndexCartesian()
 Base.getindex(opr::AbstractGlaOpr, i::Integer) = getindex(opr, CartesianIndices(opr)[i])
 Base.getindex(opr::AbstractGlaOpr, i::CartesianIndex) = getindex(opr, i.I...)
-function Base.getindex(opr::AbstractGlaOpr, row::IType, col::IType) where IType <: Union{Integer, AbstractUnitRange{<:Integer}, AbstractVector{<:Integer}, Colon}
+const GlaIdx = Union{Integer, AbstractUnitRange{<:Integer}, AbstractVector{<:Integer}, Colon}
+function Base.getindex(opr::AbstractGlaOpr, row::GlaIdx, col::GlaIdx)
     T = eltype(opr)
     numRow, numCol = size(opr)
     row = row === Colon() ? (1:numRow) : row
@@ -98,8 +99,8 @@ function Base.getindex(opr::AbstractGlaOpr, row::IType, col::IType) where IType 
         return CUDA.@allowscalar (opr * e)[row]
     end
 
-    rowInd = row isa Integer ? (row,) : collect(row)
-    colInd = col isa Integer ? (col,) : collect(col)
+    rowInd = row isa Integer ? [row] : collect(row)
+    colInd = col isa Integer ? [col] : collect(col)
 
     # Choose the cheapest way to compute the result (adjoint or forward)
     if length(rowInd) <= length(colInd)
@@ -110,80 +111,180 @@ function Base.getindex(opr::AbstractGlaOpr, row::IType, col::IType) where IType 
             CUDA.@allowscalar idt[idx, j] = one(T)
         end
         out = opr * idt
-        return out[rowInd, :]
+        res = out[rowInd, :]
+    else
+        # Adjoint batched vec–mat
+        # mini‑identity in the output slots
+        idt = fill!(arrTyp(opr)(undef, numRow, length(rowInd)), zero(T))
+        for (i, idx) in enumerate(rowInd)
+            CUDA.@allowscalar idt[idx, i] = one(T)
+        end
+        adjOpr = adjoint!(opr) # Compute with the adjoint operator
+        outDag = adjOpr * idt
+        adjoint!(adjOpr) # Restore the memory the caller's operator still points at
+        res = copy(outDag[colInd, :]')
     end
-
-    # Adjoint batched vec–mat
-    # mini‑identity in the output slots
-    idt = fill!(arrTyp(opr)(undef, numRow, length(rowInd)), zero(T))
-    for (i, idx) in enumerate(rowInd)
-        CUDA.@allowscalar idt[idx, i] = one(T)
-    end
-    adjOpr = adjoint!(opr) # Compute with the adjoint operator
-    outDag = adjOpr * idt
-    adjoint!(adjOpr) # Restore the memory the caller's operator still points at
-    return outDag[colInd, :]'
+    # An integer index drops its dimension, as for any AbstractMatrix
+    (row isa Integer || col isa Integer) && return vec(res)
+    return res
 end
 Base.setindex!(::AbstractGlaOpr, _, __...) = throw(ArgumentError("setindex! is not supported for AbstractGlaOpr"))
 
-# Matrix-matrix operation
+"""
+    mulAct!(opr::AbstractGlaOpr, act::AbstractVector{ComplexF64})
+
+Apply an operator to a vector. May (will) mutate `act`.
+
+`act` holds source as a flat vector on the same device (CPU/GPU) the operator
+computes with. 
+
+# Returns
+- `AbstractVector{ComplexF64}`: The result in the flat layout, freshly allocated
+"""
+function mulAct! end
+
+function mulAct!(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}, act::AbstractVector{ComplexF64})
+    if isoverlappingoperator(opr)
+        # The masked input is read into the union volume
+        actEmb = fill!(similar(act, opr.mem.srcVol.cel..., 3), zero(ComplexF64))
+        actEmb[opr.srcMsk..., :] .= reshape(act, glaSze(opr, 2))
+        return vec(egoOpr!(opr.mem, actEmb)[opr.trgMsk..., :])
+    end
+    return vec(egoOpr!(opr.mem, reshape(act, glaSze(opr, 2))))
+end
+
+# Block row sums over the flat layout, one region block at a time
+function mulAct!(opr::MulRegGlaOprVac, act::AbstractVector{ComplexF64})
+    rowSzs = [size(opr.oprMat[i, 1], 1) for i in axes(opr.oprMat, 1)]
+    colSzs = [size(opr.oprMat[1, j], 2) for j in axes(opr.oprMat, 2)]
+    rowOff = cumsum([0; rowSzs]); colOff = cumsum([0; colSzs])
+    outVec = fill!(similar(act, sum(rowSzs)), zero(ComplexF64))
+    for i in axes(opr.oprMat, 1), j in axes(opr.oprMat, 2)
+        # A block eats its buffer, so every block gets its own copy of the slice
+        innBlk = copy(view(act, (colOff[j] + 1):colOff[j + 1]))
+        view(outVec, (rowOff[i] + 1):rowOff[i + 1]) .+= mulAct!(opr.oprMat[i, j], innBlk)
+    end
+    return outVec
+end
+
+#= (I - XG₀), in place on the input. In adjoint mode the vacuum operator is
+already the adjoint and the susceptibility already conjugated, which leaves
+I - G₀' X̄. A composite susceptibility is stored in the flat layout, a single
+volume one as a cell tensor that broadcasts over the three components. =#
+function mulAct!(opr::InvSctOpr, act::AbstractVector{ComplexF64})
+    if opr.oprVac isa GlaCmpOprVac
+        if length(act) != size(opr.oprVac, 2)
+            throw(ArgumentError("An input of length $(length(act)) does not fit this operator, which has $(size(opr.oprVac, 2)) degrees of freedom."))
+        end
+        isadjoint(opr) && return act .-= mulAct!(opr.oprVac, opr.sus .* act)
+        return act .-= opr.sus .* mulAct!(opr.oprVac, copy(act))
+    end
+    actTen = reshape(act, glaSze(opr, 2))
+    if isadjoint(opr)
+        actTen .-= reshape(mulAct!(opr.oprVac, vec(opr.sus .* actTen)), glaSze(opr, 1))
+        return act
+    end
+    actTen .-= opr.sus .* reshape(mulAct!(opr.oprVac, copy(act)), glaSze(opr, 1))
+    return act
+end
+
+mulAct!(opr::SctOpr, act::AbstractVector{ComplexF64}) = solve(opr.invSctOpr, act, opr.slv)
+
+# G₀ after the solve, the two the other way around in adjoint mode
+function mulAct!(opr::GlaOpr, act::AbstractVector{ComplexF64})
+    isadjoint(opr) && return mulAct!(opr.sctOpr, mulAct!(opr.sctOpr.invSctOpr.oprVac, act))
+    return mulAct!(opr.sctOpr.invSctOpr.oprVac, mulAct!(opr.sctOpr, act))
+end
+
+# The buffer the primitive consumes, on the device the operator computes with
+function _devCpy(opr::AbstractGlaOpr, inp::AbstractVector{ComplexF64})
+    if isgpu(opr) && !(inp isa CuArray)
+        @warn "Input array is not a CuArray. Copying data to GPU."
+        return CuArray(inp) # The conversion is itself the defensive copy
+    end
+    return copy(inp)
+end
+
+"""
+    mul!(out, opr::AbstractGlaOpr, inp, α::Number, β::Number)
+
+Write `α * (opr * inp) + β * out` into `out`, leaving `inp` untouched.
+
+Both arrays are either flat vectors of degrees of freedom or, over a single
+volume, `(cel..., 3)` tensors. `out` is never read when `β` is zero, and the
+operator is never applied when `α` is zero.
+
+# Returns
+- `out`, holding the result
+
+# Throws
+- `ArgumentError`: If either array does not fit the operator
+"""
+function LinearAlgebra.mul!(out::AbstractVector{ComplexF64}, opr::AbstractGlaOpr, inp::AbstractVector{ComplexF64}, α::Number, β::Number)
+    if length(inp) != size(opr, 2) || length(out) != size(opr, 1)
+        throw(ArgumentError("An input of length $(length(inp)) and an output of length $(length(out)) do not fit this operator, which maps $(size(opr, 2)) degrees of freedom to $(size(opr, 1))."))
+    end
+    if iszero(α)
+        iszero(β) ? fill!(out, zero(ComplexF64)) : rmul!(out, β)
+        return out
+    end
+    tmp = mulAct!(opr, _devCpy(opr, inp))
+    iszero(β) ? (out .= α .* tmp) : (out .= α .* tmp .+ β .* out)
+    return out
+end
+LinearAlgebra.mul!(out::AbstractArray{ComplexF64, 4}, opr::AbstractGlaOpr, inp::AbstractArray{ComplexF64, 4}, α::Number, β::Number) =
+    (mul!(vec(out), opr, vec(inp), α, β); out)
+
+"""
+    *(opr::AbstractGlaOpr, inp)
+
+Apply an operator to a vector, a `(cel..., 3)` tensor, or a matrix of columns.
+
+The result takes the form of the input, and the input is left untouched. The
+product costs one copy of the input, which is the floor for an operator whose
+kernel consumes what it is handed.
+
+# Returns
+- The result, on the target volume of `opr`
+
+# Throws
+- `ArgumentError`: If the input does not fit the operator
+"""
+function Base.:*(opr::AbstractGlaOpr, inp::AbstractVector{ComplexF64})
+    if length(inp) != size(opr, 2)
+        throw(ArgumentError("An input of length $(length(inp)) does not fit this operator, which takes $(size(opr, 2)) degrees of freedom."))
+    end
+    return mulAct!(opr, _devCpy(opr, inp))
+end
+Base.:*(opr::AbstractGlaOpr, inp::AbstractArray{ComplexF64, 4}) = reshape(opr * vec(inp), glaSze(opr, 1))
 function Base.:*(opr::AbstractGlaOpr, inp::AbstractMatrix{ComplexF64})
     out = similar(inp, size(opr, 1), size(inp, 2))
     for (outCol, inpCol) in zip(eachcol(out), eachcol(inp))
-        outCol .= opr * inpCol
+        mul!(outCol, opr, inpCol)
     end
     return out
 end
 
-# Generic 5-argument multiplication
-LinearAlgebra.mul!(out::AbstractVector{ComplexF64}, opr::AbstractGlaOpr, inp::AbstractVector{ComplexF64}, α::Number, β::Number) = axpby!(α, opr * inp, β, out)
-LinearAlgebra.mul!(out::AbstractArray{ComplexF64, 4}, opr::AbstractGlaOpr, inp::AbstractArray{ComplexF64, 4}, α::Number, β::Number) = axpby!(α, opr * inp, β, out)
-LinearAlgebra.mul!(out::AbstractMatrix{ComplexF64}, opr::AbstractGlaOpr, inp::AbstractMatrix{ComplexF64}, α::Number, β::Number) = axpby!(α, opr * inp, β, out)
-
-# Matrix-vector operations
-function Base.:*(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}, innVec::AbstractArray{ComplexF64, 4})
-    if isoverlappingoperator(opr)
-        innVecEmb = similar(innVec, opr.mem.srcVol.cel..., 3) # Input array embedded in the input space of the full volume of the overlapping operator
-        fill!(innVecEmb, zero(eltype(innVec)))
-        innVecEmb[opr.srcMsk..., :] .= innVec # Place the input into the embedded array
-        innVec = innVecEmb # Swap out the memory locations
+#= A field carries its tiling, so it goes through the methods that check it and
+apply the normalization, and only the combine happens here. As in the vector
+method, out is never read when β is zero and the operator, which may hide an
+iterative solve, is never applied when α is zero. =#
+function LinearAlgebra.mul!(out::GlaFld, opr::AbstractGlaOpr, inp::GlaFld, α::Number, β::Number)
+    if iszero(α)
+        iszero(β) ? fill!(out, zero(ComplexF64)) : rmul!(out, β)
+        return out
     end
-    if isgpu(opr) && !(innVec isa CuArray)
-        @warn "Input array is not a CuArray. Copying data to GPU."
-        innVec = CuArray(innVec)
-    end
-    out = egoOpr!(opr.mem, deepcopy(innVec))
-    if isoverlappingoperator(opr)
-        # Mask out the output
-        return out[opr.trgMsk..., :]
-    end
+    fld = opr * inp
+    iszero(β) ? (out .= α .* fld) : axpby!(α, fld, β, out)
     return out
 end
+
 function Base.:*(opr::MulRegGlaOprVac, innVec::Vector{<:AbstractArray{ComplexF64, 4}})
     m, n = size(opr.oprMat)
     @assert length(innVec) == n "expected $n source blocks, got $(length(innVec))"
     outVec = [opr.oprMat[i, 1] * innVec[1] for i in 1:m] # j = 1
     for i in 1:m, j in 2:n
         outVec[i] .+= opr.oprMat[i, j] * innVec[j]
-    end
-    return outVec
-end
-function Base.:*(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}, innVec::AbstractVector{ComplexF64})
-    innVecArr = reshape(innVec, glaSze(opr, 2))
-    outVec = opr * innVecArr
-    return vec(outVec)
-end
-function Base.:*(opr::MulRegGlaOprVac, innVec::AbstractVector{ComplexF64})
-    rowSzs = [size(opr.oprMat[i, 1], 1) for i in axes(opr.oprMat, 1)]
-    colSzs = [size(opr.oprMat[1, j], 2) for j in axes(opr.oprMat, 2)]
-    rowOff = cumsum([0; rowSzs]); colOff = cumsum([0; colSzs])
-    outVec = fill!(similar(innVec, sum(rowSzs)), zero(eltype(innVec)))
-    for i in axes(opr.oprMat, 1)
-        outBlk = view(outVec, (rowOff[i]+1):rowOff[i+1])
-        for j in axes(opr.oprMat, 2)
-            inBlk = view(innVec, (colOff[j]+1):colOff[j+1])
-            outBlk .+= opr.oprMat[i, j] * inBlk
-        end
     end
     return outVec
 end
@@ -225,31 +326,6 @@ function Base.:*(opr::GlaOprVac, fld::GlaFld)
     nrm = sqrt(Float64(prod(opr.mem.trgVol.scl) // prod(srcVol.scl)))
     nrm != 1 && rmul!(outDat, nrm)
     return GlaFld(outDat, GlaCmpVol(opr.mem.trgVol))
-end
-
-function Base.:*(opr::InvSctOpr, inp::AbstractArray{ComplexF64, 4})
-    # Compute the matrix-vector product (I - XG₀) * inp for inp in 4-tensor form
-    if isadjoint(opr)
-        return inp - (opr.oprVac * (opr.sus .* inp))
-    end
-    return inp - (opr.sus .* (opr.oprVac * inp))
-end
-function Base.:*(opr::InvSctOpr, inp::AbstractVector{ComplexF64})
-    # Compute the matrix-vector product (I - XG₀)⁻¹ * inp for inp in vector form
-    opr.oprVac isa GlaCmpOprVac && return _cmpSctMul(opr, inp)
-    if isadjoint(opr)
-        return inp - vec(opr.oprVac * (opr.sus .* reshape(inp, glaSze(opr, 2))))
-    end
-    return inp - vec(opr.sus .* (opr.oprVac * reshape(inp, glaSze(opr, 2))))
-end
-Base.:*(opr::SctOpr, inp::AbstractArray{ComplexF64, 4}) = reshape(solve(opr.invSctOpr, vec(inp), opr.slv), size(inp))
-Base.:*(opr::SctOpr, inp::AbstractVector{ComplexF64}) = solve(opr.invSctOpr, inp, opr.slv)
-function Base.:*(opr::GlaOpr, inp::Union{AbstractVector{ComplexF64}, AbstractArray{ComplexF64, 4}})
-    # Compute the matrix-vector product G₀(I - XG₀)⁻¹ * inp
-    if isadjoint(opr)
-        return opr.sctOpr * (opr.sctOpr.invSctOpr.oprVac * inp)
-    end
-    return opr.sctOpr.invSctOpr.oprVac * (opr.sctOpr * inp)
 end
 
 """
