@@ -40,9 +40,8 @@ subtype only overrides the ones where it differs.
 
 A subtype has to implement:
 - `Base.size(opr)`: The number of rows and columns of the operator as a matrix
-- `Base.:*(opr, inp::AbstractVector{ComplexF64})`: The matrix-vector product. An
-  operator with a single source volume also takes a 4-tensor of size
-  `(cel..., 3)` and returns one on the target volume
+- `mulAct!(opr, act::AbstractVector{ComplexF64})`: The matrix-vector product on a
+  flat vector (mutating)
 - `adjoint!(opr)`: The adjoint, with the value semantics of its docstring
 - `arrTyp(opr)`: `Array` or `CuArray`, whichever the operator computes with
 - `isadjoint(opr)`: Whether the operator is the adjoint of the Green operator

@@ -414,16 +414,16 @@ Base.size(opr::Union{AsyGlaCmpOprVac, SymGlaCmpOprVac}) = size(opr.opr)
 Base.size(opr::Union{AsyGlaCmpOprVac, SymGlaCmpOprVac}, dim::Int) =
     size(opr.opr, dim)
 
-function Base.:*(opr::GlaSndOprVac, innVec::AbstractArray{ComplexF64,4})
+function mulAct!(opr::GlaSndOprVac, act::AbstractVector{ComplexF64})
+    finAct = act
     # Repeat every coarse source value over the fine cells it covers
-    inn = innVec
     if !all(opr.srcRat .== 1)
-        rat, cel = opr.srcRat, size(inn)[1:3]
-        finInn = similar(inn, rat[1], cel[1], rat[2], cel[2], rat[3], cel[3], 3)
-        finInn .= reshape(inn, 1, cel[1], 1, cel[2], 1, cel[3], 3)
-        inn = reshape(finInn, (cel .* rat)..., 3)
+        rat, cel = opr.srcRat, glaSze(opr, 2)[1:3]
+        finInn = similar(act, rat[1], cel[1], rat[2], cel[2], rat[3], cel[3], 3)
+        finInn .= reshape(act, 1, cel[1], 1, cel[2], 1, cel[3], 3)
+        finAct = vec(finInn)
     end
-    out = opr.opr * inn
+    out = reshape(mulAct!(opr.opr, finAct), glaSze(opr.opr, 1))
     # Sum every block of fine cells into the coarse target cell holding it
     if !all(opr.trgRat .== 1)
         rat = opr.trgRat
@@ -431,32 +431,28 @@ function Base.:*(opr::GlaSndOprVac, innVec::AbstractArray{ComplexF64,4})
         blk = reshape(out, rat[1], cel[1], rat[2], cel[2], rat[3], cel[3], 3)
         out = reshape(sum(blk; dims=(1, 3, 5)), cel..., 3)
     end
-    return opr.wgt .* out
+    return rmul!(vec(out), opr.wgt)
 end
-Base.:*(opr::GlaSndOprVac, innVec::AbstractVector{ComplexF64}) =
-    vec(opr * reshape(innVec, glaSze(opr, 2)))
 
 #= Block row sums over the flat layout. A region block of the buffer is already
-the 4-tensor a block operator wants, so the reshape needs no permutation. =#
-function Base.:*(opr::GlaCmpOprVac, innDat::AbstractVector{ComplexF64})
+the input a block operator wants, so a slice needs no permutation. =#
+function mulAct!(opr::GlaCmpOprVac, act::AbstractVector{ComplexF64})
     trgOff, srcOff = _dofOff(opr.trgCvl), _dofOff(opr.srcCvl)
-    if length(innDat) != srcOff[end]
-        throw(ArgumentError("An input of length $(length(innDat)) does not fit the source volume of this operator, which has $(srcOff[end]) degrees of freedom."))
+    if length(act) != srcOff[end]
+        throw(ArgumentError("An input of length $(length(act)) does not fit the source volume of this operator, which has $(srcOff[end]) degrees of freedom."))
     end
-    outDat = fill!(similar(innDat, trgOff[end]), zero(ComplexF64))
-    for srcIdx in axes(opr.blkMat, 2)
-        innBlk = reshape(innDat[(srcOff[srcIdx] + 1):srcOff[srcIdx + 1]],
-            glaSze(opr.blkMat[1, srcIdx], 2))
-        for trgIdx in axes(opr.blkMat, 1)
-            view(outDat, (trgOff[trgIdx] + 1):trgOff[trgIdx + 1]) .+=
-                vec(opr.blkMat[trgIdx, srcIdx] * innBlk)
-        end
+    outDat = fill!(similar(act, trgOff[end]), zero(ComplexF64))
+    for srcIdx in axes(opr.blkMat, 2), trgIdx in axes(opr.blkMat, 1)
+        # A block eats its buffer, so every block gets its own copy of the slice
+        innBlk = copy(view(act, (srcOff[srcIdx] + 1):srcOff[srcIdx + 1]))
+        view(outDat, (trgOff[trgIdx] + 1):trgOff[trgIdx + 1]) .+=
+            mulAct!(opr.blkMat[trgIdx, srcIdx], innBlk)
     end
     return outDat
 end
 
-Base.:*(opr::Union{AsyGlaCmpOprVac, SymGlaCmpOprVac},
-    innVec::AbstractVector{ComplexF64}) = opr.opr * innVec
+mulAct!(opr::Union{AsyGlaCmpOprVac, SymGlaCmpOprVac},
+    act::AbstractVector{ComplexF64}) = mulAct!(opr.opr, act)
 
 """
     *(opr::GlaCmpOprVac, fld::GlaFld)
@@ -615,30 +611,25 @@ end
 
 # Any accepted susceptibility, read into the flat degree of freedom layout
 function _cmpSus(cvol::GlaCmpVol, sus, useGpu::Bool=false)
-    susDof = _cmpSusCpu(cvol, sus)
-    return useGpu ? CuArray(susDof) : susDof
-end
-
-function _cmpSusCpu(cvol::GlaCmpVol, sus)
     celNum = sum(prod(reg.cel) for reg in regions(cvol))
-    sus isa Number && return _expSus(cvol, fill(ComplexF64(sus), celNum))
-    if sus isa AbstractVector{<:Number}
-        length(sus) == 3 * celNum && return Vector{ComplexF64}(Array(sus))
-        length(sus) == celNum && return _expSus(cvol, Vector{ComplexF64}(Array(sus)))
-        throw(ArgumentError("A susceptibility vector of length $(length(sus)) fits neither the $(3 * celNum) degrees of freedom nor the $celNum cells of this composite volume."))
-    end
-    if sus isa AbstractArray{<:Number, 3}
+    susDof = if sus isa Number
+        _expSus(cvol, fill(ComplexF64(sus), celNum))
+    elseif sus isa AbstractVector{<:Number}
+        length(sus) in (celNum, 3 * celNum) || throw(ArgumentError("A susceptibility vector of length $(length(sus)) fits neither the $(3 * celNum) degrees of freedom nor the $celNum cells of this composite volume."))
+        length(sus) == 3 * celNum ? Vector{ComplexF64}(Array(sus)) :
+            _expSus(cvol, Vector{ComplexF64}(Array(sus)))
+    elseif sus isa AbstractArray{<:Number, 3}
         if nregions(cvol) != 1
             throw(ArgumentError("A single susceptibility tensor only fits a composite volume of one region, and this one has $(nregions(cvol)). Pass one tensor per region as a vector."))
         end
-        return _expSus(cvol, _tenSus(cvol, [sus]))
+        _expSus(cvol, _tenSus(cvol, [sus]))
+    elseif sus isa AbstractVector
+        _expSus(cvol, _tenSus(cvol, sus))
+    else
+        # Anything else is a function of the cell center
+        _expSus(cvol, [ComplexF64(sus(pos)) for (pos, _, _) in coordinates(cvol)])
     end
-    sus isa AbstractVector && return _expSus(cvol, _tenSus(cvol, sus))
-    susCel = Vector{ComplexF64}(undef, celNum)
-    for (idx, (pos, _, _)) in enumerate(coordinates(cvol))
-        susCel[idx] = ComplexF64(sus(pos))
-    end
-    return _expSus(cvol, susCel)
+    return useGpu ? CuArray(susDof) : susDof
 end
 
 """
@@ -737,18 +728,6 @@ Construct the full Green function operator from a composite vacuum operator.
 GlaOpr(opr::GlaCmpOprVac, sus; slv::GlaSlv=BiCGStabSolver()) =
     GlaOpr(SctOpr(opr, sus; slv=slv))
 
-#= (I - XG₀) on the flat layout. The susceptibility is one scalar per cell
-repeated over the three components, so it multiplies entry by entry. In adjoint
-mode the vacuum operator is already the adjoint and the susceptibility is already
-conjugated, which leaves I - G₀' X̄. =#
-function _cmpSctMul(opr::InvSctOpr, innDat::AbstractVector{ComplexF64})
-    if length(innDat) != size(opr.oprVac, 2)
-        throw(ArgumentError("An input of length $(length(innDat)) does not fit this operator, which has $(size(opr.oprVac, 2)) degrees of freedom."))
-    end
-    isadjoint(opr) && return innDat .- (opr.oprVac * (opr.sus .* innDat))
-    return innDat .- (opr.sus .* (opr.oprVac * innDat))
-end
-
 #= The tiling a scattering operator reads its input on, checked against the
 field. A plain vacuum operator carries a single volume, which is a tiling of one
 region. =#
@@ -805,6 +784,13 @@ function Base.:*(opr::SctOpr, fld::GlaFld)
     cvol = _chkSctFld(opr.invSctOpr.oprVac, fld)
     return GlaFld(solve(opr.invSctOpr, fld.dat, opr.slv), cvol)
 end
+
+#= The full operator on a field is the vacuum operator after the solve, the two
+the other way around in adjoint mode. Both halves take a field, so the tiling
+rides along and the checks happen inside them. =#
+Base.:*(opr::GlaOpr, fld::GlaFld) = isadjoint(opr) ?
+    opr.sctOpr * (opr.sctOpr.invSctOpr.oprVac * fld) :
+    opr.sctOpr.invSctOpr.oprVac * (opr.sctOpr * fld)
 
 function Base.show(io::IO, opr::GlaCmpOprVac)
     numTrg, numSrc = size(opr.blkMat)
