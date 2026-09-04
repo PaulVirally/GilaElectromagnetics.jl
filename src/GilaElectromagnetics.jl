@@ -10,7 +10,7 @@ module GilaElectromagnetics
 
 include("glaTyp.jl")
 using .GilaTypes
-export GlaSlv, AbstractGlaOpr, AbstractGlaVacOpr
+export GlaSlv, AbstractGlaOpr, AbstractGlaVacOpr, dfltPrc
 
 include("glaVol.jl")
 using .GilaVolumes
@@ -27,7 +27,8 @@ export GlaKerOpt, CPUKerOpt, GPUKerOpt, GlaVacOprMem, egoOpr!, useCpu!, useGpu!
 
 include("glaSlv.jl")
 using .GilaSolvers
-export GMRESSolver, BiCGStabSolver, solve, ini!
+export GMRESSolver, BiCGStabSolver, MixPrcRfn, solve, ini!
+export MixedPrecisionRefinement
 
 include("glaOpr.jl")
 using .GilaOperators

@@ -8,7 +8,15 @@ module GilaTypes
 
 using LinearAlgebra
 
-export GlaSlv, AbstractGlaOpr, AbstractGlaVacOpr
+export GlaSlv, AbstractGlaOpr, AbstractGlaVacOpr, dfltPrc
+
+"""
+    dfltPrc
+
+Storage precision (`Float32`) used by every unparameterized constructor. Request
+another precision with the type parameter (e.g. `GlaOpr{Float64}(...)`).
+"""
+const dfltPrc = Float32
 
 """
     GlaSlv
@@ -19,15 +27,21 @@ must subtype this type.
 abstract type GlaSlv end
 
 """
-    AbstractGlaOpr
+    AbstractGlaOpr{T<:AbstractFloat}
 
 Abstract base type for all operators in the Gila package. All concrete operator types
-must subtype this type and implement the AbstractMatrix interface.
+must subtype this type and implement the AbstractMatrix interface. `T` is the real
+storage precision of the operator, so the operator acts on `Complex{T}` data.
 """
-abstract type AbstractGlaOpr <: AbstractMatrix{ComplexF64} end
+abstract type AbstractGlaOpr{T<:AbstractFloat} <: AbstractMatrix{Complex{T}} end
+
+#= Declared here, with the methods in GilaOperators, so the solvers can query
+the device and the adjoint state of an operator they are handed. =#
+function isgpu end
+function isadjoint end
 
 """
-    AbstractGlaVacOpr
+    AbstractGlaVacOpr{T}
 
 Abstract base type for the vacuum Green operators, the ones built from geometry
 alone with no material in them. Scattering operators are not vacuum operators;
@@ -40,7 +54,7 @@ subtype only overrides the ones where it differs.
 
 A subtype has to implement:
 - `Base.size(opr)`: The number of rows and columns of the operator as a matrix
-- `mulAct!(opr, act::AbstractVector{ComplexF64})`: The matrix-vector product on a
+- `mulAct!(opr, act::AbstractVector{Complex{T}})`: The matrix-vector product on a
   flat vector (mutating)
 - `adjoint!(opr)`: The adjoint, with the value semantics of its docstring
 - `arrTyp(opr)`: `Array` or `CuArray`, whichever the operator computes with
@@ -50,10 +64,10 @@ A subtype has to implement:
 - `isgpu(opr)`: Whether the operator computes on the GPU
 - `glaSze(opr)`: The target and source sizes in tensor form
 
-`isoverlappingoperator` defaults to `false` here, `eltype` to `ComplexF64` on
+`isoverlappingoperator` defaults to `false` here, `eltype` to `Complex{T}` on
 `AbstractGlaOpr`, and `slv` to a `BiCGStabSolver`. Override any of the three when
 it does not hold.
 """
-abstract type AbstractGlaVacOpr <: AbstractGlaOpr end
+abstract type AbstractGlaVacOpr{T} <: AbstractGlaOpr{T} end
 
 end # module

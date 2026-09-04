@@ -27,7 +27,7 @@ asym(mat::AbstractMatrix{<:Complex}) = (mat - adjoint(mat)) / 2im
     for volDim in volSizes
         # println("Testing volume size: ", volDim)
         volObj = GlaVol(volDim, sclArr, (0//1, 0//1, 0//1))
-        oprMem = GlaVacOprMem(CPUKerOpt(), volObj)
+        oprMem = GlaVacOprMem(CPUKerOpt{Float64}(), volObj)
 
         mat = dnsMat(oprMem)
         asmMat = asym(mat)

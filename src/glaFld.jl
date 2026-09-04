@@ -20,6 +20,7 @@ This module provides the field type that lives on a volume, plain or composite.
 module GilaFields
 
 using ..GilaVolumes
+using ..GilaTypes
 using LinearAlgebra
 using CUDA
 
@@ -37,7 +38,7 @@ function _dofOff(cvol::GlaCmpVol)
 end
 
 """
-    GlaFld
+    GlaFld{T}
 
 A field (in the physics sense, i.e., a vector at each point in space) over a volume, stored as a flat buffer.
 
@@ -57,23 +58,23 @@ The layout inside the buffer is the flat degree of freedom layout of
 an array of size `(reg.cel..., 3)`.
 
 # Fields
-- `dat::AbstractVector{ComplexF64}`: The flat buffer, a `Vector` on the CPU or a
-  `CuVector` on the GPU
+- `dat::AbstractVector{Complex{T}}`: The flat buffer, a `Vector` on the CPU or a
+  `CuVector` on the GPU, whose eltype fixes the storage precision `T`
 - `cvol::GlaCmpVol`: The composite volume the field lives on
 - `off::Vector{Int}`: Buffer offset of each region block, with the total length
   as a last entry
 """
-struct GlaFld{T<:AbstractVector{ComplexF64}} <: AbstractVector{ComplexF64}
-    dat::T
+struct GlaFld{T<:AbstractFloat, V<:AbstractVector{Complex{T}}} <: AbstractVector{Complex{T}}
+    dat::V
     cvol::GlaCmpVol
     off::Vector{Int}
 
-    function GlaFld(dat::T, cvol::GlaCmpVol) where T<:AbstractVector{ComplexF64}
+    function GlaFld(dat::AbstractVector{Complex{T}}, cvol::GlaCmpVol) where T<:AbstractFloat
         off = _dofOff(cvol)
         if length(dat) != off[end]
             throw(ArgumentError("A buffer of length $(length(dat)) does not fit a composite volume with $(off[end]) degrees of freedom."))
         end
-        return new{T}(dat, cvol, off)
+        return new{T, typeof(dat)}(dat, cvol, off)
     end
 end
 
@@ -126,9 +127,9 @@ Base.setindex!(fld::GlaFld, val, idx::Int) = setindex!(fld.dat, val, idx)
 Base.parent(fld::GlaFld) = fld.dat
 
 Base.similar(fld::GlaFld) = GlaFld(similar(fld.dat), fld.cvol)
-Base.similar(fld::GlaFld, ::Type{ComplexF64}) =
-    GlaFld(similar(fld.dat), fld.cvol)
-# Only ComplexF64 buffers can be wrapped, so any other eltype comes back raw
+Base.similar(fld::GlaFld, ::Type{T}) where T<:Complex{<:AbstractFloat} =
+    GlaFld(similar(fld.dat, T), fld.cvol)
+# Only a complex float buffer can be wrapped, so any other eltype comes back raw
 Base.similar(fld::GlaFld, ::Type{T}) where T = similar(fld.dat, T)
 Base.copy(fld::GlaFld) = GlaFld(copy(fld.dat), fld.cvol)
 
@@ -195,14 +196,14 @@ function Base.similar(bc::Broadcast.Broadcasted{Broadcast.ArrayStyle{GlaFld}},
     ::Type{T}) where T
     cvol = _bcCvl(bc)
     dat = similar(Broadcast.instantiate(_bcUnw(bc)), T)
-    T === ComplexF64 || return dat
+    T <: Complex{<:AbstractFloat} || return dat
     return GlaFld(dat, cvol)
 end
 
 function Base.copy(bc::Broadcast.Broadcasted{Broadcast.ArrayStyle{GlaFld}})
     cvol = _bcCvl(bc)
     dat = Broadcast.materialize(_bcUnw(bc))
-    eltype(dat) === ComplexF64 || return dat
+    eltype(dat) <: Complex{<:AbstractFloat} || return dat
     return GlaFld(dat, cvol)
 end
 
@@ -214,27 +215,30 @@ function Base.copyto!(fld::GlaFld,
 end
 
 """
+    zerofield(::Type{T}, cvol::GlaCmpVol; useGpu::Bool=false)
     zerofield(cvol::GlaCmpVol; useGpu::Bool=false)
 
-Allocate a zero field over a composite volume.
+Allocate a zero field of storage precision `T` (`dfltPrc` when unrequested) over a composite volume.
 
 # Arguments
 - `cvol::GlaCmpVol`: The composite volume
 - `useGpu::Bool=false`: Whether to put the buffer on the GPU
 
 # Returns
-- `GlaFld`: A field of zeros with one entry per degree of freedom
+- `GlaFld{T}`: A field of zeros with one entry per degree of freedom
 """
-function zerofield(cvol::GlaCmpVol; useGpu::Bool=false)
+function zerofield(::Type{T}, cvol::GlaCmpVol; useGpu::Bool=false) where T<:AbstractFloat
     len = sum(3 * prod(reg.cel) for reg in regions(cvol))
-    dat = useGpu ? CUDA.zeros(ComplexF64, len) : zeros(ComplexF64, len)
+    dat = useGpu ? CUDA.zeros(Complex{T}, len) : zeros(Complex{T}, len)
     return GlaFld(dat, cvol)
 end
+zerofield(cvol::GlaCmpVol; useGpu::Bool=false) = zerofield(dfltPrc, cvol; useGpu=useGpu)
 
 """
+    zerofield(::Type{T}, vol::GlaVol; useGpu::Bool=false)
     zerofield(vol::GlaVol; useGpu::Bool=false)
 
-Allocate a zero field over a plain volume.
+Allocate a zero field of storage precision `T` (`dfltPrc` when unrequested) over a plain volume.
 
 The volume is taken as a tiling of one region, so the result is an ordinary
 `GlaFld` and every operation defined on fields applies to it.
@@ -246,7 +250,8 @@ The volume is taken as a tiling of one region, so the result is an ordinary
 # Returns
 - `GlaFld`: A field of zeros with one entry per degree of freedom
 """
-zerofield(vol::GlaVol; useGpu::Bool=false) = zerofield(GlaCmpVol(vol); useGpu=useGpu)
+zerofield(::Type{T}, vol::GlaVol; useGpu::Bool=false) where T<:AbstractFloat = zerofield(T, GlaCmpVol(vol); useGpu=useGpu)
+zerofield(vol::GlaVol; useGpu::Bool=false) = zerofield(dfltPrc, GlaCmpVol(vol); useGpu=useGpu)
 
 """
     regionview(fld::GlaFld, idx::Integer)
@@ -308,7 +313,7 @@ always built on the CPU and copied to the buffer at the end.
 - `GlaFld`: The field, filled
 """
 function discretize!(fld::GlaFld, f)
-    buf = Vector{ComplexF64}(undef, length(fld))
+    buf = Vector{eltype(fld)}(undef, length(fld))
     for (regIdx, reg) in enumerate(regions(fld.cvol))
         celNum = prod(reg.cel)
         sclFac = sqrt(Float64(prod(reg.scl)))
@@ -343,7 +348,7 @@ The returned array holds densities, not stored coefficients.
 - `scl::NTuple{3,Rational}=finest(fld.cvol)`: The uniform cell size
 
 # Returns
-- `Array{ComplexF64,4}` of size `(cel..., 3)` with `cel` the uniform cell counts
+- `Array{Complex{T},4}` of size `(cel..., 3)` with `cel` the uniform cell counts, `T` the precision of `fld`
 
 # Throws
 - `ArgumentError`: If `scl` is coarser than or incommensurate with the cell size
@@ -363,7 +368,7 @@ function regrid(fld::GlaFld, scl::NTuple{3,Rational}=finest(fld.cvol))
     if any(.!isinteger.(celNum))
         throw(ArgumentError("A resampling scale of $(scl) does not evenly divide the bounding box, which spans $(Tuple(boxLwr)) to $(Tuple(boxUpr)) for $(Tuple(celNum)) cells."))
     end
-    out = zeros(ComplexF64, ntuple(dir -> Int(celNum[dir]), 3)..., 3)
+    out = zeros(eltype(fld), ntuple(dir -> Int(celNum[dir]), 3)..., 3)
     dat = isa(fld.dat, Array) ? fld.dat : Array(fld.dat)
     for (regIdx, reg) in enumerate(regs)
         rep = ntuple(dir -> Int(reg.scl[dir] // scl[dir]), 3)

@@ -10,7 +10,8 @@ const stdOrg = (0//1, 0//1, 0//1)
 const extOrg = (1//1, 1//1, 1//1)
 
 mkVol(dim; org=stdOrg, scl=stdScl) = GlaVol(dim, scl, org)
-mkSus(dim; val=0.5+0.05im) = fill(ComplexF64(val), dim...)
+mkSus(::Type{T}, dim; val=0.5+0.05im) where T<:AbstractFloat = fill(Complex{T}(val), dim...)
+mkSus(dim; val=0.5+0.05im) = mkSus(Float64, dim; val=val)
 mkVac(dim) = zeros(ComplexF64, dim...)
 
 # ---------------------------------------------------------------------------
@@ -21,13 +22,13 @@ const _sus4  = mkSus((4,4,4))
 const _vac4  = mkVac((4,4,4))
 const _trgV4 = mkVol((4,4,4); org=extOrg)
 
-const _selfMem4 = GlaVacOprMem(CPUKerOpt(), _vol4)
-const _extMem4  = GlaVacOprMem(CPUKerOpt(), _trgV4, _vol4)
+const _selfMem4 = GlaVacOprMem(CPUKerOpt{Float64}(), _vol4)
+const _extMem4  = GlaVacOprMem(CPUKerOpt{Float64}(), _trgV4, _vol4)
 
 # Tiny (2,2,2) operator for tests that loop over many mul! calls (linAlg, extOps)
 const _vol2s   = mkVol((2,2,2))
 const _sus2s   = mkSus((2,2,2))
-const _mem2s   = GlaVacOprMem(CPUKerOpt(), _vol2s)
+const _mem2s   = GlaVacOprMem(CPUKerOpt{Float64}(), _vol2s)
 _g0s()     = GlaOprVac(_mem2s)
 _asys()    = AsyGlaOprVac(_g0s())
 _invScts() = InvSctOpr(_g0s(), _sus2s)
@@ -46,24 +47,25 @@ _asy()    = AsyGlaOprVac(_g0())
 _sym()    = SymGlaOprVac(_g0())
 
 function dnsMat(opr::AbstractGlaOpr)
-    n, m = size(opr, 2), size(opr, 2)
-    rows = size(opr, 1)
-    mat = zeros(ComplexF64, rows, n)
+    T = eltype(opr)
+    n = size(opr, 2)
+    mat = zeros(T, size(opr, 1), n)
     for i in 1:n
-        v = zeros(ComplexF64, n)
-        v[i] = one(ComplexF64)
+        v = zeros(T, n)
+        v[i] = one(T)
         mat[:, i] .= opr * v
     end
     return mat
 end
 
 function dnsMat(mem::GlaVacOprMem)
+    T = eltype(first(mem.egoFur))
     n = prod(mem.srcVol.cel) * 3
     m = prod(mem.trgVol.cel) * 3
-    mat = zeros(ComplexF64, m, n)
+    mat = zeros(T, m, n)
     for i in 1:n
-        v = zeros(ComplexF64, mem.srcVol.cel..., 3)
-        v[i] = one(ComplexF64)
+        v = zeros(T, mem.srcVol.cel..., 3)
+        v[i] = one(T)
         mat[:, i] .= vec(egoOpr!(mem, v))
     end
     return mat

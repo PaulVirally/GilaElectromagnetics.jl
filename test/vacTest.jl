@@ -4,14 +4,14 @@
 
 # Reuse _mem2s from tstHlp.jl for (2,2,2); build external (2,2,2) separately
 const _vacMem2    = _mem2s   # alias — no extra integration
-const _vacExtMem2 = GlaVacOprMem(CPUKerOpt(), mkVol((2,2,2); org=extOrg), mkVol((2,2,2)))
+const _vacExtMem2 = GlaVacOprMem(CPUKerOpt{Float64}(), mkVol((2,2,2); org=extOrg), mkVol((2,2,2)))
 const _vacDims    = [(2,2,2), (4,4,4)]
 
 # Return a fresh egoFur-based copy for given dim (cheap — no integration)
 function _freshVacMem(dim)
     v   = mkVol(dim)
     mem = dim == (4,4,4) ? _selfMem4 : _mem2s
-    GlaVacOprMem(CPUKerOpt(), mem.egoFur, v, v)
+    GlaVacOprMem(CPUKerOpt{Float64}(), mem.egoFur, v, v)
 end
 
 @testset "GlaVacOprMem self" begin
@@ -39,7 +39,7 @@ end
 
 @testset "GlaVacOprMem precomputed-egoFur constructor" begin
     vol  = mkVol((4,4,4))
-    mem2 = GlaVacOprMem(CPUKerOpt(), _selfMem4.egoFur, vol, vol)
+    mem2 = GlaVacOprMem(CPUKerOpt{Float64}(), _selfMem4.egoFur, vol, vol)
     v    = rand(ComplexF64, vol.cel..., 3)
     @test egoOpr!(_freshVacMem((4,4,4)), deepcopy(v)) ≈ egoOpr!(mem2, deepcopy(v))
 end
@@ -73,14 +73,14 @@ end
     srcVol = mkVol((4,4,4))
     trgVol = mkVol((4,4,4); org=extOrg)
     v      = rand(ComplexF64, srcVol.cel..., 3)
-    mem2   = GlaVacOprMem(CPUKerOpt(), _extMem4.egoFur, trgVol, srcVol)
+    mem2   = GlaVacOprMem(CPUKerOpt{Float64}(), _extMem4.egoFur, trgVol, srcVol)
     out  = egoOpr!(mem2, deepcopy(v))
     @test size(out) == (trgVol.cel..., 3)
 end
 
 @testset "Integration convergence" begin
     function wekIntChk(scl, glOrd)
-        opts = CPUKerOpt()
+        opts = CPUKerOpt{Float64}()
         ws1 = GilaElectromagnetics.GilaVacuum.wekS(scl, GilaElectromagnetics.GilaVacuum.gauQud(glOrd), opts)
         we1 = GilaElectromagnetics.GilaVacuum.wekE(scl, GilaElectromagnetics.GilaVacuum.gauQud(glOrd), opts)
         wv1 = GilaElectromagnetics.GilaVacuum.wekV(scl, GilaElectromagnetics.GilaVacuum.gauQud(glOrd), opts)
@@ -124,8 +124,8 @@ end
         @test desMem.phzInf == mem.phzInf
         # Action round-trip (using egoFur copies — no reintegration)
         v    = rand(ComplexF64, vol.cel..., 3)
-        memA = GlaVacOprMem(CPUKerOpt(), mem.egoFur, vol, vol)
-        memB = GlaVacOprMem(CPUKerOpt(), desMem.egoFur, vol, vol)
+        memA = GlaVacOprMem(CPUKerOpt{Float64}(), mem.egoFur, vol, vol)
+        memB = GlaVacOprMem(CPUKerOpt{Float64}(), desMem.egoFur, vol, vol)
         @test egoOpr!(memA, deepcopy(v)) ≈ egoOpr!(memB, deepcopy(v))
     finally
         isfile(tmpFil) && rm(tmpFil)
@@ -136,10 +136,10 @@ end
     if CUDA.functional()
         for (dim, memCpu) in (((2,2,2), _vacMem2), ((4,4,4), _selfMem4))
             vol    = mkVol(dim)
-            memGpu = GlaVacOprMem(GPUKerOpt(), vol)
+            memGpu = GlaVacOprMem(GPUKerOpt{Float64}(), vol)
             vCpu   = rand(ComplexF64, vol.cel..., 3)
             vGpu   = CuArray(vCpu)
-            outCpu = egoOpr!(GlaVacOprMem(CPUKerOpt(), memCpu.egoFur, vol, vol), deepcopy(vCpu))
+            outCpu = egoOpr!(GlaVacOprMem(CPUKerOpt{Float64}(), memCpu.egoFur, vol, vol), deepcopy(vCpu))
             outGpu = egoOpr!(memGpu, deepcopy(vGpu))
             @test maximum(abs.(outCpu .- Array(outGpu))) < 1e-6
         end
@@ -147,12 +147,12 @@ end
         vol    = mkVol((4,4,4))
         mem    = _selfMem4
         v      = rand(ComplexF64, vol.cel..., 3)
-        outCpu = egoOpr!(GlaVacOprMem(CPUKerOpt(), mem.egoFur, vol, vol), deepcopy(v))
-        tmpMem = GlaVacOprMem(CPUKerOpt(), mem.egoFur, vol, vol)
+        outCpu = egoOpr!(GlaVacOprMem(CPUKerOpt{Float64}(), mem.egoFur, vol, vol), deepcopy(v))
+        tmpMem = GlaVacOprMem(CPUKerOpt{Float64}(), mem.egoFur, vol, vol)
         useGpu!(tmpMem)
         @test tmpMem.cmpInf isa GPUKerOpt
         useCpu!(tmpMem)
         @test tmpMem.cmpInf isa CPUKerOpt
-        @test egoOpr!(GlaVacOprMem(CPUKerOpt(), mem.egoFur, vol, vol), deepcopy(v)) ≈ outCpu
+        @test egoOpr!(GlaVacOprMem(CPUKerOpt{Float64}(), mem.egoFur, vol, vol), deepcopy(v)) ≈ outCpu
     end
 end

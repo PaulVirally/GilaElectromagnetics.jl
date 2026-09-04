@@ -23,7 +23,7 @@
     @test eltype(s4) == Float32
 
     if CUDA.functional()
-        gOpr = GlaOprVac(_vol2s; useGpu=true)
+        gOpr = GlaOprVac{Float64}(_vol2s; useGpu=true)
         @test similar(gOpr) isa CuArray
         @test similar(gOpr, Float32) isa CuArray{Float32}
         @test similar(gOpr, (5,)) isa CuArray
@@ -72,11 +72,11 @@ to survive it, in the answer and in the state it leaves behind. =#
     lnaScl = (1//16, 1//16, 1//16)
     lnaOrg = (0//1, 0//1, 0//1)
     # The masked union route, a block matrix, and a composite operator
-    mskOpr = GlaOprVac(GlaVol((2,4,4), lnaScl, lnaOrg),
+    mskOpr = GlaOprVac{Float64}(GlaVol((2,4,4), lnaScl, lnaOrg),
         GlaVol((2,2,2), lnaScl, (2//16, 0//1, 0//1)))
     mulOpr = MulRegGlaOprVac(reshape(
         [GlaOprVac(deepcopy(_selfMem4)), GlaOprVac(deepcopy(_extMem4))], 2, 1))
-    cmpOpr = GlaCmpOprVac(GlaCmpVol([GlaVol((2,2,2), lnaScl, lnaOrg),
+    cmpOpr = GlaCmpOprVac{Float64}(GlaCmpVol([GlaVol((2,2,2), lnaScl, lnaOrg),
         GlaVol((2,2,2), lnaScl, (1//8, 0//1, 0//1))]))
     for opr in (mskOpr, mulOpr, cmpOpr)
         dns = dnsMat(opr)

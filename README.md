@@ -30,6 +30,18 @@ package manager, installing GilaElectromagnetics can be done as follows:
 (@v1.10) pkg> add GilaElectromagnetics
 ```
 
+## Precision
+
+Operators store `Complex{T}` data, `T<:AbstractFloat`. The default is `Float32`
+(`GlaOpr(vol, vol, sus)`); request `Float64` with the type parameter
+(`GlaOpr{Float64}(vol, vol, sus)`). The Green function is always generated in
+`Float64` and rounded once into whichever precision you asked for, so `Float32`
+storage costs no accuracy beyond that single rounding. Arithmetic between an
+operator and a mismatched-precision vector throws rather than silently
+converting. For iterative solves that need `Float64` accuracy at `Float32`
+matvec cost, use `MixPrcRfn`: `GlaOpr{Float64}(vol, vol, sus;
+slv=MixPrcRfn(Float32))`.
+
 ## Showcase
 
 The following figures demonstrate the capabilities of GilaElectromagnetics to

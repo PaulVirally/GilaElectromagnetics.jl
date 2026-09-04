@@ -5,17 +5,17 @@ using Test, GilaElectromagnetics, CUDA
     volTrg = GlaVol((8, 8, 8), (1//32, 1//32, 1//32), (1//1, 1//1, 1//1)) # Non-overlapping
 
     # Test self Green function
-    oprMemSelf = GlaVacOprMem(CPUKerOpt(), volSrc)
+    oprMemSelf = GlaVacOprMem(CPUKerOpt{Float64}(), volSrc)
     @test all(isfinite.(oprMemSelf.egoFur[1]))
 
     # Test external Green function
-    oprMemExt = GlaVacOprMem(CPUKerOpt(), volTrg, volSrc)
+    oprMemExt = GlaVacOprMem(CPUKerOpt{Float64}(), volTrg, volSrc)
     @test all(isfinite.(oprMemExt.egoFur[1]))
 
     # Test overlapping volumes (should throw error)
     volOverlap = GlaVol((8, 8, 8), (1//32, 1//32, 1//32), (1//64, 0//1, 0//1))
-    @test_throws ArgumentError GlaVacOprMem(CPUKerOpt(), volOverlap, volSrc)
+    @test_throws ArgumentError GlaVacOprMem(CPUKerOpt{Float64}(), volOverlap, volSrc)
 
     # Test that an explicitly created self Green function operator does not throw
-    @test all(isfinite.(GlaVacOprMem(CPUKerOpt(), volSrc).egoFur[1]))
+    @test all(isfinite.(GlaVacOprMem(CPUKerOpt{Float64}(), volSrc).egoFur[1]))
 end

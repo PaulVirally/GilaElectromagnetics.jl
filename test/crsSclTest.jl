@@ -38,12 +38,12 @@ relFro(a, b) = norm(a - b) / norm(b)
 # once here rather than inside the testsets that use them
 const _xsAgr = _xsAgrMap((2,2,2))
 const _xsInj = collect(transpose(_xsAgr))
-const _xsOprCrsTrg = GlaOprVac(_xsVolCrs, _xsVolFin)
-const _xsOprFinTrg = GlaOprVac(_xsVolFin, _xsVolCrs)
+const _xsOprCrsTrg = GlaOprVac{Float64}(_xsVolCrs, _xsVolFin)
+const _xsOprFinTrg = GlaOprVac{Float64}(_xsVolFin, _xsVolCrs)
 const _xsMatCrsTrg = dnsMat(_xsOprCrsTrg)
 const _xsMatFinTrg = dnsMat(_xsOprFinTrg)
-const _xsRefCrsTrg = dnsMat(GlaOprVac(_xsVolRef, _xsVolFin))
-const _xsRefFinTrg = dnsMat(GlaOprVac(_xsVolFin, _xsVolRef))
+const _xsRefCrsTrg = dnsMat(GlaOprVac{Float64}(_xsVolRef, _xsVolFin))
+const _xsRefFinTrg = dnsMat(GlaOprVac{Float64}(_xsVolFin, _xsVolRef))
 
 @testset "Cross-scale separated, coarse target" begin
     # srcDiv > 1 partitions the input, so this orientation runs genPrt!
@@ -91,7 +91,7 @@ end
 @testset "Same-scale touching goes external" begin
     volSrc = GlaVol((4,4,4), _xsSclFin, stdOrg)
     volTrg = GlaVol((4,4,4), _xsSclFin, (4//32, 0//1, 0//1))
-    opr = GlaOprVac(volTrg, volSrc)
+    opr = GlaOprVac{Float64}(volTrg, volSrc)
     # face contact is not overlap: the external path has contact corrections
     @test isexternaloperator(opr)
     @test !isoverlappingoperator(opr)
@@ -103,7 +103,7 @@ end
     # the route GlaOprVac took for touching volumes before the strict check
     volUni = uniVol(volTrg, volSrc)
     @test volUni.cel == (8, 4, 4)
-    oprUni = GlaOprVac(volUni)
+    oprUni = GlaOprVac{Float64}(volUni)
     innMsk = mskRng(volSrc, volUni)
     outMsk = mskRng(volTrg, volUni)
     matUni = zeros(ComplexF64, 192, 192)
@@ -122,8 +122,8 @@ end
     # the per-partition cells sum to 3 and the branching algorithm would return
     # finite but wrong values
     volBad = GlaVol((2,2,2), _xsSclFin, _xsSep)
-    @test_throws ArgumentError GlaOprVac(_xsVolCrs, volBad)
-    @test_throws ArgumentError GlaVacOprMem(CPUKerOpt(), _xsVolCrs, volBad)
+    @test_throws ArgumentError GlaOprVac{Float64}(_xsVolCrs, volBad)
+    @test_throws ArgumentError GlaVacOprMem(CPUKerOpt{Float64}(), _xsVolCrs, volBad)
     # doubling the fine cell count in every direction fixes the parity
     @test GilaElectromagnetics.GilaVolumes.genEveExtInf(_xsVolCrs, _xsVolFin) isa
         GilaElectromagnetics.GilaVolumes.GlaExtInf
@@ -134,12 +134,12 @@ end
     the accuracy of the cross-scale path rather than the machine precision of
     the same-scale one, which is why the composite layer prefers the sandwich. =#
     volTch = GlaVol((4,4,4), _xsSclFin, (4//32, 0//1, 0//1))
-    opr = GlaOprVac(_xsVolCrs, volTch)
+    opr = GlaOprVac{Float64}(_xsVolCrs, volTch)
     @test isexternaloperator(opr)
     matTch = dnsMat(opr)
     @test all(isfinite, matTch)
     # the coarse volume remeshed at the fine scale gives the exact answer
-    @test relFro(matTch, (_xsAgr ./ 8) * dnsMat(GlaOprVac(_xsVolRef, volTch))) < 1e-4
+    @test relFro(matTch, (_xsAgr ./ 8) * dnsMat(GlaOprVac{Float64}(_xsVolRef, volTch))) < 1e-4
 end
 
 @testset "Cross-scale anisotropic reciprocity" begin
@@ -150,8 +150,8 @@ end
     Volume-weighted reciprocity catches it at order one. =#
     volAni = GlaVol((4,4,4), (1//64, 1//32, 1//32), stdOrg)
     volIso = GlaVol((4,4,4), _xsSclFin, (5//32, 0//1, 0//1))
-    matAI = dnsMat(GlaOprVac(volAni, volIso; prxWrn=false))
-    matIA = dnsMat(GlaOprVac(volIso, volAni; prxWrn=false))
+    matAI = dnsMat(GlaOprVac{Float64}(volAni, volIso; prxWrn=false))
+    matIA = dnsMat(GlaOprVac{Float64}(volIso, volAni; prxWrn=false))
     volA, volI = prod(volAni.scl), prod(volIso.scl)
     @test relFro(volA .* matAI, transpose(volI .* matIA)) < 1e-5
 end

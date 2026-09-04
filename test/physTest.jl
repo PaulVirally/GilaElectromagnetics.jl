@@ -69,7 +69,7 @@ end
     @test_broken begin
         ovrOrg = ntuple(i -> Rational(4) * stdScl[i] // 2, 3)
         volOvr = GlaVol((4,4,4), stdScl, ovrOrg)
-        gOvr   = GlaOprVac(volOvr, _vol4)
+        gOvr   = GlaOprVac{Float64}(volOvr, _vol4)
         mat = asymMat(dnsMat(gOvr))
         nrm = opnorm(mat)
         minimum(eigvals(Hermitian((mat + mat') / 2))) >= -1e-9 * nrm
@@ -77,7 +77,7 @@ end
 end
 
 @testset "Asym(G₀) PSD — MulRegGlaOprVac" begin
-    op = MulRegGlaOprVac([_vol4, _trgV4], [_vol4, _trgV4])
+    op = MulRegGlaOprVac{Float64}([_vol4, _trgV4], [_vol4, _trgV4])
     checkPsd(asymMat(dnsMat(op)), "MulRegGlaOprVac 2 regions")
 end
 
@@ -108,7 +108,7 @@ end
     # which would require index 0 (out of bounds for dipLoc=[2,2,2]).
     for volDim in [(6,6,6)]
         vol    = mkVol(volDim)
-        oprMem = GlaVacOprMem(CPUKerOpt(), vol)
+        oprMem = GlaVacOprMem(CPUKerOpt{Float64}(), vol)
         dipVec = zeros(ComplexF64, 3)
         relErrDir = zeros(Float64, 3)
         anaOut = Array{ComplexF64}(undef, 3 * prod(vol.cel))

@@ -33,23 +33,23 @@ end
 cross-scale blocks run the contact quadrature and are a fine mesh block. =#
 const serCvl = refine(GlaCmpVol(GlaVol((4, 2, 2), serScl16, serOrg0)),
     ((-1//16, 0//1, 0//1), (1//8, 1//8, 1//8)); factor=(2, 1, 1))
-const serOpr = GlaCmpOprVac(serCvl)
+const serOpr = GlaCmpOprVac{Float64}(serCvl)
 const serFarVol = GlaVol((2, 2, 2), serScl16, (1//1, 0//1, 0//1))
 #= Two volumes sharing interior, so construction folds them into their union and
 the masks become the only record of the sub-volumes. =#
 const serOvrA = GlaVol((2, 2, 2), serScl16, serOrg0)
 const serOvrB = GlaVol((2, 2, 2), serScl16, (1//16, 1//16, 1//16))
-serFld() = discretize!(zerofield(serCvl), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+serFld() = discretize!(zerofield(Float64, serCvl), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
 
 @testset "Vacuum operator serialization" begin
     serChk(_g0s())
     serChk(_gExt())
     # A block matrix, whose blocks go through the generic serializer
-    serChk(MulRegGlaOprVac(reshape([_g0(), GlaOprVac(_vol4, _trgV4)], 1, 2)))
+    serChk(MulRegGlaOprVac(reshape([_g0(), GlaOprVac{Float64}(_vol4, _trgV4)], 1, 2)))
 end
 
 @testset "Overlapping operator serialization" begin
-    ovrOpr = GlaOprVac(serOvrA, serOvrB)
+    ovrOpr = GlaOprVac{Float64}(serOvrA, serOvrB)
     @test isoverlappingoperator(ovrOpr)
     # Without the masks the copy reads back as the self operator on the union
     @test size(serRnd(ovrOpr)) == size(ovrOpr)
@@ -69,7 +69,7 @@ end
     @test norm((desOpr * serFld()).dat - (serOpr * serFld()).dat) <
         1e-12 * norm((serOpr * serFld()).dat)
     # Two bodies, so the block matrix is not square
-    serChk(GlaCmpOprVac(serCvl, GlaCmpVol(serFarVol)))
+    serChk(GlaCmpOprVac{Float64}(serCvl, GlaCmpVol(serFarVol)))
 end
 
 #= The parts hold the transformed Fourier coefficients of their blocks, so the

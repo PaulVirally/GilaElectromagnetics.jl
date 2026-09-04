@@ -5,21 +5,20 @@ The following is the exhaustive list of the API available to users, accompanied 
 ## Module Index
 
 ```@index
-Modules = [GilaElectromagnetics]
+Modules = [GilaElectromagnetics, GilaElectromagnetics.GilaTypes, GilaElectromagnetics.GilaVolumes, GilaElectromagnetics.GilaFields, GilaElectromagnetics.GilaVacuum, GilaElectromagnetics.GilaSolvers, GilaElectromagnetics.GilaOperators]
 Order   = [:constant, :type, :function, :macro]
 ```
 ## Detailed API
 
-!!! note "Union of complex types"
-    In the following type and function list, there will be mentions of the type `AbstractArray{T}`. This `T` is described as :
-
-    ```julia
-    T<:Union{ComplexF64,ComplexF32}
-    ```
-    
-    For every function signature that includes `T`, it is specified as such.
+!!! note "Storage precision"
+    Operators and fields carry a real type parameter `T<:AbstractFloat` (`Float32`
+    or `Float64`); the data itself is `Complex{T}`. Unparameterized constructors
+    default to `T = dfltPrc` (`Float32`); request another precision with the type
+    parameter, e.g. `GlaOprVac{Float64}(vol)`. See [Precision](usage.md#precision)
+    for details.
 
 ```@autodocs
-Modules = [GilaElectromagnetics]
+Modules = [GilaElectromagnetics, GilaElectromagnetics.GilaTypes, GilaElectromagnetics.GilaVolumes, GilaElectromagnetics.GilaFields, GilaElectromagnetics.GilaVacuum, GilaElectromagnetics.GilaSolvers, GilaElectromagnetics.GilaOperators]
 Order   = [:constant, :type, :function, :macro]
+Private = false
 ```

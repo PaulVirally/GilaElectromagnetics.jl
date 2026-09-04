@@ -2,7 +2,7 @@ using CUDA
 using KernelAbstractions
 
 """
-    egoOpr!(egoMem::GlaVacOprMem, actVec::AbstractArray{ComplexF64})::AbstractArray{ComplexF64}
+    egoOpr!(egoMem::GlaVacOprMem, actVec::AbstractArray{<:Complex})::AbstractArray{<:Complex}
 
 Applies the electric Green function operator to a polarization current density vector, returning the resulting electric field. The input vector is modified in-place to reduce memory allocation.
 
@@ -10,12 +10,12 @@ Applies the electric Green function operator to a polarization current density v
 
 # Arguments
 - `egoMem::GlaVacOprMem`: Memory structure containing the Green function operator data and computational options
-- `actVec::AbstractArray{ComplexF64}`: Input polarization current density vector. Must be a 4D array with shape (srcCelX, srcCelY, srcCelZ, 3) where the first three dimensions match the source volume dimensions and the last dimension represents the vector components
+- `actVec::AbstractArray{<:Complex}`: Input polarization current density vector, of the memory's storage eltype `Complex{T}`. Must be a 4D array with shape (srcCelX, srcCelY, srcCelZ, 3) where the first three dimensions match the source volume dimensions and the last dimension represents the vector components
 
 # Returns
-- `AbstractArray{ComplexF64}`: The resulting electric field vector with shape (trgCelX, trgCelY, trgCelZ, 3)
+- `AbstractArray{<:Complex}`: The resulting electric field vector with shape (trgCelX, trgCelY, trgCelZ, 3)
 """
-function egoOpr!(egoMem::GlaVacOprMem, actVec::AbstractArray{ComplexF64})
+function egoOpr!(egoMem::GlaVacOprMem, actVec::AbstractArray{<:Complex})
     # srcCel counts the cells of one source partition, so the full input size is
     # the per-partition count times the number of partitions in each direction
     srcCelTot = egoMem.mixInf.srcCel .* egoMem.mixInf.srcDiv
@@ -28,7 +28,7 @@ end
 # Support functions for operator action
 include("glaVacActSup.jl")
 
-function egoBrn!(egoMem::GlaVacOprMem, lvl::Integer, bId::Integer, actVec::AbstractArray{ComplexF64}, cmpInf::GlaKerOpt)
+function egoBrn!(egoMem::GlaVacOprMem, lvl::Integer, bId::Integer, actVec::AbstractArray{<:Complex}, cmpInf::GlaKerOpt)
     # generate branch pair to initiate operator
     # size of circulant vector
     brnSze = div.(egoMem.mixInf.trgCel .+ egoMem.mixInf.srcCel, 2)
@@ -136,7 +136,7 @@ function egoBrn!(egoMem::GlaVacOprMem, lvl::Integer, bId::Integer, actVec::Abstr
     return retVec
 end
 
-function fwdFFT!(egoMem::GlaVacOprMem, lvl::Int, actVec::AbstractArray{ComplexF64}, cmpInf::GlaKerOpt)
+function fwdFFT!(egoMem::GlaVacOprMem, lvl::Int, actVec::AbstractArray{<:Complex}, cmpInf::GlaKerOpt)
     # forward FFT
     if isadjoint(egoMem)
         egoMem.adjFftPlnFwd[lvl] * actVec
@@ -147,7 +147,7 @@ function fwdFFT!(egoMem::GlaVacOprMem, lvl::Int, actVec::AbstractArray{ComplexF6
     sncGpu(cmpInf)
 end
 
-function invFFT!(egoMem::GlaVacOprMem, lvl::Int, actVec::AbstractArray{ComplexF64}, cmpInf::GlaKerOpt)
+function invFFT!(egoMem::GlaVacOprMem, lvl::Int, actVec::AbstractArray{<:Complex}, cmpInf::GlaKerOpt)
     # inverse FFT
     if isadjoint(egoMem)
         egoMem.adjFftPlnRev[lvl] * actVec
@@ -158,7 +158,7 @@ function invFFT!(egoMem::GlaVacOprMem, lvl::Int, actVec::AbstractArray{ComplexF6
     sncGpu(cmpInf)
 end
 
-function egoBrnExe!(egoMem::GlaVacOprMem, prgVecEve::AbstractArray{ComplexF64}, prgVecOdd::AbstractArray{ComplexF64}, lvl::Int, bId::Int, cmpInf::CPUKerOpt)
+function egoBrnExe!(egoMem::GlaVacOprMem, prgVecEve::AbstractArray{<:Complex}, prgVecOdd::AbstractArray{<:Complex}, lvl::Int, bId::Int, cmpInf::CPUKerOpt)
     # Branches run sequentially: concurrent execution of the same FFTW plan from
     # multiple Julia tasks causes segfaults due to shared internal scratch space.
     eveVec = egoBrn!(egoMem, lvl + 1, bId, prgVecEve, cmpInf)
@@ -166,7 +166,7 @@ function egoBrnExe!(egoMem::GlaVacOprMem, prgVecEve::AbstractArray{ComplexF64}, 
     return eveVec, oddVec
 end
 
-function egoBrnExe!(egoMem::GlaVacOprMem, prgVecEve::AbstractArray{ComplexF64}, prgVecOdd::AbstractArray{ComplexF64}, lvl::Int, bId::Int, cmpInf::GPUKerOpt)
+function egoBrnExe!(egoMem::GlaVacOprMem, prgVecEve::AbstractArray{<:Complex}, prgVecOdd::AbstractArray{<:Complex}, lvl::Int, bId::Int, cmpInf::GPUKerOpt)
     # !async causes errors + no speed up!
     # even branch
     eveVec = egoBrn!(egoMem, lvl + 1, bId, prgVecEve, cmpInf)
@@ -179,7 +179,7 @@ function egoBrnExe!(egoMem::GlaVacOprMem, prgVecEve::AbstractArray{ComplexF64}, 
     return eveVec, oddVec
 end
 
-function mulBrn!(mixInf::GlaExtInf, bId::Integer, prdVec::AbstractArray{ComplexF64, 4}, vecMod::AbstractArray{ComplexF64, 4}, orgVec::AbstractArray{ComplexF64, 4}, cmpInf::GlaKerOpt)
+function mulBrn!(mixInf::GlaExtInf, bId::Integer, prdVec::AbstractArray{<:Complex, 4}, vecMod::AbstractArray{<:Complex, 4}, orgVec::AbstractArray{<:Complex, 4}, cmpInf::GlaKerOpt)
 	# size of branch
 	brnSze = (mixInf.trgCel .+ mixInf.srcCel) .÷ 2
 	# unique information of Green function
@@ -277,7 +277,7 @@ function mulBrn!(mixInf::GlaExtInf, bId::Integer, prdVec::AbstractArray{ComplexF
     memCln!(dimInf, dirSym)
 	return nothing
 end
-@kernel function mulKer!(prdVec::AbstractArray{ComplexF64, 4}, vecMod::AbstractArray{ComplexF64, 4}, orgVec::AbstractArray{ComplexF64, 4}, dirSym::NTuple{3, Float32})
+@kernel function mulKer!(prdVec::AbstractArray{<:Complex, 4}, vecMod::AbstractArray{<:Complex, 4}, orgVec::AbstractArray{<:Complex, 4}, dirSym::NTuple{3, Float32})
     # Linear index
     itr = @index(Global)
     

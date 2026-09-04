@@ -75,6 +75,99 @@ for the [`GlaOprMem`](library.md#GilaElectromagnetics.GlaOprMem). It is *not* a
 matrix, but it can be used as a linear operator, i.e., you can multiply a vector
 by it.
 
+## [Precision](@id precision)
+
+Every operator and field carries a real type parameter `T<:AbstractFloat`
+(`Float32` or `Float64`); the underlying data is `Complex{T}`. Unparameterized
+constructors default to `T = dfltPrc`, which is `Float32`:
+
+```julia
+CPUKerOpt()             # CPUKerOpt{Float32}
+GlaOprVac(vol)           # GlaOprVac{Float32}
+GlaOpr(vol, vol, sus)    # GlaOpr{Float32}, sus converted to Complex{Float32}
+zerofield(cvol)          # GlaFld{Float32}
+```
+
+`Float64` is requested with the type parameter, not a keyword:
+
+```julia
+CPUKerOpt{Float64}()
+GlaOprVac{Float64}(vol; useGpu=false)
+GlaOpr{Float64}(vol, vol, sus)
+zerofield(Float64, cvol)
+```
+
+The Green function quadrature (`GlaOprVac`'s generation step) is always carried
+out in `Float64`, regardless of `T`; the resulting Fourier coefficients are
+rounded once into `Complex{T}`. For `Float32` storage this rounding is below
+`eps(Float32)`, and the resulting operator agrees with the `Float64` one it was
+rounded from to about `1e-7` relative (dense norm), matvecs included.
+
+### Conversion
+
+Every operator type has a conversion constructor `X{T}(x::X)` that narrows or
+widens storage precision without regenerating the Green function:
+
+```julia
+mem32 = GlaVacOprMem{Float32}(mem64)
+opr32 = GlaOprVac{Float32}(opr64)
+opr64 = GlaOpr{Float64}(opr32)
+```
+
+Converting to the same `T` returns the operator unchanged; converting to `Float32`
+gives a result bitwise identical to building at `Float32` directly. A
+susceptibility array of any numeric eltype is converted to `Complex{T}` on
+construction and in `setSus!`.
+
+### Strictness
+
+`mul!`, `*`, and `mulAct!` require the vector's eltype to match the operator's
+`Complex{T}` exactly; a mismatch throws rather than silently promoting or
+falling back to slow scalar indexing:
+
+```julia
+G_0 = GlaOpr{Float64}(vol, vol, sus)
+G_0 * ComplexF32.(v) # ArgumentError: operator eltype Complex{Float64}, argument eltype ComplexF32
+```
+
+Fix it by converting the data (`ComplexF64.(v)`) or the operator
+(`GlaOpr{Float32}(G_0)`) to match.
+
+### Solvers and `MixPrcRfn`
+
+An iterative solve run entirely in `Float32` stalls: even with `relTol=1e-10`
+requested, `GMRESSolver` on a `Float32` `InvSctOpr` only reaches a true
+(`Float64`-measured) residual of about `5e-8` to `2e-7`, and needs more
+iterations than the `Float64` solve to get there. `ini!` reflects this by
+defaulting `relTol` to `sqrt(eps(T))` of the right-hand side's precision
+(`3.4e-4` for `Float32`, `1.5e-8` for `Float64`).
+
+For `Float64` accuracy at `Float32` matvec cost and half the memory, use
+`MixPrcRfn`, a mixed-precision iterative refinement solver:
+
+```julia
+G_0 = GlaOpr{Float64}(vol, vol, sus; slv=MixPrcRfn(Float32; relTol=1e-10))
+```
+
+Each outer step forms the residual in `Float64`, solves a correction on a
+lazily built `Float32` copy of the operator, and widens the correction back;
+one `Float64` matvec per outer step. On `InvSctOpr` test problems this
+converges in 3 outer steps to a `Float64` residual of `1e-12`-`1e-11`, within
+about `5e-11` of the all-`Float64` solution, using roughly as many total inner
+`Float32` matvecs as plain `Float64` `GMRESSolver` would use `Float64` matvecs
+— the saving is per-matvec cost and memory, not fewer Krylov iterations. Use
+`relTol=1e-10` for publication-grade solves; the default `ini!` tolerance
+(`sqrt(eps(Float64))`, `1.5e-8`) is looser.
+
+!!! danger "Inverse path uses the vacuum operator's default solver"
+    `invMul!`/`invMulAdj!` — the inverse action used by the SciMLOperators,
+    LinearMaps, and LinearOperators extensions — always solve with the vacuum
+    operator's own solver, not the `slv` passed at construction of the
+    scattering or full operator. A `MixPrcRfn` attached to a `GlaOpr` or
+    `SctOpr` therefore refines the forward direction (`G_0 * v`,
+    `W * v`) only; going through an extension's inverse interface bypasses it.
+    This is pre-existing behaviour, not specific to mixed precision.
+
 ## [Scattering problem](@id scattering)
 
 Gila is designed primarily to tackle the *scattering problem*, which asks to

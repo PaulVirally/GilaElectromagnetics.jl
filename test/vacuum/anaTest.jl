@@ -59,7 +59,7 @@ end
     for volDim in volSizes
         # println("Testing volume size: ", volDim)
         volObj = GlaVol(volDim, sclArr, (0//1, 0//1, 0//1))
-        oprMem = GlaVacOprMem(CPUKerOpt(), volObj)
+        oprMem = GlaVacOprMem(CPUKerOpt{Float64}(), volObj)
 
         dipVec = zeros(ComplexF64, 3)
         relErr = zeros(Float64, 3)

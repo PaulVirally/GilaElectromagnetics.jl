@@ -7,7 +7,7 @@ const cubAbsTol = 1e-12
 Verify that increasing quadrature order does not change integral values.
 =#
 function wekIntChk(scl::NTuple{3,<:Rational}, glOrd::Integer)
-    opts = CPUKerOpt()
+    opts = CPUKerOpt{Float64}()
     # Weak integral values for internally set quadrature order
     ws1 = GilaElectromagnetics.GilaVacuum.wekS(scl, GilaElectromagnetics.GilaVacuum.gauQud(glOrd), opts)
     we1 = GilaElectromagnetics.GilaVacuum.wekE(scl, GilaElectromagnetics.GilaVacuum.gauQud(glOrd), opts)
@@ -37,7 +37,7 @@ end
     for volDim in volSizes
         # println("Testing volume size: ", volDim)
         volObj = GlaVol(volDim, sclArr, (0//1, 0//1, 0//1))
-        oprMem = GlaVacOprMem(CPUKerOpt(), volObj)
+        oprMem = GlaVacOprMem(CPUKerOpt{Float64}(), volObj)
 
         # Perform integration convergence test
         intDif = wekIntChk(oprMem.srcVol.scl, oprMem.cmpInf.intOrd)

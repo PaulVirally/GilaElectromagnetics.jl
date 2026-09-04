@@ -16,18 +16,18 @@ prxCvl(lwr) = GlaCmpVol([GlaVol((2,2,2), prxScl16, (lwr + 1//16, 0//1, 0//1)),
     GlaVol((2,2,2), prxScl16, (lwr + 3//16, 0//1, 0//1))])
 
 @testset "Proximity warning, plain pair" begin
-    @test_logs (:warn, r"separated by 1 cell of") GlaOprVac(prxPar(1)...)
-    @test_logs (:warn, r"separated by 5 cells of") GlaOprVac(prxPar(5)...)
+    @test_logs (:warn, r"separated by 1 cell of") GlaOprVac{Float64}(prxPar(1)...)
+    @test_logs (:warn, r"separated by 5 cells of") GlaOprVac{Float64}(prxPar(5)...)
     # The message names the mechanism and the remedy
-    @test_logs (:warn, r"quadrature limited.*`refine`") GlaOprVac(prxPar(2)...)
-    @test_nowarn GlaOprVac(prxPar(6)...)
-    @test_nowarn GlaOprVac(prxPar(7)...)
+    @test_logs (:warn, r"quadrature limited.*`refine`") GlaOprVac{Float64}(prxPar(2)...)
+    @test_nowarn GlaOprVac{Float64}(prxPar(6)...)
+    @test_nowarn GlaOprVac{Float64}(prxPar(7)...)
 end
 
 @testset "Proximity warning, exempt pairs" begin
     # Contact is handled exactly, and a self operator has no separation at all
-    @test_nowarn GlaOprVac(prxPar(0)...)
-    @test_nowarn GlaOprVac(GlaVol((2,2,2), prxScl32, prxOrg0))
+    @test_nowarn GlaOprVac{Float64}(prxPar(0)...)
+    @test_nowarn GlaOprVac{Float64}(GlaVol((2,2,2), prxScl32, prxOrg0))
 end
 
 @testset "Proximity warning counts coarse cells" begin
@@ -36,28 +36,28 @@ end
     passes between two fine ones. =#
     volCrs = GlaVol((2,2,2), prxScl32, prxOrg0)
     volFin = GlaVol((4,4,4), prxScl64, (5//32, 0//1, 0//1))
-    @test_logs (:warn, r"by 3 cells of the coarser 1//32") GlaOprVac(volCrs, volFin)
-    @test_logs (:warn, r"by 3 cells of the coarser 1//32") GlaOprVac(volFin, volCrs)
+    @test_logs (:warn, r"by 3 cells of the coarser 1//32") GlaOprVac{Float64}(volCrs, volFin)
+    @test_logs (:warn, r"by 3 cells of the coarser 1//32") GlaOprVac{Float64}(volFin, volCrs)
     finNer = GlaVol((4,4,4), prxScl64, prxOrg0)
-    @test_nowarn GlaOprVac(finNer, volFin)
+    @test_nowarn GlaOprVac{Float64}(finNer, volFin)
 end
 
 @testset "Proximity warning, composite pair" begin
     # Four cross pairs, one warning, at the smallest gap of the four
     trgCvl, srcCvl = prxCvl(-1//8), prxCvl(1//4)
-    opr = @test_logs (:warn, r"by 2 cells of the coarser 1//16") GlaCmpOprVac(trgCvl, srcCvl)
+    opr = @test_logs (:warn, r"by 2 cells of the coarser 1//16") GlaCmpOprVac{Float64}(trgCvl, srcCvl)
     @test size(opr.blkMat) == (2, 2)
-    @test_logs (:warn, r"by 2 cells") GlaOprVac(trgCvl, srcCvl)
+    @test_logs (:warn, r"by 2 cells") GlaOprVac{Float64}(trgCvl, srcCvl)
     # A compliant pair, and the self operator of a tiling whose regions touch
-    @test_nowarn GlaCmpOprVac(trgCvl, prxCvl(1//2))
-    @test_nowarn GlaCmpOprVac(trgCvl)
+    @test_nowarn GlaCmpOprVac{Float64}(trgCvl, prxCvl(1//2))
+    @test_nowarn GlaCmpOprVac{Float64}(trgCvl)
 end
 
 @testset "Proximity warning, adjoints" begin
     # An adjoint reuses the memory of the operator, so it must not warn again
-    opr = GlaOprVac(prxPar(2)...; prxWrn=false)
+    opr = GlaOprVac{Float64}(prxPar(2)...; prxWrn=false)
     @test_nowarn adjoint(opr)
-    cmpOpr = GlaCmpOprVac(GlaCmpVol(GlaVol((2,2,2), prxScl16, prxOrg0)),
+    cmpOpr = GlaCmpOprVac{Float64}(GlaCmpVol(GlaVol((2,2,2), prxScl16, prxOrg0)),
         GlaCmpVol(GlaVol((2,2,2), prxScl16, (1//4, 0//1, 0//1))); prxWrn=false)
     @test_nowarn adjoint(cmpOpr)
 end

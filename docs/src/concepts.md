@@ -146,3 +146,52 @@ as the inverse of ``\textbf{M}_0``:
 
 Solving for the Green function in matter can be done indirectly with Gila. See
 the next section, [usage](usage.md), for more information.
+
+## Precision
+
+Gila stores the discretized Green function ``\textbf{G}_0`` as `Complex{T}`
+data, `T` being `Float32` or `Float64`. The two concerns — how the operator is
+*generated* and how it is *stored* — are separate.
+
+### Generation stays `Float64`
+
+Computing each entry of ``\textbf{G}_0`` requires evaluating singular and
+near-singular integrals numerically; the tolerances and orders of that
+quadrature are tuned for `Float64` arithmetic. Gila always runs this step in
+`Float64`, no matter which `T` was requested, and rounds each fully-converged
+coefficient to `Complex{T}` once, at the end. Rounding a converged `Float64`
+value to `Float32` is the best `Float32` representation obtainable — generating
+directly in `Float32` could only be less accurate, never more.
+
+### What truncation costs
+
+The single rounding to `Float32` is the only source of error `Float32` storage
+adds. Its size is bounded by `Float32` machine epsilon (`eps(Float32) ≈
+1.19e-7`) and measures smaller in practice: the worst relative error of any
+Fourier coefficient is about `5.2e-8`. This propagates to the assembled
+operator — self, external, composite, and cross-scale, at the level of
+individual entries and of the dense spectral norm — as agreement with the
+`Float64` operator to roughly `1e-7` relative, and to matvecs at the same
+level. Truncation does not disturb the operator's physical structure: the
+positive-semidefiniteness of the antisymmetric part of ``\textbf{G}_0``, which
+gives it physical meaning, survives to within its own rounding error.
+
+### Why `Float32`-only solves stall, and how refinement recovers
+
+An iterative solver's achievable residual is limited by the precision of the
+matrix-vector products it is built from, not just by how many iterations it
+runs. A `Float32` operator's matvecs carry `Float32`-level error at every step,
+so no amount of extra iteration pushes a `Float32`-only GMRES solve below a
+residual floor around `1e-7`, even when the solver is asked for `relTol=1e-10`.
+
+Mixed-precision iterative refinement (`MixPrcRfn`) works around this the way
+GMRES-IR does classically: the residual and the update to the solution are
+formed with a `Float64` matrix-vector product, so they carry `Float64`
+accuracy, while the expensive part — solving for a correction — is delegated
+to a `Float32` copy of the operator, since a correction only needs to be
+accurate enough to shrink the current residual, not to represent the final
+answer. Repeating this a handful of times combines the cheap arithmetic of
+`Float32` with the accuracy of `Float64`: on the problems this was measured on,
+3 outer steps are enough to bring the `Float64`-measured residual down to
+`1e-12`-`1e-11`, matching a plain `Float64` solve while doing most of the work
+at `Float32` matvec cost and `Float32` memory.

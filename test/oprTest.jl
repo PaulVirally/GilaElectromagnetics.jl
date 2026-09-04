@@ -23,7 +23,7 @@ const _volOvr4 = GlaVol((4,4,4), stdScl, _ovrOrg4)
     @test !isoverlappingoperator(gExt)
 
     # Overlapping GlaOprVac (shifted by 2 cells → overlap)
-    gOvr = GlaOprVac(_volOvr4, _vol4)
+    gOvr = GlaOprVac{Float64}(_volOvr4, _vol4)
     @test isoverlappingoperator(gOvr)
     @test !isselfoperator(gOvr)
     @test !isexternaloperator(gOvr)
@@ -48,16 +48,16 @@ end
     # only needs to check the type of the options. Swapping the options by hand
     # avoids needing a GPU; nothing here applies the operator. Fresh mem so the
     # shared _selfMem4 is not mutated.
-    mem = GlaVacOprMem(CPUKerOpt(), _vol4)
+    mem = GlaVacOprMem(CPUKerOpt{Float64}(), _vol4)
     opr = GlaOprVac(mem)
     @test !isgpu(opr)
     @test occursin("CPU", sprint(show, opr))
 
-    mem.cmpInf = GPUKerOpt()
+    mem.cmpInf = GPUKerOpt{Float64}()
     @test isgpu(opr)
     @test occursin("GPU", sprint(show, opr))
 
-    mem.cmpInf = CPUKerOpt()
+    mem.cmpInf = CPUKerOpt{Float64}()
     @test !isgpu(opr)
 end
 
@@ -219,7 +219,7 @@ end
     # overlap. The external construction corrects for cell contact directly.
     v4 = GlaVol((4,4,4), stdScl, (4//32, 0//1, 0//1))
     @test !ovrChk(v1, v4)
-    @test isexternaloperator(GlaOprVac(v1, v4))
+    @test isexternaloperator(GlaOprVac{Float64}(v1, v4))
     # mskRng
     bigVol = GlaVol((8,4,4), stdScl, (2//32, 0//1, 0//1))
     rng = mskRng(v1, bigVol)
@@ -236,18 +236,18 @@ end
     slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
     box = GlaVol((2,2,2), (1//16,1//16,1//16), (2//16, 0//1, 0//1))
     uni = uniVol(slb, box)
-    uniMat = dnsMat(GlaOprVac(uni))
+    uniMat = dnsMat(GlaOprVac{Float64}(uni))
     li = LinearIndices((uni.cel..., 3))
     dofIdx(v) = (r = mskRng(v, uni); vec([li[i,j,k,d] for i in r[1], j in r[2], k in r[3], d in 1:3]))
     slbDof, boxDof = dofIdx(slb), dofIdx(box)
     for (trg, src, rowDof, colDof) in ((slb, box, slbDof, boxDof), (box, slb, boxDof, slbDof))
-        opr = GlaOprVac(trg, src)
+        opr = GlaOprVac{Float64}(trg, src)
         @test isexternaloperator(opr)
         @test !isoverlappingoperator(opr)
         @test norm(dnsMat(opr) - uniMat[rowDof, colDof]) / norm(uniMat[rowDof, colDof]) < 1e-12
     end
     # A corner-fitting touching pair still takes the external route
-    @test isexternaloperator(GlaOprVac(_vol4, GlaVol((4,4,4), stdScl, (4//32, 0//1, 0//1))))
+    @test isexternaloperator(GlaOprVac{Float64}(_vol4, GlaVol((4,4,4), stdScl, (4//32, 0//1, 0//1))))
 end
 
 @testset "Masked operator adjoint" begin
@@ -255,7 +255,7 @@ end
     # union route, so the operator carries a source and a target mask
     slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
     box = GlaVol((2,2,2), (1//16,1//16,1//16), (1//16, 0//1, 0//1))
-    opr = GlaOprVac(slb, box)
+    opr = GlaOprVac{Float64}(slb, box)
     @test isoverlappingoperator(opr)
     fwdMat = dnsMat(opr)
     # The adjoint has to exchange the two masks along with the volumes
@@ -272,21 +272,21 @@ end
 @testset "GlaOprVac on a field" begin
     opr = _g0()
     vol = opr.mem.srcVol
-    fld = discretize!(zerofield(vol), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+    fld = discretize!(zerofield(Float64, vol), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
     out = opr * fld
     @test out isa GlaFld
     @test nregions(out.cvol) == 1
     @test regions(out.cvol)[1] == opr.mem.trgVol
     @test out.dat ≈ opr * fld.dat
     # A field over another volume, or over a tiling of several regions
-    @test_throws ArgumentError opr * zerofield(GlaVol((2,2,2), stdScl, stdOrg))
-    @test_throws ArgumentError opr * zerofield(GlaCmpVol(
+    @test_throws ArgumentError opr * zerofield(Float64, GlaVol((2,2,2), stdScl, stdOrg))
+    @test_throws ArgumentError opr * zerofield(Float64, GlaCmpVol(
         [GlaVol((2,2,2), stdScl, (-1//32, 0//1, 0//1)),
          GlaVol((2,2,2), stdScl, (1//32, 0//1, 0//1))]))
     # The masked route reads its input through a mask, so it takes no field
     slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
     box = GlaVol((2,2,2), (1//16,1//16,1//16), (1//16, 0//1, 0//1))
-    @test_throws ArgumentError GlaOprVac(slb, box) * zerofield(box)
+    @test_throws ArgumentError GlaOprVac{Float64}(slb, box) * zerofield(Float64, box)
 end
 
 @testset "rszSus" begin
@@ -324,7 +324,7 @@ end
     vol1 = _vol4
     vol2 = _trgV4
     vols = [vol1, vol2]
-    op   = MulRegGlaOprVac(vols, vols)
+    op   = MulRegGlaOprVac{Float64}(vols, vols)
     n    = prod((4,4,4)) * 3
 
     # oprMat structure
@@ -418,7 +418,7 @@ end
     # Multi-region blocks go through the generic serializer, which must rebuild
     # the FFTW plans on load rather than restore the written pointers
     tmpFil = tempname()
-    mr = MulRegGlaOprVac([_vol4, _trgV4], [_vol4, _trgV4])
+    mr = MulRegGlaOprVac{Float64}([_vol4, _trgV4], [_vol4, _trgV4])
     vMr = rand(ComplexF64, size(mr, 2))
     try
         open(tmpFil, "w") do io; serialize(io, mr); end
@@ -449,10 +449,10 @@ end
         vgpu = CuArray(vcpu)
 
         pairs = [
-            (_g0(),                        GlaOprVac(_vol4; useGpu=true)),
-            (InvSctOpr(_vol4, sus),        InvSctOpr(_vol4, susg; useGpu=true)),
-            (SctOpr(_vol4, sus),           SctOpr(_vol4, susg; useGpu=true)),
-            (GlaOpr(_vol4, sus),           GlaOpr(_vol4, susg; useGpu=true)),
+            (_g0(),                        GlaOprVac{Float64}(_vol4; useGpu=true)),
+            (InvSctOpr{Float64}(_vol4, sus),        InvSctOpr{Float64}(_vol4, susg; useGpu=true)),
+            (SctOpr{Float64}(_vol4, sus),           SctOpr{Float64}(_vol4, susg; useGpu=true)),
+            (GlaOpr{Float64}(_vol4, sus),           GlaOpr{Float64}(_vol4, susg; useGpu=true)),
         ]
         for (cOpr, gOpr) in pairs
             @test cOpr * vcpu ≈ Array(gOpr * vgpu)

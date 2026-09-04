@@ -1,18 +1,20 @@
 using KernelAbstractions
 using CUDA
 using Serialization
+using ..GilaTypes
 
 """
-    GlaKerOpt
+    GlaKerOpt{T<:AbstractFloat}
 
 Abstract type for computational information that determines how the Green function
-operator is computed. Concrete implementations include `CPUKerOpt` for CPU computation
-and `GPUKerOpt` for GPU computation.
+operator is computed. `T` is the real storage precision of the operator data
+(`Complex{T}`); generation is always performed in `Float64`. Concrete implementations
+include `CPUKerOpt` for CPU computation and `GPUKerOpt` for GPU computation.
 """
-abstract type GlaKerOpt end
+abstract type GlaKerOpt{T<:AbstractFloat} end
 
 """
-    CPUKerOpt <: GlaKerOpt
+    CPUKerOpt{T} <: GlaKerOpt{T}
 
 Options for CPU computation of the Green function operator.
 
@@ -24,7 +26,7 @@ Options for CPU computation of the Green function operator.
 - `adjMod::Bool`: Adjoint mode flag (true if adjoint mode is enabled)
 - `bckEnd::CPU`: Backend for CPU computation
 """
-mutable struct CPUKerOpt <: GlaKerOpt
+mutable struct CPUKerOpt{T<:AbstractFloat} <: GlaKerOpt{T}
     frqPhz::Number
     intOrd::Integer
     adjMod::Bool
@@ -32,20 +34,36 @@ mutable struct CPUKerOpt <: GlaKerOpt
 end
 
 """
-    CPUKerOpt()
+    CPUKerOpt{T}()
 
-Construct a CPUKerOpt with default values.
+Construct a CPUKerOpt of storage precision `T` with default values.
 
 The default integration order of 32 provides a good balance between accuracy and computational cost for most applications.
 
 # Returns
-- `CPUKerOpt`: A new CPU kernel options object with:
+- `CPUKerOpt{T}`: A new CPU kernel options object with:
   - Phase factor of 1.0 + 0.0im
   - Integration order of 32
   - Adjoint mode disabled
   - Default CPU backend
 """
-CPUKerOpt() = CPUKerOpt(1.0+0.0im, 32, false, CPU())
+CPUKerOpt{T}() where T<:AbstractFloat = CPUKerOpt{T}(1.0+0.0im, 32, false, CPU())
+
+"""
+    CPUKerOpt(frqPhz, intOrd, adjMod, bckEnd)
+    CPUKerOpt()
+
+Construct a CPUKerOpt of the default storage precision `dfltPrc`.
+"""
+CPUKerOpt(frqPhz::Number, intOrd::Integer, adjMod::Bool, bckEnd::CPU) = CPUKerOpt{dfltPrc}(frqPhz, intOrd, adjMod, bckEnd)
+CPUKerOpt() = CPUKerOpt{dfltPrc}()
+
+"""
+    CPUKerOpt{T}(opt::CPUKerOpt)
+
+Re-type a CPUKerOpt to storage precision `T`, keeping all field values.
+"""
+CPUKerOpt{T}(opt::CPUKerOpt) where T<:AbstractFloat = CPUKerOpt{T}(opt.frqPhz, opt.intOrd, opt.adjMod, opt.bckEnd)
 
 """
     frqPhz(opt::CPUKerOpt) -> Number
@@ -100,17 +118,17 @@ Get the CPU backend from a CPU kernel options object.
 bckEnd(opt::CPUKerOpt) = opt.bckEnd
 
 """
-    arrTyp(opt::CPUKerOpt)
+    arrTyp(opt::CPUKerOpt{T})
 
 Get the array type from a CPU kernel options object.
 
 # Arguments
-- `opt::CPUKerOpt`: The CPU kernel options object
+- `opt::CPUKerOpt{T}`: The CPU kernel options object
 
 # Returns
-- `Type`: Array{ComplexF64}
+- `Type`: Array{Complex{T}}
 """
-arrTyp(::CPUKerOpt) = Array{ComplexF64}
+arrTyp(::CPUKerOpt{T}) where T<:AbstractFloat = Array{Complex{T}}
 
 """
     useCpu(opt::CPUKerOpt)
@@ -143,10 +161,10 @@ Creates a new `GPUKerOpt` object with the same phase factor and integration orde
   - Adjoint mode flag from `opt`
   - Default CUDA backend
 """
-useGpu(opt::CPUKerOpt) = GPUKerOpt(opt.frqPhz, opt.intOrd, (128, 2, 1), (1, 128, 256), opt.adjMod, CUDABackend())
+useGpu(opt::CPUKerOpt{T}) where T<:AbstractFloat = GPUKerOpt{T}(opt.frqPhz, opt.intOrd, (128, 2, 1), (1, 128, 256), opt.adjMod, CUDABackend())
 
 """
-    GPUKerOpt <: GlaKerOpt
+    GPUKerOpt{T} <: GlaKerOpt{T}
 
 Options for GPU computation of the Green function operator.
 
@@ -160,7 +178,7 @@ Options for GPU computation of the Green function operator.
 - `adjMod::Bool`: Adjoint mode flag (true if adjoint mode is enabled)
 - `bckEnd::GPU`: Backend for GPU computation
 """
-mutable struct GPUKerOpt <: GlaKerOpt
+mutable struct GPUKerOpt{T<:AbstractFloat} <: GlaKerOpt{T}
     frqPhz::Number
     intOrd::Integer
     numTrd::NTuple{3, Integer}
@@ -170,14 +188,14 @@ mutable struct GPUKerOpt <: GlaKerOpt
 end
 
 """
-    GPUKerOpt()
+    GPUKerOpt{T}()
 
-Construct a GPUKerOpt with default values.
+Construct a GPUKerOpt of storage precision `T` with default values.
 
 The default thread and block counts are chosen to provide good performance on most NVIDIA GPUs. The default integration order of 32 provides a good balance between accuracy and computational cost for most applications.
 
 # Returns
-- `GPUKerOpt`: A new GPU kernel options object with:
+- `GPUKerOpt{T}`: A new GPU kernel options object with:
   - Phase factor of 1.0 + 0.0im
   - Integration order of 32
   - 128 threads per block
@@ -185,7 +203,23 @@ The default thread and block counts are chosen to provide good performance on mo
   - Adjoint mode disabled
   - Default CUDA backend
 """
-GPUKerOpt() = GPUKerOpt(1.0+0.0im, 32, (128, 2, 1), (1, 128, 256), false, CUDABackend())
+GPUKerOpt{T}() where T<:AbstractFloat = GPUKerOpt{T}(1.0+0.0im, 32, (128, 2, 1), (1, 128, 256), false, CUDABackend())
+
+"""
+    GPUKerOpt(frqPhz, intOrd, numTrd, numBlk, adjMod, bckEnd)
+    GPUKerOpt()
+
+Construct a GPUKerOpt of the default storage precision `dfltPrc`.
+"""
+GPUKerOpt(frqPhz::Number, intOrd::Integer, numTrd::NTuple{3,Integer}, numBlk::NTuple{3,Integer}, adjMod::Bool, bckEnd::GPU) = GPUKerOpt{dfltPrc}(frqPhz, intOrd, numTrd, numBlk, adjMod, bckEnd)
+GPUKerOpt() = GPUKerOpt{dfltPrc}()
+
+"""
+    GPUKerOpt{T}(opt::GPUKerOpt)
+
+Re-type a GPUKerOpt to storage precision `T`, keeping all field values.
+"""
+GPUKerOpt{T}(opt::GPUKerOpt) where T<:AbstractFloat = GPUKerOpt{T}(opt.frqPhz, opt.intOrd, opt.numTrd, opt.numBlk, opt.adjMod, opt.bckEnd)
 
 """
     frqPhz(opt::GPUKerOpt)
@@ -256,17 +290,17 @@ Get the GPU backend from a GPU kernel options object.
 bckEnd(opt::GPUKerOpt) = opt.bckEnd
 
 """
-    arrTyp(opt::GPUKerOpt)
+    arrTyp(opt::GPUKerOpt{T})
 
 Get the array type from a GPU kernel options object.
 
 # Arguments
-- `opt::GPUKerOpt`: The GPU kernel options object
+- `opt::GPUKerOpt{T}`: The GPU kernel options object
 
 # Returns
-- `Type`: CuArray{ComplexF64}
+- `Type`: CuArray{Complex{T}}
 """
-arrTyp(::GPUKerOpt) = CuArray{ComplexF64}
+arrTyp(::GPUKerOpt{T}) where T<:AbstractFloat = CuArray{Complex{T}}
 
 
 """
@@ -286,7 +320,7 @@ Creates a new `CPUKerOpt` object with the same phase factor and integration orde
   - Adjoint mode flag from `opt`
   - Default CPU backend
 """
-useCpu(opt::GPUKerOpt) = CPUKerOpt(opt.frqPhz, opt.intOrd, opt.adjMod, CPU())
+useCpu(opt::GPUKerOpt{T}) where T<:AbstractFloat = CPUKerOpt{T}(opt.frqPhz, opt.intOrd, opt.adjMod, CPU())
 
 """
     useGpu(opt::GPUKerOpt)
@@ -302,20 +336,23 @@ Does nothing. This function is a placeholder for consistency with the CPU versio
 useGpu(opt::GPUKerOpt) = opt
 
 # Add serialization support for GlaKerOpt
-function Serialization.serialize(io::IO, opt::CPUKerOpt)
+function Serialization.serialize(io::IO, opt::CPUKerOpt{T}) where T<:AbstractFloat
+    serialize(io, T)
     serialize(io, opt.frqPhz)
     serialize(io, opt.intOrd)
     serialize(io, opt.adjMod)
 end
 
-function Serialization.deserialize(io::IO, ::Type{CPUKerOpt})
+function Serialization.deserialize(io::IO, ::Type{<:CPUKerOpt})
+    prc = deserialize(io)
     frqPhz = deserialize(io)
     intOrd = deserialize(io)
     adjMod = deserialize(io)
-    return CPUKerOpt(frqPhz, intOrd, adjMod, CPU())
+    return CPUKerOpt{prc}(frqPhz, intOrd, adjMod, CPU())
 end
 
-function Serialization.serialize(io::IO, opt::GPUKerOpt)
+function Serialization.serialize(io::IO, opt::GPUKerOpt{T}) where T<:AbstractFloat
+    serialize(io, T)
     serialize(io, opt.frqPhz)
     serialize(io, opt.intOrd)
     serialize(io, opt.numTrd)
@@ -323,11 +360,12 @@ function Serialization.serialize(io::IO, opt::GPUKerOpt)
     serialize(io, opt.adjMod)
 end
 
-function Serialization.deserialize(io::IO, ::Type{GPUKerOpt})
+function Serialization.deserialize(io::IO, ::Type{<:GPUKerOpt})
+    prc = deserialize(io)
     frqPhz = deserialize(io)
     intOrd = deserialize(io)
     numTrd = deserialize(io)
     numBlk = deserialize(io)
     adjMod = deserialize(io)
-    return GPUKerOpt(frqPhz, intOrd, numTrd, numBlk, adjMod, CUDABackend())
+    return GPUKerOpt{prc}(frqPhz, intOrd, numTrd, numBlk, adjMod, CUDABackend())
 end

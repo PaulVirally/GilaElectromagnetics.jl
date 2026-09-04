@@ -5,7 +5,7 @@ using CUDA
 
 @testset "Serialization Tests" begin
     # Test CPU-based GlaVacOprMem
-    cpuOpt = CPUKerOpt()
+    cpuOpt = CPUKerOpt{Float64}()
     trgVol = GlaVol((4, 4, 4), (1//32, 1//32, 1//32), (0//1, 0//1, 0//1))
     srcVol = trgVol
     oprMemCpu = GlaVacOprMem(cpuOpt, trgVol, srcVol)
@@ -53,7 +53,7 @@ using CUDA
 
     # Test GPU-based GlaVacOprMem (only if CUDA is available)
     if CUDA.has_cuda()
-        gpuOpt = GPUKerOpt()
+        gpuOpt = GPUKerOpt{Float64}()
         oprMemGpu = GlaVacOprMem(gpuOpt, trgVol, srcVol)
 
         tmpFilGpu = tempname()

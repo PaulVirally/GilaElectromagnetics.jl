@@ -20,11 +20,11 @@ using Test, GilaElectromagnetics, CUDA
     for volDim in volSizes
         # Self Green function
         volObj = GlaVol(volDim, sclArr, orgSrc)
-        oprMemCpu = GlaVacOprMem(CPUKerOpt(), volObj)
+        oprMemCpu = GlaVacOprMem(CPUKerOpt{Float64}(), volObj)
         randVecCpu = rand(ComplexF64, oprMemCpu.srcVol.cel..., 3)
         outVecCpu = egoOpr!(oprMemCpu, deepcopy(randVecCpu))
 
-        oprMemGpu = GlaVacOprMem(GPUKerOpt(), volObj)
+        oprMemGpu = GlaVacOprMem(GPUKerOpt{Float64}(), volObj)
         randVecGpu = CUDA.zeros(ComplexF64, oprMemGpu.srcVol.cel..., 3)
         copyto!(randVecGpu, randVecCpu)
         outVecGpu = egoOpr!(oprMemGpu, randVecGpu)
@@ -38,11 +38,11 @@ using Test, GilaElectromagnetics, CUDA
 
         # External Green function
         volTrg = GlaVol(volDim, sclArr, orgTrg)
-        oprMemExtCpu = GlaVacOprMem(CPUKerOpt(), volTrg, volObj)
+        oprMemExtCpu = GlaVacOprMem(CPUKerOpt{Float64}(), volTrg, volObj)
         randVecExtCpu = rand(ComplexF64, oprMemExtCpu.srcVol.cel..., 3)
         outVecExtCpu = egoOpr!(oprMemExtCpu, deepcopy(randVecExtCpu))
 
-        oprMemExtGpu = GlaVacOprMem(GPUKerOpt(), volTrg, volObj)
+        oprMemExtGpu = GlaVacOprMem(GPUKerOpt{Float64}(), volTrg, volObj)
         randVecExtGpu = CUDA.zeros(ComplexF64, oprMemExtGpu.srcVol.cel..., 3)
         copyto!(randVecExtGpu, randVecExtCpu)
         outVecExtGpu = egoOpr!(oprMemExtGpu, randVecExtGpu)
@@ -67,8 +67,8 @@ end
     orgTrg = (1//1, 1//1, 1//1)  # Ensure non-overlapping target volume
 
     volObj = GlaVol(volSize, sclArr, org)
-    oprMemCpu = GlaVacOprMem(CPUKerOpt(), volObj)
-    oprMemGpu = GlaVacOprMem(GPUKerOpt(), volObj)
+    oprMemCpu = GlaVacOprMem(CPUKerOpt{Float64}(), volObj)
+    oprMemGpu = GlaVacOprMem(GPUKerOpt{Float64}(), volObj)
 
     cpuVec = ones(ComplexF64, oprMemCpu.srcVol.cel..., 3)
     gpuVec = CUDA.ones(ComplexF64, oprMemGpu.srcVol.cel..., 3)

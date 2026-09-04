@@ -29,6 +29,7 @@ using Serialization
 
 import LinearAlgebra: adjoint!
 
+import ..GilaTypes: isgpu, isadjoint
 import ..GilaVacuum: useCpu!, useGpu!, egoCmpPos
 import ..GilaVolumes: _lwrEdg, _uprEdg, _ovrLap
 
@@ -37,119 +38,128 @@ export VacuumGreenOperator, AsymVacuumGreenOperator, SymVacuumGreenOperator, Mul
 export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, adjoint!, glaSze, slv, asym
 
 """
-    GlaOprVac
+    GlaOprVac{T}
 
 Represents the vacuum Green function operator G₀, which describes electromagnetic
-interactions in free space.
+interactions in free space. `T` is the real storage precision, so the operator
+acts on `Complex{T}` data.
 
 # Fields
-- `mem::GlaVacOprMem`: Memory structure containing the operator's data, including
+- `mem::GlaVacOprMem{T}`: Memory structure containing the operator's data, including
   volume information and Fourier coefficients
 - `srcMsk::NTuple{StepRange{Int64, Int64}, 3}`: Tuple of ranges defining the mask for
   the input volume (for overlapping operators only)
 - `trgMsk::NTuple{StepRage{Int64, Int64}, 3}`: Tuple of ranges defining the mask for
   the output volume (for overlapping operators only)
 """
-struct GlaOprVac <: AbstractGlaVacOpr
-    mem::GlaVacOprMem
+struct GlaOprVac{T<:AbstractFloat} <: AbstractGlaVacOpr{T}
+    mem::GlaVacOprMem{T}
     srcMsk::NTuple{3, OrdinalRange{Int64, Int64}}
     trgMsk::NTuple{3, OrdinalRange{Int64, Int64}}
 end
 
+GlaOprVac(mem::GlaVacOprMem{T}, srcMsk, trgMsk) where T<:AbstractFloat = GlaOprVac{T}(mem, srcMsk, trgMsk)
+
 """
-    MulRegGlaOprVac
+    MulRegGlaOprVac{T}
 
 Represents the vacuum Green function operator G₀ for multiple disjoint domains, i.e., the source and/or target volumes consist of multiple non-overlapping regions (where the gaps are *not* computed).
 
 # Fields
-- oprMat::Matrix{GlaOprVac}: Matrix of vacuum Green function operators for each disjoint region pair
+- oprMat::Matrix{GlaOprVac{T}}: Matrix of vacuum Green function operators for each disjoint region pair
 """
-struct MulRegGlaOprVac <: AbstractGlaVacOpr
-    oprMat::Matrix{GlaOprVac}
+struct MulRegGlaOprVac{T<:AbstractFloat} <: AbstractGlaVacOpr{T}
+    oprMat::Matrix{GlaOprVac{T}}
 end
 
+MulRegGlaOprVac(oprMat::AbstractMatrix{GlaOprVac{T}}) where T<:AbstractFloat = MulRegGlaOprVac{T}(oprMat)
+
 """
-    AsyGlaOprVac
+    AsyGlaOprVac{T}
 
 Represents the anti-Hermitian part of the vacuum Green function operator.
 
 # Fields
-- `mem::GlaVacOprMem`: Memory structure containing the operator's data, including
+- `mem::GlaVacOprMem{T}`: Memory structure containing the operator's data, including
   volume information and Fourier coefficients
 """
-struct AsyGlaOprVac <: AbstractGlaVacOpr
-    mem::GlaVacOprMem
+struct AsyGlaOprVac{T<:AbstractFloat} <: AbstractGlaVacOpr{T}
+    mem::GlaVacOprMem{T}
 end
 
 """
-    SymGlaOprVac
+    SymGlaOprVac{T}
 
 Represents the Hermitian part of the vacuum Green function operator.
 
 # Fields
-- `mem::GlaVacOprMem`: Memory structure containing the operator's data, including
+- `mem::GlaVacOprMem{T}`: Memory structure containing the operator's data, including
   volume information and Fourier coefficients
 """
-struct SymGlaOprVac <: AbstractGlaVacOpr
-    mem::GlaVacOprMem
+struct SymGlaOprVac{T<:AbstractFloat} <: AbstractGlaVacOpr{T}
+    mem::GlaVacOprMem{T}
 end
 
 """
-    InvSctOpr
+    InvSctOpr{T}
 
 Represents the inverse scattering operator (I - XG₀), where X is the susceptibility
 tensor. This operator describes how electromagnetic fields interact with a material
 medium.
 
 # Fields
-- `oprVac::AbstractGlaVacOpr`: The vacuum Green function operator
-- `sus::AbstractArray{ComplexF64}`: The susceptibility (isotropic medium)
+- `oprVac::AbstractGlaVacOpr{T}`: The vacuum Green function operator
+- `sus::AbstractArray{Complex{T}}`: The susceptibility (isotropic medium)
   representing the material response. Over a single volume it is a 3-tensor of
   cell values, over a composite volume a flat vector with one entry per degree of
   freedom
 """
-mutable struct InvSctOpr <: AbstractGlaOpr
-    oprVac::AbstractGlaVacOpr
-    sus::AbstractArray{ComplexF64}
+mutable struct InvSctOpr{T<:AbstractFloat} <: AbstractGlaOpr{T}
+    oprVac::AbstractGlaVacOpr{T}
+    sus::AbstractArray{Complex{T}}
 
     #= A composite operator takes the susceptibility in any of the forms _cmpSus
-    accepts and stores it in the flat degree of freedom layout of GlaFld. =#
-    function InvSctOpr(oprVac::AbstractGlaVacOpr, sus)
-        oprVac isa GlaCmpOprVac || return new(oprVac, sus)
+    accepts and stores it in the flat degree of freedom layout of GlaFld. The
+    susceptibility is the one place a precision conversion is allowed. =#
+    function InvSctOpr{T}(oprVac::AbstractGlaVacOpr{T}, sus) where T<:AbstractFloat
+        oprVac isa GlaCmpOprVac ||
+            return new{T}(oprVac, sus isa AbstractArray{Complex{T}} ? sus : Complex{T}.(sus))
         if !isselfoperator(oprVac)
             throw(ArgumentError("An inverse scattering operator needs a self operator, and this composite operator maps between two different tilings."))
         end
-        return new(oprVac, _cmpSus(oprVac.srcCvl, sus, isgpu(oprVac)))
+        return new{T}(oprVac, _cmpSus(T, oprVac.srcCvl, sus, isgpu(oprVac)))
     end
 end
 
+InvSctOpr(oprVac::AbstractGlaVacOpr{T}, sus) where T<:AbstractFloat = InvSctOpr{T}(oprVac, sus)
+
 """
-    SctOpr
+    SctOpr{T}
 
 Represents the scattering operator (I - XG₀)⁻¹, which includes a solver for
 computing the action of the inverse scattering operator.
 
 # Fields
-- `invSctOpr::InvSctOpr`: The inverse scattering operator
+- `invSctOpr::InvSctOpr{T}`: The inverse scattering operator
 - `slv::GlaSlv`: The solver to use for solving the linear system
 """
-mutable struct SctOpr <: AbstractGlaOpr
-    invSctOpr::InvSctOpr
+mutable struct SctOpr{T<:AbstractFloat} <: AbstractGlaOpr{T}
+    invSctOpr::InvSctOpr{T}
     slv::GlaSlv
 end
 
 """
-    GlaOpr
+    GlaOpr{T}
 
 Represents the full Green function operator G₀(I - XG₀)⁻¹, which combines the
 vacuum Green function with the scattering operator to describe electromagnetic
 interactions in a material medium.
 
 # Fields
-- `sctOpr::SctOpr`: The scattering operator
+- `sctOpr::SctOpr{T}`: The scattering operator
 """
-mutable struct GlaOpr <: AbstractGlaOpr
-    sctOpr::SctOpr
+mutable struct GlaOpr{T<:AbstractFloat} <: AbstractGlaOpr{T}
+    sctOpr::SctOpr{T}
 end
 
 # Type aliases for convenience
@@ -220,9 +230,12 @@ function mskRng(subVol::GlaVol, vol::GlaVol)
 end
 
 """
+    GlaOprVac{T}(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false, prxWrn::Bool=true)
     GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false, prxWrn::Bool=true)
 
 Construct a vacuum Green function operator for external interactions between different volumes.
+
+The storage precision `T` defaults to `dfltPrc`; generation is always done in `Float64` and rounded once.
 
 This constructor creates an external Green function operator that describes electromagnetic interactions between distinct regions in free space. The operator maps sources in the source volume to fields in the target volume, enabling the modeling of coupling effects between different parts of an electromagnetic system. For the computation to work correctly, the source and target volumes must share a common scale grid.
 
@@ -238,8 +251,8 @@ Two volumes separated by fewer than six cells of the coarser interface scale are
 - `GlaOprVac`: The vacuum Green function operator
 
 """
-function GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false,
-    prxWrn::Bool=true)
+function GlaOprVac{T}(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false,
+    prxWrn::Bool=true) where T<:AbstractFloat
     prxWrn && prxChk(trgVol, srcVol)
     innMsk = ntuple(_ -> 0:0, 3)
     outMsk = ntuple(_ -> 0:0, 3)
@@ -252,9 +265,11 @@ function GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false,
     end
 
     # Create the memory structure with appropriate GPU/CPU options
-    mem = GlaVacOprMem(useGpu ? GPUKerOpt() : CPUKerOpt(), trgVol, srcVol)
-    return GlaOprVac(mem, innMsk, outMsk)
+    mem = GlaVacOprMem(useGpu ? GPUKerOpt{T}() : CPUKerOpt{T}(), trgVol, srcVol)
+    return GlaOprVac{T}(mem, innMsk, outMsk)
 end
+GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false, prxWrn::Bool=true) =
+    GlaOprVac{dfltPrc}(trgVol, srcVol; useGpu=useGpu, prxWrn=prxWrn)
 
 """
     GlaOprVac(mem::GlaVacOprMem)
@@ -267,7 +282,7 @@ Construct a vacuum Green function operator from a memory structure.
 # Returns
 - `GlaOprVac`: The vacuum Green function operator
 """
-function GlaOprVac(mem::GlaVacOprMem)
+function GlaOprVac(mem::GlaVacOprMem{T}) where T<:AbstractFloat
     innMsk = ntuple(_ -> 0:0, 3)
     outMsk = ntuple(_ -> 0:0, 3)
     trgVol, srcVol = mem.trgVol, mem.srcVol
@@ -278,10 +293,11 @@ function GlaOprVac(mem::GlaVacOprMem)
         outMsk = mskRng(trgVol, vol)
         trgVol, srcVol = vol, vol
     end
-    return GlaOprVac(mem, innMsk, outMsk)
+    return GlaOprVac{T}(mem, innMsk, outMsk)
 end
 
 """
+    GlaOprVac{T}(vol::GlaVol; useGpu::Bool=false)
     GlaOprVac(vol::GlaVol; useGpu::Bool=false)
 
 Construct a vacuum Green function operator for self-interactions on a single volume.
@@ -296,7 +312,17 @@ This constructor creates a self-interaction Green function operator where the so
 - `GlaOprVac`: The vacuum Green function operator
 
 """
-GlaOprVac(vol::GlaVol; useGpu::Bool=false) = GlaOprVac(vol, vol; useGpu=useGpu)
+GlaOprVac{T}(vol::GlaVol; useGpu::Bool=false) where T<:AbstractFloat = GlaOprVac{T}(vol, vol; useGpu=useGpu)
+GlaOprVac(vol::GlaVol; useGpu::Bool=false) = GlaOprVac{dfltPrc}(vol, vol; useGpu=useGpu)
+
+"""
+    GlaOprVac{T}(opr::GlaOprVac)
+
+Convert the storage precision of a vacuum Green function operator to `T`, without regenerating its Fourier coefficients.
+"""
+GlaOprVac{T}(opr::GlaOprVac{T}) where T<:AbstractFloat = opr
+GlaOprVac{T}(opr::GlaOprVac) where T<:AbstractFloat =
+    GlaOprVac{T}(GlaVacOprMem{T}(opr.mem), opr.srcMsk, opr.trgMsk)
 
 """
     GlaOprVac(opr::InvSctOpr)
@@ -338,6 +364,7 @@ Construct a vacuum Green function operator from a full Green function operator.
 GlaOprVac(opr::GlaOpr) = GlaOprVac(opr.sctOpr)
 
 """
+    AsyGlaOprVac{T}(vol::GlaVol; useGpu::Bool=false)
     AsyGlaOprVac(vol::GlaVol; useGpu::Bool=false)
 
 Construct the anti-Hermitian part of the vacuum Green function operator for self-interactions on a single volume.
@@ -351,12 +378,21 @@ This constructor creates the anti-Hermitian part of the vacuum Green function op
 # Returns
 - `AsyGlaOprVac`: The anti-Hermitian part of the vacuum Green function operator
 """
-function AsyGlaOprVac(vol::GlaVol; useGpu::Bool=false)
-    kerOpt = useGpu ? GPUKerOpt() : CPUKerOpt()
+function AsyGlaOprVac{T}(vol::GlaVol; useGpu::Bool=false) where T<:AbstractFloat
+    kerOpt = useGpu ? GPUKerOpt{T}() : CPUKerOpt{T}()
     mem = GlaVacOprMem(kerOpt, vol, vol)
     map!(fur -> complex.(imag.(fur)), mem.egoFur) # Take the imaginary part of the Fourier coefficients since Asym commutes with the FFT (to machine epsilon)
-    return AsyGlaOprVac(mem)
+    return AsyGlaOprVac{T}(mem)
 end
+AsyGlaOprVac(vol::GlaVol; useGpu::Bool=false) = AsyGlaOprVac{dfltPrc}(vol; useGpu=useGpu)
+
+"""
+    AsyGlaOprVac{T}(opr::AsyGlaOprVac)
+
+Convert the storage precision of the operator to `T`, without regenerating its Fourier coefficients.
+"""
+AsyGlaOprVac{T}(opr::AsyGlaOprVac{T}) where T<:AbstractFloat = opr
+AsyGlaOprVac{T}(opr::AsyGlaOprVac) where T<:AbstractFloat = AsyGlaOprVac{T}(GlaVacOprMem{T}(opr.mem))
 
 """
     AsyGlaOprVac(opr::GlaOprVac)
@@ -369,17 +405,18 @@ Construct the anti-Hermitian part of the vacuum Green function operator from a v
 # Returns
 - `AsyGlaOprVac`: The anti-Hermitian part of the vacuum Green function operator
 """
-function AsyGlaOprVac(opr::GlaOprVac)
+function AsyGlaOprVac(opr::GlaOprVac{T}) where T<:AbstractFloat
     srcVol, trgVol = opr.mem.srcVol, opr.mem.trgVol
     if srcVol != trgVol
         throw(ArgumentError("AsyGlaOprVac can only be constructed from a GlaOprVac with identical source and target volumes"))
     end
     mem = deepcopy(opr.mem)
     map!(fur -> complex.(imag.(fur)), mem.egoFur) # Take the imaginary part of the Fourier coefficients since Asym commutes with the FFT (to machine epsilon)
-    return AsyGlaOprVac(mem)
+    return AsyGlaOprVac{T}(mem)
 end
 
 """
+    SymGlaOprVac{T}(vol::GlaVol; useGpu::Bool=false)
     SymGlaOprVac(vol::GlaVol; useGpu::Bool=false)
 
 Construct the Hermitian part of the vacuum Green function operator for self-interactions on a single volume.
@@ -393,12 +430,21 @@ This constructor creates the Hermitian part of the vacuum Green function operato
 # Returns
 - `SymGlaOprVac`: The Hermitian part of the vacuum Green function operator
 """
-function SymGlaOprVac(vol::GlaVol; useGpu::Bool=false)
-    kerOpt = useGpu ? GPUKerOpt() : CPUKerOpt()
+function SymGlaOprVac{T}(vol::GlaVol; useGpu::Bool=false) where T<:AbstractFloat
+    kerOpt = useGpu ? GPUKerOpt{T}() : CPUKerOpt{T}()
     mem = GlaVacOprMem(kerOpt, vol, vol)
     map!(fur -> complex.(real.(fur)), mem.egoFur) # Take the real part of the Fourier coefficients since Sym commutes with the FFT (to machine epsilon)
-    return SymGlaOprVac(mem)
+    return SymGlaOprVac{T}(mem)
 end
+SymGlaOprVac(vol::GlaVol; useGpu::Bool=false) = SymGlaOprVac{dfltPrc}(vol; useGpu=useGpu)
+
+"""
+    SymGlaOprVac{T}(opr::SymGlaOprVac)
+
+Convert the storage precision of the operator to `T`, without regenerating its Fourier coefficients.
+"""
+SymGlaOprVac{T}(opr::SymGlaOprVac{T}) where T<:AbstractFloat = opr
+SymGlaOprVac{T}(opr::SymGlaOprVac) where T<:AbstractFloat = SymGlaOprVac{T}(GlaVacOprMem{T}(opr.mem))
 
 """
     SymGlaOprVac(opr::GlaOprVac)
@@ -411,17 +457,18 @@ Construct the Hermitian part of the vacuum Green function operator from a vacuum
 # Returns
 - `SymGlaOprVac`: The Hermitian part of the vacuum Green function operator
 """
-function SymGlaOprVac(opr::GlaOprVac)
+function SymGlaOprVac(opr::GlaOprVac{T}) where T<:AbstractFloat
     srcVol, trgVol = opr.mem.srcVol, opr.mem.trgVol
     if srcVol != trgVol
         throw(ArgumentError("SymGlaOprVac can only be constructed from a GlaOprVac with identical source and target volumes"))
     end
     mem = deepcopy(opr.mem)
     map!(fur -> complex.(real.(fur)), mem.egoFur) # Take the real part of the Fourier coefficients since Asym commutes with the FFT (to machine epsilon)
-    return SymGlaOprVac(mem)
+    return SymGlaOprVac{T}(mem)
 end
 
 """
+    MulRegGlaOprVac{T}(trgVols::VT{GlaVol}, srcVols::VT{GlaVol}; useGpu::Bool=false) where VT <: AbstractVector
     MulRegGlaOprVac(trgVols::VT{GlaVol}, srcVols::VT{GlaVol}; useGpu::Bool=false) where VT <: AbstractVector
 
 Construct a vacuum Green function operator for multiple target and source volumes.
@@ -436,56 +483,83 @@ This constructor creates a vacuum Green function operator that describes interac
 # Returns
 - `MulRegGlaOprVac`: The vacuum Green function operator for multiple target and source volumes
 """
-function MulRegGlaOprVac(trgVols::VT, srcVols::VT; useGpu::Bool=false) where VT <: AbstractVector{GlaVol}
-    ops = [GlaOprVac(trgVol, srcVol; useGpu=useGpu) for trgVol in trgVols, srcVol in srcVols]
-    return MulRegGlaOprVac(ops)
+function MulRegGlaOprVac{T}(trgVols::VT, srcVols::VT; useGpu::Bool=false) where {T<:AbstractFloat, VT <: AbstractVector{GlaVol}}
+    ops = [GlaOprVac{T}(trgVol, srcVol; useGpu=useGpu) for trgVol in trgVols, srcVol in srcVols]
+    return MulRegGlaOprVac{T}(ops)
 end
+MulRegGlaOprVac(trgVols::VT, srcVols::VT; useGpu::Bool=false) where VT <: AbstractVector{GlaVol} =
+    MulRegGlaOprVac{dfltPrc}(trgVols, srcVols; useGpu=useGpu)
 
 """
-    InvSctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray))
+    MulRegGlaOprVac{T}(opr::MulRegGlaOprVac)
+
+Convert the storage precision of every block to `T`, without regenerating any Fourier coefficients.
+"""
+MulRegGlaOprVac{T}(opr::MulRegGlaOprVac{T}) where T<:AbstractFloat = opr
+MulRegGlaOprVac{T}(opr::MulRegGlaOprVac) where T<:AbstractFloat =
+    MulRegGlaOprVac{T}(map(blk -> GlaOprVac{T}(blk), opr.oprMat))
+
+"""
+    InvSctOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray))
+    InvSctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray))
 
 Construct an inverse scattering operator for external interactions between different volumes.
 
 # Arguments
 - `trgVol::GlaVol`: The target volume where the field will be computed
 - `srcVol::GlaVol`: The source volume containing the sources
-- `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
+- `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=false`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 
 # Returns
-- `InvSctOpr`: The inverse scattering operator
+- `InvSctOpr{T}`: The inverse scattering operator, of storage precision `T` (`dfltPrc` when unrequested)
 
 This constructor creates an external inverse scattering operator that describes how electromagnetic fields interact with a material medium between distinct regions. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the source volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the source volume.
 """
-function InvSctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray))
+function InvSctOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray)) where T<:AbstractFloat
     # Create the vacuum operator
-    oprVac = GlaOprVac(trgVol, srcVol; useGpu=useGpu)
-    
+    oprVac = GlaOprVac{T}(trgVol, srcVol; useGpu=useGpu)
+
     # Reshape susceptibility if needed and validate size
     if size(sus) != srcVol.cel
         throw(ArgumentError("Susceptibility tensor dimensions $(size(sus)) do not match volume dimensions $(srcVol.cel)"))
     end
     susTen = rszSus(sus, srcVol.cel)
-    
-    return InvSctOpr(oprVac, susTen)
+
+    return InvSctOpr{T}(oprVac, susTen)
 end
+InvSctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray)) =
+    InvSctOpr{dfltPrc}(trgVol, srcVol, sus; useGpu=useGpu)
 
 """
-    InvSctOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray))
+    InvSctOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray))
+    InvSctOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray))
 
 Construct an inverse scattering operator for self-interactions on a single volume.
 
 # Arguments
 - `vol::GlaVol`: The volume to compute the self-interaction for
-- `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
+- `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 
 # Returns
-- `InvSctOpr`: The inverse scattering operator
+- `InvSctOpr{T}`: The inverse scattering operator, of storage precision `T` (`dfltPrc` when unrequested)
 
 This constructor creates a self-interaction inverse scattering operator that describes how electromagnetic fields interact with a material medium within a single volume. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the volume.
 """
-InvSctOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray)) = InvSctOpr(vol, vol, sus; useGpu=useGpu)
+InvSctOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray)) where T<:AbstractFloat =
+    InvSctOpr{T}(vol, vol, sus; useGpu=useGpu)
+InvSctOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray)) =
+    InvSctOpr{dfltPrc}(vol, vol, sus; useGpu=useGpu)
+
+"""
+    InvSctOpr{T}(opr::InvSctOpr)
+
+Convert the storage precision of the operator, and of its susceptibility, to `T`.
+"""
+InvSctOpr{T}(opr::InvSctOpr{T}) where T<:AbstractFloat = opr
+InvSctOpr{T}(opr::InvSctOpr) where T<:AbstractFloat =
+    InvSctOpr{T}(Base.typename(typeof(opr.oprVac)).wrapper{T}(opr.oprVac), Complex{T}.(opr.sus))
 
 """
 
@@ -515,7 +589,7 @@ Construct an inverse scattering operator from a full Green function operator.
 InvSctOpr(opr::GlaOpr) = InvSctOpr(opr.sctOpr)
 
 # Reshape a flat susceptibility vector into a 3-tensor matching the volume dimensions.
-function rszSus(sus::AbstractArray{ComplexF64}, cel::NTuple{3,Integer})
+function rszSus(sus::AbstractArray{<:Number}, cel::NTuple{3,Integer})
     if ndims(sus) == 3
         return sus
     elseif ndims(sus) == 1
@@ -529,7 +603,8 @@ function rszSus(sus::AbstractArray{ComplexF64}, cel::NTuple{3,Integer})
 end
 
 """
-    SctOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    SctOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    SctOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
 
 Construct a scattering operator for self-interactions on a single volume.
 
@@ -537,18 +612,21 @@ This constructor creates a self-interaction scattering operator that describes h
 
 # Arguments
 - `vol::GlaVol`: The volume to compute the self-interaction for
-- `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
+- `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `SctOpr`: The scattering operator
 """
-SctOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) = 
-    SctOpr(vol, vol, sus; useGpu=useGpu, slv=slv)
+SctOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat =
+    SctOpr{T}(vol, vol, sus; useGpu=useGpu, slv=slv)
+SctOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) =
+    SctOpr{dfltPrc}(vol, vol, sus; useGpu=useGpu, slv=slv)
 
 """
-    SctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    SctOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    SctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
 
 Construct a scattering operator for external interactions between different volumes.
 
@@ -557,20 +635,22 @@ This constructor creates an external scattering operator that describes how elec
 # Arguments
 - `trgVol::GlaVol`: The target volume where the field will be computed
 - `srcVol::GlaVol`: The source volume containing the sources
-- `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
+- `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `SctOpr`: The scattering operator
 """
-function SctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
-    invSctOpr = InvSctOpr(trgVol, srcVol, sus; useGpu=useGpu)
-    return SctOpr(invSctOpr, slv)
+function SctOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat
+    invSctOpr = InvSctOpr{T}(trgVol, srcVol, sus; useGpu=useGpu)
+    return SctOpr{T}(invSctOpr, slv)
 end
+SctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) =
+    SctOpr{dfltPrc}(trgVol, srcVol, sus; useGpu=useGpu, slv=slv)
 
 """
-    SctOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    SctOpr(opr::GlaOprVac, sus::AbstractArray{<:Number}; slv::GlaSlv=BiCGStabSolver())
 
 Construct a scattering operator from a vacuum Green function operator.
 
@@ -578,17 +658,25 @@ This constructor creates a scattering operator that describes how electromagneti
 
 # Arguments
 - `opr::GlaOprVac`: The vacuum Green function operator to convert into a scattering operator
-- `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
+- `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `SctOpr`: The scattering operator
 """
-function SctOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; slv::GlaSlv=BiCGStabSolver())
-    invSctOpr = InvSctOpr(opr, sus)
-    return SctOpr(invSctOpr, slv)
+function SctOpr(opr::GlaOprVac{T}, sus::AbstractArray{<:Number}; slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat
+    invSctOpr = InvSctOpr{T}(opr, sus)
+    return SctOpr{T}(invSctOpr, slv)
 end
+
+"""
+    SctOpr{T}(opr::SctOpr)
+
+Convert the storage precision of the operator, and of its susceptibility, to `T`. The solver is kept.
+"""
+SctOpr{T}(opr::SctOpr{T}) where T<:AbstractFloat = opr
+SctOpr{T}(opr::SctOpr) where T<:AbstractFloat = SctOpr{T}(InvSctOpr{T}(opr.invSctOpr), opr.slv)
 
 """
     SctOpr(opr::GlaOpr)
@@ -604,7 +692,8 @@ Construct a scattering operator from a full Green function operator.
 SctOpr(opr::GlaOpr) = opr.sctOpr
 
 """
-    GlaOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    GlaOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    GlaOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
 
 Construct a full Green function operator for self-interactions on a single volume.
 
@@ -612,18 +701,21 @@ This constructor creates a self-interaction full Green function operator that co
 
 # Arguments
 - `vol::GlaVol`: The volume to compute the self-interaction for
-- `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
+- `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `GlaOpr`: The full Green function operator
 """
-GlaOpr(vol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) = 
-    GlaOpr(vol, vol, sus; useGpu=useGpu, slv=slv)
+GlaOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat =
+    GlaOpr{T}(vol, vol, sus; useGpu=useGpu, slv=slv)
+GlaOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) =
+    GlaOpr{dfltPrc}(vol, vol, sus; useGpu=useGpu, slv=slv)
 
 """
-    GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    GlaOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
 
 Construct a full Green function operator for external interactions between different volumes.
 
@@ -632,20 +724,22 @@ This constructor creates an external full Green function operator that combines 
 # Arguments
 - `trgVol::GlaVol`: The target volume where the field will be computed
 - `srcVol::GlaVol`: The source volume containing the sources
-- `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
+- `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `GlaOpr`: The full Green function operator
 """
-function GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
-    sctOpr = SctOpr(trgVol, srcVol, sus; useGpu=useGpu, slv=slv)
-    return GlaOpr(sctOpr)
+function GlaOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat
+    sctOpr = SctOpr{T}(trgVol, srcVol, sus; useGpu=useGpu, slv=slv)
+    return GlaOpr{T}(sctOpr)
 end
+GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) =
+    GlaOpr{dfltPrc}(trgVol, srcVol, sus; useGpu=useGpu, slv=slv)
 
 """
-    GlaOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    GlaOpr(opr::GlaOprVac, sus::AbstractArray{<:Number}; slv::GlaSlv=BiCGStabSolver())
 
 Construct a full Green function operator from a vacuum Green function operator.
 
@@ -653,14 +747,22 @@ This constructor creates a full Green function operator that combines the vacuum
 
 # Arguments
 - `opr::GlaOprVac`: The vacuum Green function operator to convert into a full Green function operator
-- `sus::AbstractArray{ComplexF64}`: The susceptibility tensor, either as a flat vector or a 3-tensor
+- `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 - `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `GlaOpr`: The full Green function operator
 """
-GlaOpr(opr::GlaOprVac, sus::AbstractArray{ComplexF64}; slv::GlaSlv=BiCGStabSolver()) = GlaOpr(SctOpr(opr, sus; slv=slv))
+GlaOpr(opr::GlaOprVac, sus::AbstractArray{<:Number}; slv::GlaSlv=BiCGStabSolver()) = GlaOpr(SctOpr(opr, sus; slv=slv))
+
+"""
+    GlaOpr{T}(opr::GlaOpr)
+
+Convert the storage precision of the operator, and of its susceptibility, to `T`. The solver is kept.
+"""
+GlaOpr{T}(opr::GlaOpr{T}) where T<:AbstractFloat = opr
+GlaOpr{T}(opr::GlaOpr) where T<:AbstractFloat = GlaOpr{T}(SctOpr{T}(opr.sctOpr))
 
 """
     GlaOpr(opr::InvSctOpr)
@@ -851,38 +953,39 @@ isgpu(opr::SctOpr) = isgpu(opr.invSctOpr)
 isgpu(opr::GlaOpr) = isgpu(opr.sctOpr)
 
 """
-    setSus!(opr::InvSctOpr, sus::AbstractArray{ComplexF64})
+    setSus!(opr::InvSctOpr, sus::AbstractArray{<:Number})
 
 Sets the susceptibility tensor for the inverse scattering operator.
 
 # Arguments
 - `opr::InvSctOpr`: The inverse scattering operator to modify.
-- `sus::AbstractArray{ComplexF64}`: The new susceptibility tensor, either as a flat vector or a 3-tensor.
+- `sus::AbstractArray{<:Number}`: The new susceptibility tensor, either as a flat vector or a 3-tensor, converted to the precision of the operator.
 
 # Returns
 - The modified operator with the new susceptibility tensor set.
 """
-function setSus!(opr::InvSctOpr, sus)
+function setSus!(opr::InvSctOpr{T}, sus) where T<:AbstractFloat
     if opr.oprVac isa GlaCmpOprVac
-        opr.sus = _cmpSus(opr.oprVac.srcCvl, sus, isgpu(opr.oprVac))
+        opr.sus = _cmpSus(T, opr.oprVac.srcCvl, sus, isgpu(opr.oprVac))
         return opr
     end
     # Reshape susceptibility if needed and validate size
     if size(sus) != opr.oprVac.mem.srcVol.cel
         throw(ArgumentError("Susceptibility tensor dimensions $(size(sus)) do not match source volume dimensions $(opr.oprVac.mem.srcVol.cel)"))
     end
-    opr.sus = rszSus(sus, opr.oprVac.mem.srcVol.cel)
+    susTen = rszSus(sus, opr.oprVac.mem.srcVol.cel)
+    opr.sus = susTen isa AbstractArray{Complex{T}} ? susTen : Complex{T}.(susTen)
     return opr
 end
 
 """
-    setSus!(opr::SctOpr, sus::AbstractArray{ComplexF64})
+    setSus!(opr::SctOpr, sus::AbstractArray{<:Number})
 
 Sets the susceptibility tensor for the scattering operator.
 
 # Arguments
 - `opr::SctOpr`: The scattering operator to modify.
-- `sus::AbstractArray{ComplexF64}`: The new susceptibility tensor, either as a flat vector or a 3-tensor.
+- `sus::AbstractArray{<:Number}`: The new susceptibility tensor, either as a flat vector or a 3-tensor, converted to the precision of the operator.
 
 # Returns
 - The modified operator with the new susceptibility tensor set.
@@ -893,13 +996,13 @@ function setSus!(opr::SctOpr, sus)
 end
 
 """
-    setSus!(opr::GlaOpr, sus::AbstractArray{ComplexF64})
+    setSus!(opr::GlaOpr, sus::AbstractArray{<:Number})
 
 Sets the susceptibility tensor for the full Green function operator.
 
 # Arguments
 - `opr::GlaOpr`: The full Green function operator to modify.
-- `sus::AbstractArray{ComplexF64}`: The new susceptibility tensor, either as a flat vector or a 3-tensor.
+- `sus::AbstractArray{<:Number}`: The new susceptibility tensor, either as a flat vector or a 3-tensor, converted to the precision of the operator.
 
 # Returns
 - The modified operator with the new susceptibility tensor set.
@@ -1021,27 +1124,27 @@ function Serialization.serialize(io::IO, opr::GlaOprVac)
     serialize(io, opr.srcMsk)
     serialize(io, opr.trgMsk)
 end
-function Serialization.deserialize(io::IO, ::Type{GlaOprVac})
+function Serialization.deserialize(io::IO, ::Type{<:GlaOprVac})
     mem = deserialize(io, GlaVacOprMem)
     srcMsk = deserialize(io)
     trgMsk = deserialize(io)
     return GlaOprVac(mem, srcMsk, trgMsk)
 end
 Serialization.serialize(io::IO, opr::AsyGlaOprVac) = serialize(io, opr.mem)
-Serialization.deserialize(io::IO, ::Type{AsyGlaOprVac}) = AsyGlaOprVac(deserialize(io, GlaVacOprMem))
+Serialization.deserialize(io::IO, ::Type{<:AsyGlaOprVac}) = AsyGlaOprVac(deserialize(io, GlaVacOprMem))
 Serialization.serialize(io::IO, opr::SymGlaOprVac) = serialize(io, opr.mem)
-Serialization.deserialize(io::IO, ::Type{SymGlaOprVac}) = SymGlaOprVac(deserialize(io, GlaVacOprMem))
+Serialization.deserialize(io::IO, ::Type{<:SymGlaOprVac}) = SymGlaOprVac(deserialize(io, GlaVacOprMem))
 Serialization.serialize(io::IO, opr::MulRegGlaOprVac) = serialize(io, opr.oprMat)
 # The blocks go through the generic serializer, which rebuilds their FFTW plans
 # on load, see vacuum/glaVacOprMem.jl
-Serialization.deserialize(io::IO, ::Type{MulRegGlaOprVac}) = MulRegGlaOprVac(deserialize(io))
+Serialization.deserialize(io::IO, ::Type{<:MulRegGlaOprVac}) = MulRegGlaOprVac(deserialize(io))
 function Serialization.serialize(io::IO, opr::GlaSndOprVac)
     serialize(io, opr.opr)
     serialize(io, opr.trgRat)
     serialize(io, opr.srcRat)
     serialize(io, opr.wgt)
 end
-function Serialization.deserialize(io::IO, ::Type{GlaSndOprVac})
+function Serialization.deserialize(io::IO, ::Type{<:GlaSndOprVac})
     innOpr = deserialize(io, GlaOprVac)
     trgRat = deserialize(io)
     srcRat = deserialize(io)
@@ -1054,7 +1157,7 @@ function Serialization.serialize(io::IO, opr::GlaCmpOprVac)
     # The blocks go through the generic serializer, as for MulRegGlaOprVac above
     serialize(io, opr.blkMat)
 end
-function Serialization.deserialize(io::IO, ::Type{GlaCmpOprVac})
+function Serialization.deserialize(io::IO, ::Type{<:GlaCmpOprVac})
     trgCvl = deserialize(io)
     srcCvl = deserialize(io)
     blkMat = deserialize(io)
@@ -1063,10 +1166,10 @@ end
 #= The written blocks already carry the Fourier coefficients of the part, so the
 raw constructor is the one to read them back with. =#
 Serialization.serialize(io::IO, opr::AsyGlaCmpOprVac) = serialize(io, opr.opr)
-Serialization.deserialize(io::IO, ::Type{AsyGlaCmpOprVac}) =
+Serialization.deserialize(io::IO, ::Type{<:AsyGlaCmpOprVac}) =
     AsyGlaCmpOprVac(deserialize(io, GlaCmpOprVac), Val(:raw))
 Serialization.serialize(io::IO, opr::SymGlaCmpOprVac) = serialize(io, opr.opr)
-Serialization.deserialize(io::IO, ::Type{SymGlaCmpOprVac}) =
+Serialization.deserialize(io::IO, ::Type{<:SymGlaCmpOprVac}) =
     SymGlaCmpOprVac(deserialize(io, GlaCmpOprVac), Val(:raw))
 function Serialization.serialize(io::IO, opr::InvSctOpr)
     #= The vacuum operator is written by whichever method its runtime type
@@ -1079,7 +1182,7 @@ function Serialization.serialize(io::IO, opr::InvSctOpr)
     end
     serialize(io, sus)
 end
-function Serialization.deserialize(io::IO, ::Type{InvSctOpr})
+function Serialization.deserialize(io::IO, ::Type{<:InvSctOpr})
     vacTyp = deserialize(io)
     oprVac = deserialize(io, vacTyp)
     sus = deserialize(io)
@@ -1089,12 +1192,12 @@ function Serialization.serialize(io::IO, opr::SctOpr)
     serialize(io, opr.invSctOpr)
     serialize(io, opr.slv)
 end
-function Serialization.deserialize(io::IO, ::Type{SctOpr})
+function Serialization.deserialize(io::IO, ::Type{<:SctOpr})
     invSctOpr = deserialize(io, InvSctOpr)
     slv = deserialize(io)
     return SctOpr(invSctOpr, slv)
 end
 Serialization.serialize(io::IO, opr::GlaOpr) = serialize(io, opr.sctOpr)
-Serialization.deserialize(io::IO, ::Type{GlaOpr}) = GlaOpr(deserialize(io, SctOpr))
+Serialization.deserialize(io::IO, ::Type{<:GlaOpr}) = GlaOpr(deserialize(io, SctOpr))
 
 end # module

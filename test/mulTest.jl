@@ -4,11 +4,11 @@
 const mulScl16 = (1//16, 1//16, 1//16)
 
 # An external pair two cells apart, so the proximity check has to be silenced
-const _mulExt = GlaOprVac(GlaVol((2,2,2), stdScl, (4//32, 0//1, 0//1)), _vol2s;
+const _mulExt = GlaOprVac{Float64}(GlaVol((2,2,2), stdScl, (4//32, 0//1, 0//1)), _vol2s;
     prxWrn=false)
 const mulCvl = GlaCmpVol([GlaVol((2,2,2), mulScl16, (0//1, 0//1, 0//1)),
     GlaVol((2,2,2), mulScl16, (1//8, 0//1, 0//1))])
-const _mulCmp = GlaCmpOprVac(mulCvl)
+const _mulCmp = GlaCmpOprVac{Float64}(mulCvl)
 const _mulMlr = MulRegGlaOprVac(reshape(
     [GlaOprVac(deepcopy(_selfMem4)), GlaOprVac(deepcopy(_extMem4))], 2, 1))
 
@@ -108,7 +108,7 @@ end
 
 @testset "GlaFld mul!" begin
     for (opr, cvl) in ((_mulCmp, mulCvl), (_g0s(), GlaCmpVol(_vol2s)))
-        inp = discretize!(zerofield(cvl), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+        inp = discretize!(zerofield(Float64, cvl), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
         sav = copy(inp.dat)
         ref = opr * inp
         @test ref isa GlaFld
@@ -125,7 +125,7 @@ end
 
 @testset "mul! GPU" begin
     if CUDA.functional()
-        opr = GlaOprVac(_vol2s; useGpu=true)
+        opr = GlaOprVac{Float64}(_vol2s; useGpu=true)
         inp = CuArray(randn(ComplexF64, size(opr, 2)))
         sav = Array(inp)
         ref = Array(opr * inp)
@@ -141,7 +141,7 @@ end
         # A host input on a device operator warns and copies
         @test_logs (:warn, r"not a CuArray") opr * Array(inp)
 
-        cmpGpu = GlaCmpOprVac(mulCvl; useGpu=true)
+        cmpGpu = GlaCmpOprVac{Float64}(mulCvl; useGpu=true)
         gInp = CuArray(randn(ComplexF64, size(cmpGpu, 2)))
         gRef = Array(cmpGpu * gInp)
         gOut = fill!(similar(gInp, size(cmpGpu, 1)), mulNaN)

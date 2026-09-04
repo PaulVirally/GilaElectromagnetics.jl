@@ -11,6 +11,16 @@
     @test isnothing(bcg.maxItr)
     @test isnothing(bcg.absTol)
     @test isnothing(bcg.relTol)
+
+    rfn = MixPrcRfn(Float32)
+    @test rfn isa MixPrcRfn{Float32}
+    @test rfn.innSlv isa GMRESSolver
+    @test isnothing(rfn.oprLo)
+    @test isnothing(rfn.maxItr)
+    @test isnothing(rfn.absTol)
+    @test isnothing(rfn.relTol)
+    @test MixedPrecisionRefinement === MixPrcRfn
+    @test MixPrcRfn(Float32; innSlv=BiCGStabSolver()).innSlv isa BiCGStabSolver
 end
 
 @testset "ini! defaults" begin
@@ -44,12 +54,33 @@ end
     @test bcg2.maxItr == 500
     @test bcg2.absTol == 1e-9
     @test bcg2.relTol == 1e-7
+
+    rfn = MixPrcRfn(Float32)
+    ini!(rfn, v)
+    @test rfn.maxItr == 20
+    @test rfn.absTol == zero(Float64)
+    @test rfn.relTol == sqrt(eps(Float64))
+
+    # Pre-set fields are not overwritten
+    rfn2 = MixPrcRfn(Float32; maxItr=7, absTol=1e-9, relTol=1e-10)
+    ini!(rfn2, v)
+    @test rfn2.maxItr == 7
+    @test rfn2.absTol == 1e-9
+    @test rfn2.relTol == 1e-10
+end
+
+@testset "MixPrcRfn precision guards" begin
+    opr32 = GlaOprVac{Float32}(_g0s()) # Converted, so no integration cost
+    n = size(opr32, 2)
+    # Refining fp32 with fp32, and any operator/right hand side mismatch, throw
+    @test_throws ArgumentError solve(opr32, zeros(ComplexF32, n), MixPrcRfn(Float32))
+    @test_throws ArgumentError solve(opr32, zeros(ComplexF64, n), MixPrcRfn(Float32))
 end
 
 @testset "solve residuals — GlaOprVac" begin
     for dim in [(4,4,4), (4,2,6)]
         vol = mkVol(dim)
-        opr = GlaOprVac(vol)
+        opr = GlaOprVac{Float64}(vol)
         rhs = ones(ComplexF64, size(opr, 1))
 
         sol_bcg = solve(opr, rhs, BiCGStabSolver())
@@ -66,7 +97,7 @@ end
     for dim in [(4,4,4), (4,2,6)]
         vol = mkVol(dim)
         sus = mkSus(dim)
-        opr = InvSctOpr(vol, sus)
+        opr = InvSctOpr{Float64}(vol, sus)
         rhs = ones(ComplexF64, size(opr, 1))
 
         sol_bcg = solve(opr, rhs, BiCGStabSolver())
@@ -102,7 +133,7 @@ end
 @testset "solve GPU" begin
     if CUDA.functional()
         vol = mkVol((4,4,4))
-        opr = GlaOprVac(vol; useGpu=true)
+        opr = GlaOprVac{Float64}(vol; useGpu=true)
         rhs = CUDA.ones(ComplexF64, size(opr, 1))
 
         sol_bcg = solve(opr, rhs, BiCGStabSolver())

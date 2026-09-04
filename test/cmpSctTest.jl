@@ -42,7 +42,7 @@ dense checks stay small: a fine (4,4,4) region face to face with a coarse
 expensive part of these tests, so one vacuum operator serves them all. =#
 const sctVol = GlaVol((4, 2, 2), sctScl16, sctOrg0)
 const sctCvl = refine(GlaCmpVol(sctVol), ((-1//16, 0//1, 0//1), (1//8, 1//8, 1//8)))
-const sctVac = GlaCmpOprVac(sctCvl)
+const sctVac = GlaCmpOprVac{Float64}(sctCvl)
 const sctInv = InvSctOpr(sctVac, sctChi)
 const sctMat = dnsMat(sctInv)
 const sctOne = GlaCmpVol(GlaVol((2, 2, 2), sctScl16, sctOrg0))
@@ -72,13 +72,13 @@ const sctOne = GlaCmpVol(GlaVol((2, 2, 2), sctScl16, sctOrg0))
     @test occursin("composite", sprint(show, sctInv))
     @test occursin("composite", sprint(show, gla))
     # The composite volume takes the place of the volume in every constructor
-    @test InvSctOpr(sctOne, 0.5 + 0.1im) isa InvSctOpr
-    @test SctOpr(sctOne, 0.5 + 0.1im; slv=GMRESSolver()) isa SctOpr
-    @test GreenOperator(sctOne, 0.5 + 0.1im) isa GlaOpr
+    @test InvSctOpr{Float64}(sctOne, 0.5 + 0.1im) isa InvSctOpr
+    @test SctOpr{Float64}(sctOne, 0.5 + 0.1im; slv=GMRESSolver()) isa SctOpr
+    @test GreenOperator{Float64}(sctOne, 0.5 + 0.1im) isa GlaOpr
     @test InverseScatteringOperator(sctVac, 0.5 + 0.1im) isa InvSctOpr
     @test ScatteringOperator(sctVac, 0.5 + 0.1im) isa SctOpr
     # A two body vacuum operator is not a scattering geometry
-    extOpr = GlaCmpOprVac(sctOne, GlaCmpVol(GlaVol((2, 2, 2), sctScl16, (1//2, 0//1, 0//1))))
+    extOpr = GlaCmpOprVac{Float64}(sctOne, GlaCmpVol(GlaVol((2, 2, 2), sctScl16, (1//2, 0//1, 0//1))))
     @test_throws ArgumentError InvSctOpr(extOpr, 0.5 + 0.1im)
 end
 
@@ -118,7 +118,7 @@ end
     @test norm(invSct * (sctGmr * vecX) - vecX) < 1e-7 * norm(vecX)
     @test norm(sctGmr * vecX - sct * vecX) < 1e-6 * norm(sct * vecX)
     # A field goes in and a field on the same tiling comes out
-    fld = discretize!(zerofield(sctCvl), sctCur)
+    fld = discretize!(zerofield(Float64, sctCvl), sctCur)
     out = sct * fld
     @test out isa GlaFld
     @test out.cvol === sctCvl
@@ -134,7 +134,7 @@ end
     @test glaOut isa GlaFld
     @test norm(glaOut.dat - (sctVac * out).dat) < 1e-7 * norm(glaOut.dat)
     # A field on another tiling does not fit
-    @test_throws ArgumentError sct * zerofield(sctOne)
+    @test_throws ArgumentError sct * zerofield(Float64, sctOne)
     @test_throws ArgumentError invSct * zeros(ComplexF64, 215)
 end
 
@@ -153,7 +153,7 @@ end
     tenSus = [reshape(susCel[1:64], (4, 4, 4)), reshape(susCel[65:72], (2, 2, 2))]
     @test InvSctOpr(sctVac, tenSus).sus ≈ susFun
     # A bare tensor only fits a tiling of one region
-    @test InvSctOpr(sctOne, fill(ComplexF64(0.3), 2, 2, 2)).sus == fill(ComplexF64(0.3), 24)
+    @test InvSctOpr{Float64}(sctOne, fill(ComplexF64(0.3), 2, 2, 2)).sus == fill(ComplexF64(0.3), 24)
     @test_throws ArgumentError InvSctOpr(sctVac, fill(ComplexF64(0.3), 4, 4, 4))
     # Sizes that do not fit the tiling
     @test_throws ArgumentError InvSctOpr(sctVac, [fill(ComplexF64(0.3), 4, 4, 4), fill(ComplexF64(0.3), 3, 3, 3)])
@@ -188,8 +188,8 @@ end
     vol = GlaVol((4, 4, 4), sctScl16, sctOrg0)
     chi = 0.5 + 0.1im
     susTen = fill(ComplexF64(chi), 4, 4, 4)
-    cmpVac = GlaCmpOprVac(GlaCmpVol(vol))
-    plnVac = GlaOprVac(vol)
+    cmpVac = GlaCmpOprVac{Float64}(GlaCmpVol(vol))
+    plnVac = GlaOprVac{Float64}(vol)
     cmpInv = InvSctOpr(cmpVac, chi)
     plnInv = InvSctOpr(plnVac, susTen)
     @test dnsMat(cmpInv) == dnsMat(plnInv)
@@ -197,7 +197,7 @@ end
     @test SctOpr(cmpVac, chi) * vecX ≈ SctOpr(plnVac, susTen) * vecX
     @test GlaOpr(cmpVac, chi) * vecX ≈ GlaOpr(plnVac, susTen) * vecX
     # A plain operator also takes a field
-    fld = discretize!(zerofield(vol), sctCur)
+    fld = discretize!(zerofield(Float64, vol), sctCur)
     @test (plnInv * fld).dat ≈ cmpInv * collect(fld.dat)
 end
 
@@ -206,9 +206,9 @@ end
     over half the domain. The two answers agree to the discretization error of
     the coarse half, which is what the refinement is there to control. =#
     finVol = GlaVol((8, 4, 4), sctScl32, sctOrg0)
-    finFld = discretize!(zerofield(finVol), sctCur)
-    cmpFld = discretize!(zerofield(sctCvl), sctCur)
-    finOut = SctOpr(GlaCmpVol(finVol), sctChi) * finFld
+    finFld = discretize!(zerofield(Float64, finVol), sctCur)
+    cmpFld = discretize!(zerofield(Float64, sctCvl), sctCur)
+    finOut = SctOpr{Float64}(GlaCmpVol(finVol), sctChi) * finFld
     cmpOut = SctOpr(sctVac, sctChi) * cmpFld
     finArr = regrid(finOut, sctScl32)
     cmpArr = regrid(cmpOut, sctScl32)
@@ -227,14 +227,14 @@ end
 
 @testset "Composite scattering GPU" begin
     if CUDA.functional()
-        oprGpu = InvSctOpr(sctCvl, sctChi; useGpu=true)
+        oprGpu = InvSctOpr{Float64}(sctCvl, sctChi; useGpu=true)
         @test isgpu(oprGpu)
         @test oprGpu.sus isa CuVector{ComplexF64}
-        fldGpu = discretize!(zerofield(sctCvl; useGpu=true), sctCur)
+        fldGpu = discretize!(zerofield(Float64, sctCvl; useGpu=true), sctCur)
         outGpu = oprGpu * fldGpu
         @test outGpu isa GlaFld
         @test parent(outGpu) isa CuVector{ComplexF64}
-        fldCpu = discretize!(zerofield(sctCvl), sctCur)
+        fldCpu = discretize!(zerofield(Float64, sctCvl), sctCur)
         outCpu = sctInv * fldCpu
         @test norm(Array(outGpu.dat) - outCpu.dat) < 1e-10 * norm(outCpu.dat)
         sctGpu = SctOpr(oprGpu.oprVac, sctChi)

@@ -3,7 +3,7 @@ using ..GilaVolumes
 #=
 restructure input vector to match partitioned Green function data
 =#
-function genPrt!(actVec::AbstractArray{ComplexF64, 4}, cmpInf::GlaKerOpt, mixInf::GlaExtInf, parNum::Integer)
+function genPrt!(actVec::AbstractArray{<:Complex, 4}, cmpInf::GlaKerOpt, mixInf::GlaExtInf, parNum::Integer)
     maxItr = mixInf.srcCel
     orgVec = similar(actVec, maxItr..., 3, parNum)
     ker = genPrtKer!(bckEnd(cmpInf))
@@ -15,7 +15,7 @@ function genPrt!(actVec::AbstractArray{ComplexF64, 4}, cmpInf::GlaKerOpt, mixInf
     memCln!(actVec)
     return orgVec
 end
-@kernel function genPrtKer!(stp::NTuple{3,Integer}, off::NTuple{3,Integer}, dirItr::Integer, parItr::Integer, actVec::AbstractArray{ComplexF64,4}, orgVec::AbstractArray{ComplexF64,5})
+@kernel function genPrtKer!(stp::NTuple{3,Integer}, off::NTuple{3,Integer}, dirItr::Integer, parItr::Integer, actVec::AbstractArray{<:Complex,4}, orgVec::AbstractArray{<:Complex,5})
     # get the global linear index
     itr = @index(Global)
 
@@ -41,7 +41,7 @@ end
 #=
 split a branch so that even and odd Fourier coefficients are independent
 =#
-function sptBrn!(prgVec::AbstractArray{ComplexF64, 5}, sptDir::Integer, phzVec::AbstractVector{ComplexF64}, parNum::Integer, orgVec::AbstractArray{ComplexF64, 5}, cmpInf::GlaKerOpt)
+function sptBrn!(prgVec::AbstractArray{<:Complex, 5}, sptDir::Integer, phzVec::AbstractVector{<:Complex}, parNum::Integer, orgVec::AbstractArray{<:Complex, 5}, cmpInf::GlaKerOpt)
     vecSze = size(orgVec)[1:3]
     ker = sptKer!(bckEnd(cmpInf))
     for parItr in 1:parNum
@@ -49,7 +49,7 @@ function sptBrn!(prgVec::AbstractArray{ComplexF64, 5}, sptDir::Integer, phzVec::
     end
     return nothing
 end
-@kernel function sptKer!(sptDir::Integer, phzVec::AbstractVector{ComplexF64}, parItr::Integer, orgVec::AbstractArray{ComplexF64, 5}, prgVec::AbstractArray{ComplexF64, 5})
+@kernel function sptKer!(sptDir::Integer, phzVec::AbstractVector{<:Complex}, parItr::Integer, orgVec::AbstractArray{<:Complex, 5}, prgVec::AbstractArray{<:Complex, 5})
     # linear index
     itr = @index(Global)
 
@@ -78,7 +78,7 @@ end
 #=
 split branches for external Green function
 =#
-function sptBrn!(prgVecEve::AbstractArray{ComplexF64,5}, prgVecOdd::AbstractArray{ComplexF64,5}, dirSpt::Integer, phzVec::AbstractVector{ComplexF64}, mixInf::GlaExtInf, parNum::Integer, orgVec::AbstractArray{ComplexF64,5}, cmpInf::GlaKerOpt)
+function sptBrn!(prgVecEve::AbstractArray{<:Complex,5}, prgVecOdd::AbstractArray{<:Complex,5}, dirSpt::Integer, phzVec::AbstractVector{<:Complex}, mixInf::GlaExtInf, parNum::Integer, orgVec::AbstractArray{<:Complex,5}, cmpInf::GlaKerOpt)
     brnSze = div.(mixInf.trgCel .+ mixInf.srcCel, 2)
     curSze = size(orgVec)[1:3]
     prgSze = ntuple(x -> x==dirSpt ? brnSze[x] : curSze[x], 3)
@@ -104,7 +104,7 @@ function sptBrn!(prgVecEve::AbstractArray{ComplexF64,5}, prgVecOdd::AbstractArra
     end
     return nothing
 end
-@kernel function sptBrnExt!(ovrRng::NTuple{3,UnitRange{Int}}, stdRng::NTuple{3,UnitRange{Int}}, ovrOff::NTuple{3,Int}, dirSpt::Int, dirItr::Int, parItr::Int, phzVec::AbstractVector{ComplexF64}, orgVec::AbstractArray{ComplexF64,5}, eveVec::AbstractArray{ComplexF64,5}, oddVec::AbstractArray{ComplexF64,5})
+@kernel function sptBrnExt!(ovrRng::NTuple{3,UnitRange{Int}}, stdRng::NTuple{3,UnitRange{Int}}, ovrOff::NTuple{3,Int}, dirSpt::Int, dirItr::Int, parItr::Int, phzVec::AbstractVector{<:Complex}, orgVec::AbstractArray{<:Complex,5}, eveVec::AbstractArray{<:Complex,5}, oddVec::AbstractArray{<:Complex,5})
     # linear global index
     itr = @index(Global)
 
@@ -155,7 +155,7 @@ end
 #=
 merge two branches, eliminating unused coefficients
 =#
-function mrgBrn!(orgVec::AbstractArray{ComplexF64,5}, mrgDir::Integer, parNumTrg::Integer, phzVec::AbstractVector{ComplexF64}, prgVec::AbstractArray{ComplexF64,5}, cmpInf::GlaKerOpt)
+function mrgBrn!(orgVec::AbstractArray{<:Complex,5}, mrgDir::Integer, parNumTrg::Integer, phzVec::AbstractVector{<:Complex}, prgVec::AbstractArray{<:Complex,5}, cmpInf::GlaKerOpt)
     # launch one fused kernel per (partition, direction)
     vecSze = size(orgVec)[1:3]
     ker = mrgKer!(bckEnd(cmpInf))
@@ -169,7 +169,7 @@ function mrgBrn!(orgVec::AbstractArray{ComplexF64,5}, mrgDir::Integer, parNumTrg
     memCln!(prgVec)
     return nothing
 end
-@kernel function mrgKer!(mrgDir::Integer, phzVec::AbstractVector{ComplexF64}, dirItr::Integer, prtItr::Integer, orgVec::AbstractArray{ComplexF64,5}, prgVec::AbstractArray{ComplexF64,5})
+@kernel function mrgKer!(mrgDir::Integer, phzVec::AbstractVector{<:Complex}, dirItr::Integer, prtItr::Integer, orgVec::AbstractArray{<:Complex,5}, prgVec::AbstractArray{<:Complex,5})
     # linear index
     itr = @index(Global)
 
@@ -191,16 +191,16 @@ end
 
         # merge branches in place
         orgVec[itrX, itrY, itrZ, dirItr, prtItr] =
-          0.5 * (
+          (
             orgVec[itrX, itrY, itrZ, dirItr, prtItr] +
             conj(ph) * prgVec[itrX, itrY, itrZ, dirItr, prtItr]
-          )
+          ) / 2
     end
 end
 #=
 generalized host merge allowing for different output size
 =#
-function mrgBrn!(mrgVec::AbstractArray{ComplexF64,5}, mrgDir::Integer, parNumTrg::Integer, phzVec::AbstractVector{ComplexF64}, eveVec::AbstractArray{ComplexF64,5}, oddVec::AbstractArray{ComplexF64,5}, cmpInf::GlaKerOpt)
+function mrgBrn!(mrgVec::AbstractArray{<:Complex,5}, mrgDir::Integer, parNumTrg::Integer, phzVec::AbstractVector{<:Complex}, eveVec::AbstractArray{<:Complex,5}, oddVec::AbstractArray{<:Complex,5}, cmpInf::GlaKerOpt)
     # 3D sizes
     mrgSze3 = size(mrgVec)[1:3]
     curSze3 = size(eveVec)[1:3]
@@ -225,7 +225,7 @@ function mrgBrn!(mrgVec::AbstractArray{ComplexF64,5}, mrgDir::Integer, parNumTrg
     memCln!(oddVec)
     return nothing
 end
-@kernel function mrgKerGnl!(topStop::Integer, offSet::Integer, mrgDir::Integer, dirItr::Integer, prtItr::Integer, phzVec::AbstractVector{ComplexF64}, eveVec::AbstractArray{ComplexF64,5}, oddVec::AbstractArray{ComplexF64,5}, mrgVec::AbstractArray{ComplexF64,5})
+@kernel function mrgKerGnl!(topStop::Integer, offSet::Integer, mrgDir::Integer, dirItr::Integer, prtItr::Integer, phzVec::AbstractVector{<:Complex}, eveVec::AbstractArray{<:Complex,5}, oddVec::AbstractArray{<:Complex,5}, mrgVec::AbstractArray{<:Complex,5})
     # linear index of this work‑item
     itr = @index(Global)
 
@@ -260,24 +260,24 @@ end
         if gCoord <= topStop
             # top half merge
             mrgVec[itrX, itrY, itrZ, dirItr, prtItr] =
-              0.5 * (
+              (
                 eveVec[inX, inY, inZ, dirItr, prtItr] +
                 conj(ph) * oddVec[inX, inY, inZ, dirItr, prtItr]
-              )
+              ) / 2
         else
             # bottom half merge
             mrgVec[itrX, itrY, itrZ, dirItr, prtItr] =
-              0.5 * (
+              (
                 eveVec[inX, inY, inZ, dirItr, prtItr] -
                 conj(ph) * oddVec[inX, inY, inZ, dirItr, prtItr]
-              )
+              ) / 2
         end
     end
 end
 #=
 merge partitions and return output vector 
 =#
-function mrgPrt!(mixInf::GlaExtInf, cmpInf::GlaKerOpt, parNum::Integer, prtVec::AbstractArray{ComplexF64, 5})
+function mrgPrt!(mixInf::GlaExtInf, cmpInf::GlaKerOpt, parNum::Integer, prtVec::AbstractArray{<:Complex, 5})
     maxItr = mixInf.trgCel
     mrgVec = similar(prtVec, (mixInf.trgDiv .* mixInf.trgCel)..., 3)
     sncGpu(cmpInf)
@@ -291,7 +291,7 @@ function mrgPrt!(mixInf::GlaExtInf, cmpInf::GlaKerOpt, parNum::Integer, prtVec::
     memCln!(prtVec)
     return mrgVec
 end
-@kernel function mrgPrtKer!(stp::NTuple{3,Integer}, off::NTuple{3,Integer}, dirItr::Integer, parItr::Integer, mrgVec::AbstractArray{ComplexF64,4}, prtVec::AbstractArray{ComplexF64,5})
+@kernel function mrgPrtKer!(stp::NTuple{3,Integer}, off::NTuple{3,Integer}, dirItr::Integer, parItr::Integer, mrgVec::AbstractArray{<:Complex,4}, prtVec::AbstractArray{<:Complex,5})
     # get the global linear index
     itr = @index(Global)
 

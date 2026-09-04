@@ -7,22 +7,22 @@ using Serialization
 using ..GilaVolumes
 
 """
-    GlaVacOprMem
+    GlaVacOprMem{T<:AbstractFloat}
 
-Memory structure for the vacuum Green function operator. This structure holds all the memory needed for computing the vacuum Green function operator. The structure is designed to minimize memory allocation during computation. The Fourier transform plans are used to efficiently compute the Green function integrals. The phase information is used to handle the splitting of Fourier transforms.
+Memory structure for the vacuum Green function operator. `T` is the real storage precision of the operator data (`Complex{T}`); generation is always performed in `Float64` and rounded once into `egoFur`. This structure holds all the memory needed for computing the vacuum Green function operator. The structure is designed to minimize memory allocation during computation. The Fourier transform plans are used to efficiently compute the Green function integrals. The phase information is used to handle the splitting of Fourier transforms.
 
 # Fields
-- `cmpInf::GlaKerOpt`: Computation information, settings and kernel options, see `GlaKerOpt`
+- `cmpInf::GlaKerOpt{T}`: Computation information, settings and kernel options, see `GlaKerOpt`
 - `trgVol::GlaVol`: Target volume of Green function
 - `srcVol::GlaVol`: Source volume of Green function
 - `mixInf::GlaExtInf`: Information for matching source and target grids, see `GlaExtInf`
 - `dimInf::NTuple{3,Integer}`: Dimension information for Green function volumes, host side
-- `egoFur::AbstractVector{<:AbstractArray{ComplexF64}}`: Unique Fourier transform data for circulant Green function
+- `egoFur::AbstractVector{<:AbstractArray{Complex{T}}}`: Unique Fourier transform data for circulant Green function
 - `fftPlnFwd::AbstractVector{<:AbstractFFTs.Plan}`: Forward Fourier transform plans
 - `fftPlnRev::AbstractVector{<:AbstractFFTs.Plan}`: Reverse Fourier transform plans
 - `adjFftPlnFwd::AbstractVector{<:AbstractFFTs.Plan}`: Forward Fourier transform plans for adjoint
 - `adjFftPlnRev::AbstractVector{<:AbstractFFTs.Plan}`: Reverse Fourier transform plans for adjoint
-- `phzInf::AbstractVector{<:AbstractArray{ComplexF64}}`: Phase vector for splitting Fourier transforms
+- `phzInf::AbstractVector{<:AbstractArray{Complex{T}}}`: Phase vector for splitting Fourier transforms
 
 # Notes
 - This structure holds all the memory needed for computing the vacuum Green function operator
@@ -30,18 +30,18 @@ Memory structure for the vacuum Green function operator. This structure holds al
 - The Fourier transform plans are used to efficiently compute the Green function integrals
 - The phase information is used to handle the splitting of Fourier transforms
 """
-mutable struct GlaVacOprMem
-    cmpInf::GlaKerOpt
+mutable struct GlaVacOprMem{T<:AbstractFloat}
+    cmpInf::GlaKerOpt{T}
     trgVol::GlaVol
     srcVol::GlaVol
     mixInf::GlaExtInf
     dimInf::NTuple{3,Integer} 
-    egoFur::AbstractVector{<:AbstractArray{ComplexF64}}
+    egoFur::AbstractVector{<:AbstractArray{Complex{T}}}
     fftPlnFwd::AbstractVector{<:AbstractFFTs.Plan}
     fftPlnRev::AbstractVector{<:AbstractFFTs.Plan}
     adjFftPlnFwd::AbstractVector{<:AbstractFFTs.Plan}
     adjFftPlnRev::AbstractVector{<:AbstractFFTs.Plan}
-    phzInf::AbstractVector{<:AbstractArray{ComplexF64}}
+    phzInf::AbstractVector{<:AbstractArray{Complex{T}}}
 end
 #=
 If intConTest.jl was failed the default intOrd used in the simplified constructor
@@ -50,21 +50,21 @@ It may be prudent to create the associated GlaVacOprMem with higher order.
 =#
 
 """
-    GlaVacOprMem(cmpInf::GlaKerOpt, egoFur::AbstractVector{<:AbstractArray{ComplexF64}}, trgVol::GlaVol, srcVol::GlaVol=trgVol)
+    GlaVacOprMem(cmpInf::GlaKerOpt{T}, egoFur::AbstractVector{<:AbstractArray{Complex{T}}}, trgVol::GlaVol, srcVol::GlaVol=trgVol)
 
 Prepare memory for Green function operator. When called with a single GlaVol, 
 or identical source and target volumes, yields the self construction. 
 
 # Arguments
-- `cmpInf::GlaKerOpt`: Computation information, settings and kernel options, see `GlaKerOpt`.
-- `egoFur::AbstractVector{<:AbstractArray{ComplexF64}}`: Unique Fourier transform data for Green function.
+- `cmpInf::GlaKerOpt{T}`: Computation information, settings and kernel options, see `GlaKerOpt`.
+- `egoFur::AbstractVector{<:AbstractArray{Complex{T}}}`: Unique Fourier transform data for Green function.
 - `trgVol::GlaVol`: Target volume or self volume definition.
 - `srcVol::Union{Nothing,GlaVol}=nothing`: Source volume for external construction. Nothing will generate the self construction.
 
 # Returns
-- `GlaVacOprMem`: The memory structure for the Green function operator.
+- `GlaVacOprMem{T}`: The memory structure for the Green function operator.
 """
-function GlaVacOprMem(cmpInf::GlaKerOpt, egoFur::AbstractVector{<:AbstractArray{ComplexF64}}, trgVol::GlaVol, srcVol::GlaVol=trgVol)
+function GlaVacOprMem(cmpInf::GlaKerOpt{T}, egoFur::AbstractVector{<:AbstractArray{Complex{T}}}, trgVol::GlaVol, srcVol::GlaVol=trgVol) where T<:AbstractFloat
     mixInf = genEveExtInf(trgVol, srcVol)
     # branching depth of multiplication
     lvl = 3
@@ -82,19 +82,19 @@ end
 include("glaVacOprMemGen.jl") # For genEgoCrc!
 
 """
-    GlaVacOprMem(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol=trgVol)
+    GlaVacOprMem(cmpInf::GlaKerOpt{T}, trgVol::GlaVol, srcVol::GlaVol=trgVol)
 
 Prepare memory for Green function operator. Automatically computes the Fourier transform data.
 
 # Arguments
-- `cmpInf::GlaKerOpt`: Computation information, settings and kernel options, see `GlaKerOpt`.
+- `cmpInf::GlaKerOpt{T}`: Computation information, settings and kernel options, see `GlaKerOpt`.
 - `trgVol::GlaVol`: Target volume or self volume definition.
 - `srcVol::Union{Nothing,GlaVol}=nothing`: Source volume for external construction. Nothing will generate the self construction.
 
 # Returns
-- `GlaVacOprMem`: The memory structure for the Green function operator.
+- `GlaVacOprMem{T}`: The memory structure for the Green function operator.
 """
-function GlaVacOprMem(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol=trgVol)
+function GlaVacOprMem(cmpInf::GlaKerOpt{T}, trgVol::GlaVol, srcVol::GlaVol=trgVol) where T<:AbstractFloat
     mixInf = genEveExtInf(trgVol, srcVol)
 
     # total cells in circulant
@@ -164,7 +164,7 @@ copy once for both Array (CPU) and CuArray (GPU) backends. The trailing
 dimension of the circulant holds a single unique coefficient the length-1 view
 broadcasts up to the minimum branch extent of 2.
 =#
-function extEgoBrn!(egoFurBrn::AbstractArray{ComplexF64}, egoFurPrp::AbstractArray{ComplexF64}, eoItr::Integer)
+function extEgoBrn!(egoFurBrn::AbstractArray{<:Complex}, egoFurPrp::AbstractArray{<:Complex}, eoItr::Integer)
     totCelCrc = size(egoFurPrp)[1:3]
     truInf = size(egoFurBrn)[1:3]
     # even/odd offsets of the three axes: eoItr bit 2 → x, bit 1 → y, bit 0 → z
@@ -183,9 +183,11 @@ end
 Fourier stage of operator creation: transform the gathered six-component
 circulant over its three cell dimensions with one batched in-place plan (all
 6 × totParSrc × totParTrg blocks in a single plan execution) and extract the
-eight even/odd branches. Dispatch on cmpInf selects the backend.
+eight even/odd branches. Dispatch on cmpInf selects the backend. The transform
+runs in ComplexF64 (generation precision) while the branch arrays are
+Complex{T}, so the extraction copy is the single point of narrowing.
 =#
-function genEgoFur(egoCrcCmp::Array{ComplexF64,6}, truInf::AbstractVector{<:Integer}, cmpInf::CPUKerOpt)
+function genEgoFur(egoCrcCmp::Array{ComplexF64,6}, truInf::AbstractVector{<:Integer}, cmpInf::CPUKerOpt{T}) where T<:AbstractFloat
     ddDim, totParSrc, totParTrg = size(egoCrcCmp)[4:6]
     # thread the creation-time FFT, restoring the global FFTW state afterwards
     fftwThr = FFTW.get_num_threads()
@@ -200,11 +202,11 @@ function genEgoFur(egoCrcCmp::Array{ComplexF64,6}, truInf::AbstractVector{<:Inte
         throw(ArgumentError("Fourier transform of circulant contains non-numeric values."))
     end
     # final Fourier coefficients for a given branch
-    egoFur = Array{Array{ComplexF64}}(undef, 8)
+    egoFur = Array{Array{Complex{T}}}(undef, 8)
     # only one eighth of the green function is unique; the eight branch
     # extractions are independent
     @threads for eoItr ∈ 0:7
-        egoFurBrn = Array{ComplexF64}(undef, truInf..., ddDim, totParSrc, totParTrg)
+        egoFurBrn = Array{Complex{T}}(undef, truInf..., ddDim, totParSrc, totParTrg)
         extEgoBrn!(egoFurBrn, egoCrcCmp, eoItr)
         egoFur[eoItr + 1] = egoFurBrn
     end
@@ -219,11 +221,11 @@ coefficients rather than adding transfers. When the full circulant does not
 fit on device next to the branches (large multi-partition external operators),
 fall back to batching per partition pair with a single reused plan.
 =#
-function genEgoFur(egoCrcCmp::Array{ComplexF64,6}, truInf::AbstractVector{<:Integer}, cmpInf::GPUKerOpt)
+function genEgoFur(egoCrcCmp::Array{ComplexF64,6}, truInf::AbstractVector{<:Integer}, cmpInf::GPUKerOpt{T}) where T<:AbstractFloat
     ddDim, totParSrc, totParTrg = size(egoCrcCmp)[4:6]
-    egoFur = Array{CuArray{ComplexF64}}(undef, 8)
+    egoFur = Array{CuArray{Complex{T}}}(undef, 8)
     for eoItr ∈ 0:7
-        egoFur[eoItr + 1] = CuArray{ComplexF64}(undef, truInf..., ddDim, totParSrc, totParTrg)
+        egoFur[eoItr + 1] = CuArray{Complex{T}}(undef, truInf..., ddDim, totParSrc, totParTrg)
     end
     # leave headroom: the transform itself needs device workspace
     if sizeof(egoCrcCmp) <= 3 * (CUDA.available_memory() ÷ 4)
@@ -262,10 +264,10 @@ function genEgoFur(egoCrcCmp::Array{ComplexF64,6}, truInf::AbstractVector{<:Inte
 end
 
 # Create Fourier transform plans
-function fftPlnGen(fwdSze::NTuple, revSze::NTuple, dir::Int, ::CPUKerOpt)
+function fftPlnGen(fwdSze::NTuple, revSze::NTuple, dir::Int, ::CPUKerOpt{T}) where T<:AbstractFloat
     # Fourier transform planning area
-    fftWrkFwd = Array{ComplexF64}(undef, fwdSze...)
-    fftWrkRev = Array{ComplexF64}(undef, revSze...)
+    fftWrkFwd = Array{Complex{T}}(undef, fwdSze...)
+    fftWrkRev = Array{Complex{T}}(undef, revSze...)
     # create Fourier transform plans
     fftPlnFwd = plan_fft!(fftWrkFwd, [dir]; flags=FFTW.MEASURE)
     fftPlnRev = plan_ifft!(fftWrkRev, [dir]; flags=FFTW.MEASURE)
@@ -274,10 +276,10 @@ function fftPlnGen(fwdSze::NTuple, revSze::NTuple, dir::Int, ::CPUKerOpt)
     return fftPlnFwd, fftPlnRev, adjFftPlnFwd, adjFftPlnRev
 end
 
-function fftPlnGen(fwdSze::NTuple, revSze::NTuple, dir::Int, ::GPUKerOpt)
+function fftPlnGen(fwdSze::NTuple, revSze::NTuple, dir::Int, ::GPUKerOpt{T}) where T<:AbstractFloat
     # Fourier transform planning area
-    fftWrkFwdDev = CuArray{ComplexF64}(undef, fwdSze...)
-    fftWrkRevDev = CuArray{ComplexF64}(undef, revSze...)
+    fftWrkFwdDev = CuArray{Complex{T}}(undef, fwdSze...)
+    fftWrkRevDev = CuArray{Complex{T}}(undef, revSze...)
     # create Fourier transform plans
     fftPlnFwdDev = plan_fft!(fftWrkFwdDev, [dir])
     fftPlnRevDev = plan_ifft!(fftWrkRevDev, [dir])
@@ -287,7 +289,7 @@ function fftPlnGen(fwdSze::NTuple, revSze::NTuple, dir::Int, ::GPUKerOpt)
 end
 
 # Memory preparation sub-protocol
-function glaOprPrp(egoFur::AbstractVector{<:AbstractArray{ComplexF64}}, trgVol::GlaVol, srcVol::GlaVol, mixInf::GlaExtInf, cmpInf::GlaKerOpt)
+function glaOprPrp(egoFur::AbstractVector{<:AbstractArray{Complex{T}}}, trgVol::GlaVol, srcVol::GlaVol, mixInf::GlaExtInf, cmpInf::GlaKerOpt{T}) where T<:AbstractFloat
     # number of embedding levels---dimensionality of ambient space
     lvls = 3
     # operator dimensions---unique vector information does not typically 
@@ -314,14 +316,32 @@ function glaOprPrp(egoFur::AbstractVector{<:AbstractArray{ComplexF64}}, trgVol::
     # phase transformations (internal for block Toeplitz transformations)
     for itr ∈ eachindex(1:lvls)
         # allows calculation odd coefficient numbers
-        phzInfHst = ComplexF64.([cispi(-k / brnSze[itr]) for k ∈ 0:(brnSze[itr] - 1)])
+        phzInfHst = Complex{T}.([cispi(-k / brnSze[itr]) for k ∈ 0:(brnSze[itr] - 1)])
         phzInf[itr] = similar(first(egoFur), brnSze[itr])
         copyto!(phzInf[itr], phzInfHst)
     end
-    return GlaVacOprMem(cmpInf, trgVol, srcVol, mixInf, brnSze, egoFur, fftPlnFwd, fftPlnRev, adjFftPlnFwd, adjFftPlnRev, phzInf)
+    return GlaVacOprMem{T}(cmpInf, trgVol, srcVol, mixInf, brnSze, egoFur, fftPlnFwd, fftPlnRev, adjFftPlnFwd, adjFftPlnRev, phzInf)
 end
 
 isadjoint(vacOprMem::GlaVacOprMem) = adjMod(vacOprMem.cmpInf)
+
+"""
+    GlaVacOprMem{T}(mem::GlaVacOprMem)
+
+Convert the storage precision of a vacuum Green function operator memory to `T`, rebuilding plans and phase data without regenerating the Fourier coefficients.
+"""
+GlaVacOprMem{T}(mem::GlaVacOprMem{T}) where T<:AbstractFloat = mem
+function GlaVacOprMem{T}(mem::GlaVacOprMem) where T<:AbstractFloat
+    egoFur = map(mem.egoFur) do fur
+        furCnv = similar(fur, Complex{T})
+        # broadcast, not copyto!, so that the eltype change also works on device
+        furCnv .= fur
+        furCnv
+    end
+    # the kernel options only change in their precision parameter
+    cmpInf = Base.typename(typeof(mem.cmpInf)).wrapper{T}(mem.cmpInf)
+    return glaOprPrp(egoFur, mem.trgVol, mem.srcVol, mem.mixInf, cmpInf)
+end
 
 # deepcopy must regenerate FFTW plans rather than copying the raw C pointers.
 # Two Julia plan objects that share the same C pointer both register a finalizer
@@ -364,7 +384,7 @@ function useCpu!(mem::GlaVacOprMem)
     ajdFwdPln = Array{AbstractFFTs.Plan}(undef, 3)
     ajdRevPln = Array{AbstractFFTs.Plan}(undef, 3)
     for dir in 1:3
-        pln = fftPlnGen(size(mem.fftPlnFwd[dir]), size(mem.fftPlnRev[dir]), dir, CPUKerOpt())
+        pln = fftPlnGen(size(mem.fftPlnFwd[dir]), size(mem.fftPlnRev[dir]), dir, mem.cmpInf)
         fwdPln[dir] = pln[1]
         revPln[dir] = pln[2]
         ajdFwdPln[dir] = pln[3]
@@ -392,7 +412,7 @@ function useGpu!(mem::GlaVacOprMem)
     ajdFwdPln = Array{AbstractFFTs.Plan}(undef, 3)
     ajdRevPln = Array{AbstractFFTs.Plan}(undef, 3)
     for dir in 1:3
-        pln = fftPlnGen(size(mem.fftPlnFwd[dir]), size(mem.fftPlnRev[dir]), dir, GPUKerOpt())
+        pln = fftPlnGen(size(mem.fftPlnFwd[dir]), size(mem.fftPlnRev[dir]), dir, mem.cmpInf)
         fwdPln[dir] = pln[1]
         revPln[dir] = pln[2]
         ajdFwdPln[dir] = pln[3]
@@ -414,7 +434,8 @@ end
 # mems reached through the generic serializer (struct fields, array elements);
 # the io::IO methods below are the top level format used for preload files.
 function Serialization.serialize(s::AbstractSerializer, mem::GlaVacOprMem)
-    Serialization.serialize_type(s, GlaVacOprMem)
+    # serialize_type needs the concrete GlaVacOprMem{T}, not the UnionAll
+    Serialization.serialize_type(s, typeof(mem))
     serialize(s, mem.cmpInf isa GPUKerOpt ? collect(map(Array, mem.egoFur)) : mem.egoFur)
     cmpInf = useCpu(mem.cmpInf)
     serialize(s, cmpInf.frqPhz)
@@ -425,7 +446,7 @@ function Serialization.serialize(s::AbstractSerializer, mem::GlaVacOprMem)
     serialize(s, mem.mixInf)
 end
 
-function Serialization.deserialize(s::AbstractSerializer, ::Type{GlaVacOprMem})
+function Serialization.deserialize(s::AbstractSerializer, ::Type{<:GlaVacOprMem})
     egoFur = deserialize(s)
     frqPhz = deserialize(s)
     intOrd = deserialize(s)
@@ -433,7 +454,9 @@ function Serialization.deserialize(s::AbstractSerializer, ::Type{GlaVacOprMem})
     trgVol = deserialize(s)
     srcVol = deserialize(s)
     mixInf = deserialize(s)
-    return glaOprPrp(egoFur, trgVol, srcVol, mixInf, CPUKerOpt(frqPhz, intOrd, adjMod, CPU()))
+    # storage precision is recovered from the written Fourier data
+    prc = real(eltype(first(egoFur)))
+    return glaOprPrp(egoFur, trgVol, srcVol, mixInf, CPUKerOpt{prc}(frqPhz, intOrd, adjMod, CPU()))
 end
 
 function Serialization.serialize(io::IO, mem::GlaVacOprMem)
@@ -453,9 +476,10 @@ function Serialization.serialize(io::IO, mem::GlaVacOprMem)
     end
 end
 
-function Serialization.deserialize(io::IO, ::Type{GlaVacOprMem})
+function Serialization.deserialize(io::IO, ::Type{<:GlaVacOprMem})
     egoFur = deserialize(io)
-    cmpInf = deserialize(io, CPUKerOpt)
+    # egoFur is authoritative for the storage precision of the rebuilt operator
+    cmpInf = CPUKerOpt{real(eltype(first(egoFur)))}(deserialize(io, CPUKerOpt))
     trgVol = deserialize(io)
     srcVol = deserialize(io)
     mixInf = deserialize(io)

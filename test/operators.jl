@@ -33,21 +33,21 @@ end
             volObj = GlaVol(volDim, sclArr, (0//1, 0//1, 0//1))
 
             # Test self Green function operator
-            oprVac = GlaOprVac(volObj)
+            oprVac = GlaOprVac{Float64}(volObj)
             @test oprVac isa GlaOprVac
             @test isselfoperator(oprVac)
             @test !isexternaloperator(oprVac)
 
             # Test external Green function operator
             trgVol = GlaVol(volDim, sclArr, (1//1, 1//1, 1//1))
-            oprVacExt = GlaOprVac(trgVol, volObj)
+            oprVacExt = GlaOprVac{Float64}(trgVol, volObj)
             @test oprVacExt isa GlaOprVac
             @test !isselfoperator(oprVacExt)
             @test isexternaloperator(oprVacExt)
 
             # Test GPU operator if CUDA is functional
             if CUDA.functional()
-                oprVacGpu = GlaOprVac(volObj; useGpu=true)
+                oprVacGpu = GlaOprVac{Float64}(volObj; useGpu=true)
                 @test oprVacGpu isa GlaOprVac
                 @test oprVacGpu.mem.cmpInf isa GPUKerOpt
             end
@@ -56,7 +56,7 @@ end
 
     @testset "Asy/SymGlaOprVac Tests" begin
         vol = GlaVol((8, 8, 8), (1//32, 1//32, 1//32), (0//1, 0//1, 0//1))
-        G₀ = GlaOprVac(vol)
+        G₀ = GlaOprVac{Float64}(vol)
         G₀_map = LinearMap(G₀)
 
         manual_asym = (G₀_map - G₀_map') / (2im)
@@ -85,13 +85,13 @@ end
             vecOnes = ones(ComplexF64, prod(volDim) * 3)  # Vector of ones
 
             # Test GlaOpr behaves like GlaOprVac for zero susceptibility
-            glaOprVac = GlaOprVac(volObj)
-            glaOpr = GlaOpr(volObj, vac)
+            glaOprVac = GlaOprVac{Float64}(volObj)
+            glaOpr = GlaOpr{Float64}(volObj, vac)
             @test glaOpr * vecOnes ≈ glaOprVac * vecOnes
 
             # Test scattering operator and inverse scattering operator consistency
-            invSctOpr = InvSctOpr(volObj, sus)
-            sctOpr = SctOpr(volObj, sus)
+            invSctOpr = InvSctOpr{Float64}(volObj, sus)
+            sctOpr = SctOpr{Float64}(volObj, sus)
             @test invSctOpr * (sctOpr * vecOnes) ≈ vecOnes
 
             # Test adjoint of adjoint consistency
@@ -108,16 +108,16 @@ end
             if CUDA.functional()
                 vac = CuArray(vac)
                 sus = CuArray(sus)
-                glaOprGpu = GlaOpr(volObj, vac; useGpu=true)
-                glaOprVacGpu = GlaOprVac(volObj; useGpu=true)
+                glaOprGpu = GlaOpr{Float64}(volObj, vac; useGpu=true)
+                glaOprVacGpu = GlaOprVac{Float64}(volObj; useGpu=true)
                 vecOnesGpu = CUDA.ones(ComplexF64, prod(volDim) * 3)
 
                 # Test GlaOpr behaves like GlaOprVac for zero susceptibility
                 @test glaOprGpu * vecOnesGpu ≈ glaOprVacGpu * vecOnesGpu
 
                 # Test scattering operator and inverse scattering operator consistency
-                invSctOprGpu = InvSctOpr(volObj, sus; useGpu=true)
-                sctOprGpu = SctOpr(volObj, sus; useGpu=true)
+                invSctOprGpu = InvSctOpr{Float64}(volObj, sus; useGpu=true)
+                sctOprGpu = SctOpr{Float64}(volObj, sus; useGpu=true)
                 @test invSctOprGpu * (sctOprGpu * vecOnesGpu) ≈ vecOnesGpu
 
                 # Test adjoint of adjoint consistency
@@ -141,28 +141,28 @@ end
             vecOnes = ones(ComplexF64, prod(volDim) * 3)  # Vector of ones
 
             # Test GlaOprVac
-            glaOprVac = GlaOprVac(volObj)
+            glaOprVac = GlaOprVac{Float64}(volObj)
             result1 = glaOprVac * vecOnes
             result2 = glaOprVac * vecOnes
             @test result1 ≈ result2
             @test all(vecOnes .== one(eltype(vecOnes))) 
 
             # Test InvSctOpr
-            invSctOpr = InvSctOpr(volObj, sus)
+            invSctOpr = InvSctOpr{Float64}(volObj, sus)
             result1 = invSctOpr * vecOnes
             result2 = invSctOpr * vecOnes
             @test result1 ≈ result2
             @test all(vecOnes .== one(eltype(vecOnes)))
 
             # Test SctOpr
-            sctOpr = SctOpr(volObj, sus)
+            sctOpr = SctOpr{Float64}(volObj, sus)
             result1 = sctOpr * vecOnes
             result2 = sctOpr * vecOnes
             @test result1 ≈ result2
             @test all(vecOnes .== one(eltype(vecOnes)))
 
             # Test GlaOpr
-            glaOpr = GlaOpr(volObj, sus)
+            glaOpr = GlaOpr{Float64}(volObj, sus)
             result1 = glaOpr * vecOnes
             result2 = glaOpr * vecOnes
             @test result1 ≈ result2
@@ -174,28 +174,28 @@ end
                 vecOnesGpu = CUDA.ones(ComplexF64, prod(volDim) * 3)
 
                 # Test GlaOprVac on GPU
-                glaOprVacGpu = GlaOprVac(volObj; useGpu=true)
+                glaOprVacGpu = GlaOprVac{Float64}(volObj; useGpu=true)
                 result1 = glaOprVacGpu * vecOnesGpu
                 result2 = glaOprVacGpu * vecOnesGpu
                 @test result1 ≈ result2
                 @test all(vecOnesGpu .== one(eltype(vecOnesGpu)))
 
                 # Test InvSctOpr on GPU
-                invSctOprGpu = InvSctOpr(volObj, sus; useGpu=true)
+                invSctOprGpu = InvSctOpr{Float64}(volObj, sus; useGpu=true)
                 result1 = invSctOprGpu * vecOnesGpu
                 result2 = invSctOprGpu * vecOnesGpu
                 @test result1 ≈ result2
                 @test all(vecOnesGpu .== one(eltype(vecOnesGpu)))
 
                 # Test SctOpr on GPU
-                sctOprGpu = SctOpr(volObj, sus; useGpu=true)
+                sctOprGpu = SctOpr{Float64}(volObj, sus; useGpu=true)
                 result1 = sctOprGpu * vecOnesGpu
                 result2 = sctOprGpu * vecOnesGpu
                 @test result1 ≈ result2
                 @test all(vecOnesGpu .== one(eltype(vecOnesGpu)))
 
                 # Test GlaOpr on GPU
-                glaOprGpu = GlaOpr(volObj, sus; useGpu=true)
+                glaOprGpu = GlaOpr{Float64}(volObj, sus; useGpu=true)
                 result1 = glaOprGpu * vecOnesGpu
                 result2 = glaOprGpu * vecOnesGpu
                 @test result1 ≈ result2
@@ -208,7 +208,7 @@ end
         for volDim in volSizes
             # println("Testing solvers for volume size: $(volDim)")
             volObj = GlaVol(volDim, sclArr, (0//1, 0//1, 0//1))
-            oprSlf = GlaOprVac(volObj)
+            oprSlf = GlaOprVac{Float64}(volObj)
 
             # Create a random right-hand side vector
             rhs = ones(ComplexF64, size(oprSlf, 1))
@@ -231,7 +231,7 @@ end
 
             # Test GPU solvers if CUDA is functional
             if CUDA.functional()
-                oprSlfGpu = GlaOprVac(volObj; useGpu=true)
+                oprSlfGpu = GlaOprVac{Float64}(volObj; useGpu=true)
                 rhsGpu = CUDA.ones(ComplexF64, size(oprSlfGpu, 1))
 
                 # Test BiCGStabSolver on GPU
@@ -269,17 +269,17 @@ end
     vecOnes = ones(ComplexF64, prod(volSize) * 3)
     vecOnesGpu = CUDA.ones(ComplexF64, prod(volSize) * 3)
 
-    glaOprVacCpu = GlaOprVac(volObj)
-    glaOprVacGpu = GlaOprVac(volObj; useGpu=true)
+    glaOprVacCpu = GlaOprVac{Float64}(volObj)
+    glaOprVacGpu = GlaOprVac{Float64}(volObj; useGpu=true)
     
-    invSctOprCpu = InvSctOpr(volObj, sus)
-    invSctOprGpu = InvSctOpr(volObj, susGpu; useGpu=true)
+    invSctOprCpu = InvSctOpr{Float64}(volObj, sus)
+    invSctOprGpu = InvSctOpr{Float64}(volObj, susGpu; useGpu=true)
 
-    sctOprCpu = SctOpr(volObj, sus)
-    sctOprGpu = SctOpr(volObj, susGpu; useGpu=true)
+    sctOprCpu = SctOpr{Float64}(volObj, sus)
+    sctOprGpu = SctOpr{Float64}(volObj, susGpu; useGpu=true)
 
-    glaOprCpu = GlaOpr(volObj, sus)
-    glaOprGpu = GlaOpr(volObj, susGpu; useGpu=true)
+    glaOprCpu = GlaOpr{Float64}(volObj, sus)
+    glaOprGpu = GlaOpr{Float64}(volObj, susGpu; useGpu=true)
 
     cpuOprs = [glaOprVacCpu, invSctOprCpu, sctOprCpu, glaOprCpu]
     gpuOprs = [glaOprVacGpu, invSctOprGpu, sctOprGpu, glaOprGpu]

@@ -12,11 +12,11 @@ const cntOrg = (0//1, 0//1, 0//1)
 cntRelFro(matA, matB) = norm(matA - matB) / norm(matB)
 
 cntExtMat(trgVol::GlaVol, srcVol::GlaVol) =
-    dnsMat(GlaVacOprMem(CPUKerOpt(), trgVol, srcVol))
+    dnsMat(GlaVacOprMem(CPUKerOpt{Float64}(), trgVol, srcVol))
 
 function cntUniMat(trgVol::GlaVol, srcVol::GlaVol)
     uniVolume = uniVol(trgVol, srcVol)
-    oprUni = GlaOprVac(uniVolume)
+    oprUni = GlaOprVac{Float64}(uniVolume)
     innMsk, outMsk = mskRng(srcVol, uniVolume), mskRng(trgVol, uniVolume)
     colNum = prod(srcVol.cel) * 3
     mat = zeros(ComplexF64, prod(trgVol.cel) * 3, colNum)
@@ -107,6 +107,6 @@ end
     cvol = refine(GlaCmpVol(GlaVol((4,2,2), cntScl, cntOrg)),
         ((-1//16, 0//1, 0//1), (1//8, 1//8, 1//8)))
     @test nregions(cvol) == 2
-    opr = GlaCmpOprVac(cvol)
+    opr = GlaCmpOprVac{Float64}(cvol)
     @test all(isfinite, dnsMat(opr))
 end

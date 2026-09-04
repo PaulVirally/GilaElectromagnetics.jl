@@ -37,7 +37,8 @@ glaSze(opr::SctOpr, dim::Int) = glaSze(opr.invSctOpr, dim)
 glaSze(opr::GlaOpr, dim::Int) = glaSze(opr.sctOpr, dim)
 
 # Type and size definitions
-Base.eltype(::AbstractGlaOpr) = ComplexF64
+Base.eltype(::AbstractGlaOpr{T}) where T<:AbstractFloat = Complex{T}
+Base.eltype(::Type{<:AbstractGlaOpr{T}}) where T<:AbstractFloat = Complex{T}
 Base.size(opr::AbstractGlaOpr) = prod.(glaSze(opr))
 function Base.size(opr::MulRegGlaOprVac)
     rowSzs = [size(opr.oprMat[i, 1], 1) for i in axes(opr.oprMat, 1)]
@@ -131,7 +132,7 @@ end
 Base.setindex!(::AbstractGlaOpr, _, __...) = throw(ArgumentError("setindex! is not supported for AbstractGlaOpr"))
 
 """
-    mulAct!(opr::AbstractGlaOpr, act::AbstractVector{ComplexF64})
+    mulAct!(opr::AbstractGlaOpr{T}, act::AbstractVector{Complex{T}})
 
 Apply an operator to a vector. May (will) mutate `act`.
 
@@ -139,14 +140,14 @@ Apply an operator to a vector. May (will) mutate `act`.
 computes with. 
 
 # Returns
-- `AbstractVector{ComplexF64}`: The result in the flat layout, freshly allocated
+- `AbstractVector{Complex{T}}`: The result in the flat layout, freshly allocated
 """
 function mulAct! end
 
-function mulAct!(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}, act::AbstractVector{ComplexF64})
+function mulAct!(opr::Union{GlaOprVac{T}, AsyGlaOprVac{T}, SymGlaOprVac{T}}, act::AbstractVector{Complex{T}}) where T<:AbstractFloat
     if isoverlappingoperator(opr)
         # The masked input is read into the union volume
-        actEmb = fill!(similar(act, opr.mem.srcVol.cel..., 3), zero(ComplexF64))
+        actEmb = fill!(similar(act, opr.mem.srcVol.cel..., 3), zero(eltype(act)))
         actEmb[opr.srcMsk..., :] .= reshape(act, glaSze(opr, 2))
         return vec(egoOpr!(opr.mem, actEmb)[opr.trgMsk..., :])
     end
@@ -154,11 +155,11 @@ function mulAct!(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}, act::Abstrac
 end
 
 # Block row sums over the flat layout, one region block at a time
-function mulAct!(opr::MulRegGlaOprVac, act::AbstractVector{ComplexF64})
+function mulAct!(opr::MulRegGlaOprVac{T}, act::AbstractVector{Complex{T}}) where T<:AbstractFloat
     rowSzs = [size(opr.oprMat[i, 1], 1) for i in axes(opr.oprMat, 1)]
     colSzs = [size(opr.oprMat[1, j], 2) for j in axes(opr.oprMat, 2)]
     rowOff = cumsum([0; rowSzs]); colOff = cumsum([0; colSzs])
-    outVec = fill!(similar(act, sum(rowSzs)), zero(ComplexF64))
+    outVec = fill!(similar(act, sum(rowSzs)), zero(eltype(act)))
     for i in axes(opr.oprMat, 1), j in axes(opr.oprMat, 2)
         # A block eats its buffer, so every block gets its own copy of the slice
         innBlk = copy(view(act, (colOff[j] + 1):colOff[j + 1]))
@@ -171,7 +172,7 @@ end
 already the adjoint and the susceptibility already conjugated, which leaves
 I - G₀' X̄. A composite susceptibility is stored in the flat layout, a single
 volume one as a cell tensor that broadcasts over the three components. =#
-function mulAct!(opr::InvSctOpr, act::AbstractVector{ComplexF64})
+function mulAct!(opr::InvSctOpr{T}, act::AbstractVector{Complex{T}}) where T<:AbstractFloat
     if opr.oprVac isa GlaCmpOprVac
         if length(act) != size(opr.oprVac, 2)
             throw(ArgumentError("An input of length $(length(act)) does not fit this operator, which has $(size(opr.oprVac, 2)) degrees of freedom."))
@@ -188,16 +189,16 @@ function mulAct!(opr::InvSctOpr, act::AbstractVector{ComplexF64})
     return act
 end
 
-mulAct!(opr::SctOpr, act::AbstractVector{ComplexF64}) = solve(opr.invSctOpr, act, opr.slv)
+mulAct!(opr::SctOpr{T}, act::AbstractVector{Complex{T}}) where T<:AbstractFloat = solve(opr.invSctOpr, act, opr.slv)
 
 # G₀ after the solve, the two the other way around in adjoint mode
-function mulAct!(opr::GlaOpr, act::AbstractVector{ComplexF64})
+function mulAct!(opr::GlaOpr{T}, act::AbstractVector{Complex{T}}) where T<:AbstractFloat
     isadjoint(opr) && return mulAct!(opr.sctOpr, mulAct!(opr.sctOpr.invSctOpr.oprVac, act))
     return mulAct!(opr.sctOpr.invSctOpr.oprVac, mulAct!(opr.sctOpr, act))
 end
 
 # The buffer the primitive consumes, on the device the operator computes with
-function _devCpy(opr::AbstractGlaOpr, inp::AbstractVector{ComplexF64})
+function _devCpy(opr::AbstractGlaOpr, inp::AbstractVector{<:Complex})
     if isgpu(opr) && !(inp isa CuArray)
         @warn "Input array is not a CuArray. Copying data to GPU."
         return CuArray(inp) # The conversion is itself the defensive copy
@@ -218,22 +219,45 @@ operator is never applied when `α` is zero.
 - `out`, holding the result
 
 # Throws
-- `ArgumentError`: If either array does not fit the operator
+- `ArgumentError`: If either array does not fit the operator, or if its eltype is
+  not the `Complex{T}` of the operator: mixed precision is never converted silently
 """
-function LinearAlgebra.mul!(out::AbstractVector{ComplexF64}, opr::AbstractGlaOpr, inp::AbstractVector{ComplexF64}, α::Number, β::Number)
+function LinearAlgebra.mul!(out::AbstractVector{Complex{T}}, opr::AbstractGlaOpr{T}, inp::AbstractVector{Complex{T}}, α::Number, β::Number) where T<:AbstractFloat
     if length(inp) != size(opr, 2) || length(out) != size(opr, 1)
         throw(ArgumentError("An input of length $(length(inp)) and an output of length $(length(out)) do not fit this operator, which maps $(size(opr, 2)) degrees of freedom to $(size(opr, 1))."))
     end
     if iszero(α)
-        iszero(β) ? fill!(out, zero(ComplexF64)) : rmul!(out, β)
+        iszero(β) ? fill!(out, zero(eltype(out))) : rmul!(out, β)
         return out
     end
     tmp = mulAct!(opr, _devCpy(opr, inp))
     iszero(β) ? (out .= α .* tmp) : (out .= α .* tmp .+ β .* out)
     return out
 end
-LinearAlgebra.mul!(out::AbstractArray{ComplexF64, 4}, opr::AbstractGlaOpr, inp::AbstractArray{ComplexF64, 4}, α::Number, β::Number) =
+LinearAlgebra.mul!(out::AbstractArray{Complex{T}, 4}, opr::AbstractGlaOpr{T}, inp::AbstractArray{Complex{T}, 4}, α::Number, β::Number) where T<:AbstractFloat =
     (mul!(vec(out), opr, vec(inp), α, β); out)
+
+# A matrix goes column by column, as in the * method
+function LinearAlgebra.mul!(out::AbstractMatrix{Complex{T}}, opr::AbstractGlaOpr{T}, inp::AbstractMatrix{Complex{T}}, α::Number, β::Number) where T<:AbstractFloat
+    for (outCol, inpCol) in zip(eachcol(out), eachcol(inp))
+        mul!(outCol, opr, inpCol, α, β)
+    end
+    return out
+end
+
+# Mixed precision is an error rather than a conversion
+function _prcErr(opr::AbstractGlaOpr, args...)
+    argTyp = join(unique(string.(eltype.(args))), " and ")
+    nam = Base.typename(typeof(opr)).name
+    throw(ArgumentError("The operator eltype is $(eltype(opr)) and the argument eltype is $argTyp. Convert the data with $(eltype(opr)).(v), or the operator with $nam{$(real(eltype(first(args))))}(opr)."))
+end
+mulAct!(opr::AbstractGlaOpr, act::AbstractVector) = _prcErr(opr, act)
+LinearAlgebra.mul!(out::AbstractVector, opr::AbstractGlaOpr, inp::AbstractVector, α::Number, β::Number) = _prcErr(opr, out, inp)
+LinearAlgebra.mul!(out::AbstractArray{<:Number, 4}, opr::AbstractGlaOpr, inp::AbstractArray{<:Number, 4}, α::Number, β::Number) = _prcErr(opr, out, inp)
+LinearAlgebra.mul!(out::AbstractMatrix, opr::AbstractGlaOpr, inp::AbstractMatrix, α::Number, β::Number) = _prcErr(opr, out, inp)
+Base.:*(opr::AbstractGlaOpr, inp::AbstractVector) = _prcErr(opr, inp)
+Base.:*(opr::AbstractGlaOpr, inp::AbstractArray{<:Number, 4}) = _prcErr(opr, inp)
+Base.:*(opr::AbstractGlaOpr, inp::AbstractMatrix) = _prcErr(opr, inp)
 
 """
     *(opr::AbstractGlaOpr, inp)
@@ -248,16 +272,17 @@ kernel consumes what it is handed.
 - The result, on the target volume of `opr`
 
 # Throws
-- `ArgumentError`: If the input does not fit the operator
+- `ArgumentError`: If the input does not fit the operator, or if its eltype is not
+  the `Complex{T}` of the operator
 """
-function Base.:*(opr::AbstractGlaOpr, inp::AbstractVector{ComplexF64})
+function Base.:*(opr::AbstractGlaOpr{T}, inp::AbstractVector{Complex{T}}) where T<:AbstractFloat
     if length(inp) != size(opr, 2)
         throw(ArgumentError("An input of length $(length(inp)) does not fit this operator, which takes $(size(opr, 2)) degrees of freedom."))
     end
     return mulAct!(opr, _devCpy(opr, inp))
 end
-Base.:*(opr::AbstractGlaOpr, inp::AbstractArray{ComplexF64, 4}) = reshape(opr * vec(inp), glaSze(opr, 1))
-function Base.:*(opr::AbstractGlaOpr, inp::AbstractMatrix{ComplexF64})
+Base.:*(opr::AbstractGlaOpr{T}, inp::AbstractArray{Complex{T}, 4}) where T<:AbstractFloat = reshape(opr * vec(inp), glaSze(opr, 1))
+function Base.:*(opr::AbstractGlaOpr{T}, inp::AbstractMatrix{Complex{T}}) where T<:AbstractFloat
     out = similar(inp, size(opr, 1), size(inp, 2))
     for (outCol, inpCol) in zip(eachcol(out), eachcol(inp))
         mul!(outCol, opr, inpCol)
@@ -269,9 +294,9 @@ end
 apply the normalization, and only the combine happens here. As in the vector
 method, out is never read when β is zero and the operator, which may hide an
 iterative solve, is never applied when α is zero. =#
-function LinearAlgebra.mul!(out::GlaFld, opr::AbstractGlaOpr, inp::GlaFld, α::Number, β::Number)
+function LinearAlgebra.mul!(out::GlaFld{T}, opr::AbstractGlaOpr{T}, inp::GlaFld{T}, α::Number, β::Number) where T<:AbstractFloat
     if iszero(α)
-        iszero(β) ? fill!(out, zero(ComplexF64)) : rmul!(out, β)
+        iszero(β) ? fill!(out, zero(eltype(out))) : rmul!(out, β)
         return out
     end
     fld = opr * inp
@@ -279,7 +304,7 @@ function LinearAlgebra.mul!(out::GlaFld, opr::AbstractGlaOpr, inp::GlaFld, α::N
     return out
 end
 
-function Base.:*(opr::MulRegGlaOprVac, innVec::Vector{<:AbstractArray{ComplexF64, 4}})
+function Base.:*(opr::MulRegGlaOprVac{T}, innVec::Vector{<:AbstractArray{Complex{T}, 4}}) where T<:AbstractFloat
     m, n = size(opr.oprMat)
     @assert length(innVec) == n "expected $n source blocks, got $(length(innVec))"
     outVec = [opr.oprMat[i, 1] * innVec[1] for i in 1:m] # j = 1
@@ -314,7 +339,7 @@ size, which covers every self operator.
 - `ArgumentError`: If the field is not a field over the source volume of the
   operator, or if the operator takes the masked route
 """
-function Base.:*(opr::GlaOprVac, fld::GlaFld)
+function Base.:*(opr::GlaOprVac{T}, fld::GlaFld{T}) where T<:AbstractFloat
     srcVol = opr.mem.srcVol
     if isoverlappingoperator(opr)
         throw(ArgumentError("This operator is built on the union of its two volumes and reads its input through a mask, so it does not take a field. Apply it to a plain array of the masked size instead."))
