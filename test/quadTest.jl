@@ -461,3 +461,124 @@ end
     @test haskey(qdVac.wekMem, (stdScl, qdOrdFld, ComplexF64(1.0+0.0im)))
     @test egoRun() == egoCld
 end
+
+# panel integrals against a BigFloat evaluation of the original closed forms
+import GilaElectromagnetics.GilaVacuum: rSrfSlf, rSrfEdgCrn, rSrfEdgFlt, sclEgo
+setprecision(BigFloat, 256)
+qdPi(x) = oftype(float(real(x)), π)
+
+function qdSlfRef(la, lb, frq)
+    return (1 / (48 * qdPi(la) * frq^2)) * (8 * la^3 + 8 * lb^3
+    - 8 * la^2 * sqrt(la^2 + lb^2) - 8 * lb^2 * sqrt(la^2 + lb^2) -
+    3 * la^2 * lb * (2 * log(la) + 2 * log(la + lb - sqrt(la^2 + lb^2)) +
+    log(sqrt(la^2 + lb^2) - lb) - 5 * log(lb + sqrt(la^2 + lb^2)) -
+    2 * log(lb - la + sqrt(la^2 + lb^2)) -
+    2 * log(la + 2 * lb - sqrt(la^2 + 4 * lb^2)) +
+    log(sqrt(la^2 + 4 * lb^2) - 2 * lb) +
+    2 * log(la - 2 * lb + sqrt(la^2 + 4 * lb^2)) +
+    log(2 * lb + sqrt(la^2 + 4 * lb^2)) +
+    2 * log(2 * lb - la + sqrt(la^2 + 4 * lb^2)) -
+    2 * log(la + 2 * lb + sqrt(la^2 + 4 * lb^2))) + 6 * la * lb^2 *
+    (log(64 * one(la)) + 4 * log(lb) + 2 * log(sqrt(la^2 + lb^2) - la) +
+    3 * log(la + sqrt(la^2 + lb^2)) - 3 * log(sqrt(la^2 + 4 * lb^2) - la) -
+    3 * log(sqrt(la^4 + 5 * la^2 * lb^2 + 4 * lb^4) +
+    la * (sqrt(la^2 + lb^2) - la - sqrt(la^2 + 4 * lb^2)))))
+end
+
+function qdCrnRef(la, lb, lc, frq)
+    return (1 / (48 * qdPi(la) * frq^2)) * (8 * lb * lc *
+    sqrt(lb^2 + lc^2) - 8 * lb * lc * sqrt(la^2 + lb^2 + lc^2) - 12 * la^3 *
+    acot(la * lc / (la^2 + lb^2 - lb * sqrt(la^2 + lb^2 + lc^2))) +
+    12 * la^3 * atan(la / lc) -
+    12 * la * lc^2 * atan(la * lb / (lc * sqrt(la^2 + lb^2 + lc^2))) -
+    12 * la * lb^2 * atan(la * lc / (lb * sqrt(la^2 + lb^2 + lc^2))) -
+    16 * la^3 * atan(lb * lc / (la * sqrt(la^2 + lb^2 + lc^2))) +
+    6 * lc^3 * atanh(lb / sqrt(lb^2 + lc^2)) -
+    6 * lc * (la^2 + lc^2) * atanh(lb / sqrt(la^2 + lb^2 + lc^2)) -
+    15 * la^2 * lc * log(la^2 + lc^2) - lc^3 * log(la^2 + lc^2) +
+    2 * lc^3 * log(lc / (lb + sqrt(lb^2 + lc^2))) +
+    6 * la^2 * lc * log(sqrt(la^2 + lb^2 + lc^2) - lb) +
+    24 * la^2 * lc * log(sqrt(la^2 + lb^2 + lc^2) + lb) +
+    2 * lc^3 * log(sqrt(la^2 + lb^2 + lc^2) + lb) +
+    6 * la * lb * (-2 * la * log(la^2 + lb^2) -
+    lc * log((lb^2 + lc^2) * (sqrt(la^2 + lb^2 + lc^2) - la)) +
+    3 * lc * log(la + sqrt(la^2 + lb^2 + lc^2)) +
+    la * log(sqrt(la^2 + lb^2 + lc^2) - lc) +
+    3 * la * log(sqrt(la^2 + lb^2 + lc^2) + lc)) +
+    2 * lb^3 * (
+    log((sqrt(la^2 + lb^2 + lc^2) - lc) / (lc + sqrt(la^2 + lb^2 + lc^2))) +
+    log(1 + (2 * lc * (lc + sqrt(lb^2 + lc^2))) / lb^2)))
+end
+
+# the second block of the original carries the missing 1 / frq^2
+function qdFltRef(la, lb, frq)
+    return (1 / (12 * qdPi(la) * frq^2)) * (-la^3 + 2 * lb^2 *
+    (3 * lb + sqrt(la^2 + lb^2) - 2 * sqrt(la^2 + 4 * lb^2)) + la^2 *
+    (2 * sqrt(la^2 + lb^2) - sqrt(la^2 + 4 * lb^2))) +
+    (1 / (64 * qdPi(la) * frq^2)) * la * lb * (lb * (-62 * log(2 * one(la)) -
+    5 * log(-la + sqrt(la^2 + lb^2)) +
+    4 * log(8 * lb^2 * (-la + sqrt(la^2 + lb^2))) -
+    33 * log(la + sqrt(la^2 + lb^2)) + 17 * log(-la + sqrt(la^2 + 4 * lb^2)) -
+    24 * log(lb * (-la + sqrt(la^2 + 4 * lb^2))) +
+    57 * log(la + sqrt(la^2 + 4 * lb^2))) +
+    4 * la * (-8 * asinh(lb / la) + 6 * asinh(2 * lb / la) +
+    6 * atanh(lb / sqrt(la^2 + lb^2)) + 12 * log(la) -
+    13 * log(-lb + sqrt(la^2 + lb^2)) + log((-lb + sqrt(la^2 + lb^2)) / la) +
+    log(la / (lb + sqrt(la^2 + lb^2))) - 7 * log(lb + sqrt(la^2 + lb^2)) -
+    2 * log((lb + sqrt(la^2 + lb^2)) / la) -
+    3 * log(-(((lb + sqrt(la^2 + lb^2)) *
+    (2 * lb - sqrt(la^2 + 4 * lb^2))) / (la^2))) -
+    3 * log((-lb + sqrt(la^2 + lb^2)) / (-2 * lb + sqrt(la^2 + 4 * lb^2))) +
+    11 * log(-2 * lb + sqrt(la^2 + 4 * lb^2)) -
+    3 * log((lb + sqrt(la^2 + lb^2)) / (2 * lb + sqrt(la^2 + 4 * lb^2))) +
+    log(2 * lb + sqrt(la^2 + 4 * lb^2)) +
+    9 * log((2 * lb + sqrt(la^2 + 4 * lb^2)) / (lb + sqrt(la^2 + lb^2))) -
+    2 * log(la^2 + 2 * lb * (lb - sqrt(la^2 + lb^2)))))
+end
+
+qdOne = Complex{BigFloat}(1)
+qdOptFrq(frq) = CPUKerOpt{Float64}(frq, qdOrdFld, false, CPU())
+
+@testset "Panel Integrals" begin
+    opt = qdOptFrq(1.0+0.0im)
+    lb = 1 / 32
+    # the new forms lose under a digit over nine decades of aspect ratio, so
+    # the BigFloat reference is matched to a few eps
+    for rat ∈ 10.0 .^ (-4:1:4)
+        la = lb * rat
+        @test rSrfSlf(la, lb, opt) ≈
+            qdSlfRef(BigFloat(la), BigFloat(lb), qdOne) rtol=1e-14
+        @test rSrfEdgFlt(la, lb, opt) ≈
+            qdFltRef(BigFloat(la), BigFloat(lb), qdOne) rtol=1e-14
+        for cat ∈ 10.0 .^ (-4:2:4)
+            lc = lb * cat
+            @test rSrfEdgCrn(la, lb, lc, opt) ≈
+                qdCrnRef(BigFloat(la), BigFloat(lb), BigFloat(lc), qdOne) rtol=1e-14
+            # wekE calls both orderings of the free edges
+            @test rSrfEdgCrn(la, lb, lc, opt) ≈
+                rSrfEdgCrn(la, lc, lb, opt) rtol=1e-14
+        end
+    end
+    # every panel integrand carries a single 1 / frq^2
+    la, lc = lb, lb / 32
+    for frq ∈ (1.0+0.1im, 0.7+0.7im)
+        optFrq = qdOptFrq(frq)
+        @test rSrfSlf(la, lb, optFrq) * frq^2 ≈
+            rSrfSlf(la, lb, opt) rtol=4*eps(Float64)
+        @test rSrfEdgFlt(la, lb, optFrq) * frq^2 ≈
+            rSrfEdgFlt(la, lb, opt) rtol=4*eps(Float64)
+        @test rSrfEdgCrn(la, lb, lc, optFrq) * frq^2 ≈
+            rSrfEdgCrn(la, lb, lc, opt) rtol=4*eps(Float64)
+    end
+    # far kernel: cispi reduces the argument exactly, so 100 wavelengths of
+    # phase cost nothing. A strongly complex frq is checked near the origin
+    # instead: the decay exp(-2π dst Im frq) inherits the rounding of the
+    # product, which is not something the kernel can undo.
+    for (dst, frq) ∈ ((100.0, 1.0+0.0im), (100.0, 2.0+0.0im),
+        (100.0, 1.0+0.01im), (1.0, 1.0+0.1im), (1.0, 0.5+0.5im))
+        dstBig = BigFloat(dst)
+        frqBig = Complex{BigFloat}(frq)
+        ref = cispi(2 * dstBig * frqBig) / (4 * BigFloat(π) * dstBig * frqBig^2)
+        @test abs(sclEgo(dst, frq) - ref) / abs(ref) < 8 * eps(Float64)
+    end
+end

@@ -41,7 +41,8 @@ Returns the scalar (Helmholtz) Green function. The separation dstMag is assumed
 to be scaled by wavelength. 
 =#
 @inline function sclEgo_(dstMag::Number, frqPhz::Number)
-    return cis(2π * dstMag * frqPhz) / (4 * π * dstMag * frqPhz^2)
+    # cispi reduces the argument exactly, as in sclEgoN_ below
+    return cispi(2 * dstMag * frqPhz) / (4 * π * dstMag * frqPhz^2)
 end
 function sclEgo(dstMag::Number, frqPhz::ComplexF64)
     if imag(frqPhz) == zero(real(typeof(frqPhz)))
@@ -447,87 +448,86 @@ multi-threading. For a complete description of the steps being performed see
 the article cited above and references included therein. 
 =#
 include("glaVacOprMemIntSup.jl")
-#= 
-Direct evaluation of 1 / (4 * π * dstMag) integral for a square panel with 
-itself. la and lb are the edge lengths. 
+#=
+Direct evaluation of 1 / (4 * π * dstMag * frqPhz^2) integral for a square panel
+with itself. la and lb are the edge lengths. Reducing the four dimensional
+integral to the difference variables (u, v), with triangular densities
+(la - u)(lb - v), gives 4 * [la * lb * M00 - lb * M10 - la * M01 + M11], the
+moments M_ij of 1 / sqrt(u^2 + v^2) over the la by lb rectangle. Using
+h * (la^2 + lb^2) = h^3 the asinh moments collapse to three terms. The cubic
+difference is evaluated as p^3 - p^2 * (h^2 + h * q + q^2) / (h + q) so that no
+digits are lost for slender panels.
 =#
-@inline function rSrfSlf(la::AbstractFloat, lb::AbstractFloat, 
+@inline function rSrfSlf(la::AbstractFloat, lb::AbstractFloat,
     cmpInf::GlaKerOpt)::ComplexF64
 
-    return (1 / (48 * π * frqPhz(cmpInf)^2)) * (8 * la^3 + 8 * lb^3 
-    - 8 * la^2 * sqrt(la^2 + lb^2) - 8 * lb^2 * sqrt(la^2 + lb^2) - 
-    3 * la^2 * lb * (2 * log(la) + 2 * log(la + lb - sqrt(la^2 + lb^2)) + 
-    log(sqrt(la^2 + lb^2) - lb) - 5 * log(lb + sqrt(la^2 + lb^2)) - 
-    2 * log(lb - la + sqrt(la^2 + lb^2)) - 
-    2 * log(la + 2 * lb - sqrt(la^2 + 4 * lb^2)) + 
-    log(sqrt(la^2 + 4 * lb^2) - 2 * lb) + 
-    2 * log(la - 2 * lb + sqrt(la^2 + 4 * lb^2)) + 
-    log(2 * lb + sqrt(la^2 + 4 * lb^2)) + 
-    2 * log(2 * lb - la + sqrt(la^2 + 4 * lb^2)) - 
-    2 * log(la + 2 * lb + sqrt(la^2 + 4 * lb^2))) + 6 * la * lb^2 * 
-    (log(64) + 4 * log(lb) + 2 * log(sqrt(la^2 + lb^2) - la) + 
-    3 * log(la + sqrt(la^2 + lb^2)) - 3 * log(sqrt(la^2 + 4 * lb^2) - la) - 
-    3 * log(sqrt(la^4 + 5 * la^2 * lb^2 + 4 * lb^4) + 
-    la * (sqrt(la^2 + lb^2) - la - sqrt(la^2 + 4 * lb^2)))))
+    prtMin, prtMax = minmax(la, lb)
+    hypLen = hypot(prtMin, prtMax)
+    # la^3 + lb^3 - hypLen^3, cancellation-free
+    cubDif = prtMin^3 - prtMin^2 *
+    (hypLen^2 + hypLen * prtMax + prtMax^2) / (hypLen + prtMax)
+    return (cubDif + 3 * la^2 * lb * asinh(lb / la) +
+    3 * la * lb^2 * asinh(la / lb)) / (6 * π * frqPhz(cmpInf)^2)
 end
-#= 
-Direct evaluation of 1 / (4 * π * dstMag) integral for a pair of cornered edge 
-panels. la, lb, and lc are the edge lengths, and la is assumed to be common to 
-both panels. 
+#=
+Direct evaluation of 1 / (4 * π * dstMag * frqPhz^2) integral for a pair of
+cornered edge panels. la, lb, and lc are the edge lengths, and la is assumed to
+be common to both panels. Integrating by parts along the shared edge gives
+int_0^la N0(u, lb, lc) du, N0 being the Newtonian potential of the box at its
+corner, which evaluates to the form below. The lb^3 and lc^3 asinh terms cancel
+against the leading part of the asinh(lc / hypAB) and asinh(lb / hypAC) terms
+for la much smaller than lb and lc, so they are grouped as log1p differences;
+each x - sqrt(x^2 + y^2) is likewise written as -y^2 / (x + sqrt(x^2 + y^2)).
+The form is symmetric under lb <-> lc, both orderings being called by wekE.
 =#
-@inline function rSrfEdgCrn(la::AbstractFloat, lb::AbstractFloat, 
+@inline function rSrfEdgCrn(la::AbstractFloat, lb::AbstractFloat,
     lc::AbstractFloat, cmpInf::GlaKerOpt)::ComplexF64
 
-    return (1 / (48 * π * frqPhz(cmpInf)^2)) * (8 * lb * lc * 
-    sqrt(lb^2 + lc^2) - 8 * lb * lc * sqrt(la^2 + lb^2 + lc^2) - 12 * la^3 * 
-    acot(la * lc / (la^2 + lb^2 - lb * sqrt(la^2 + lb^2 + lc^2))) + 
-    12 * la^3 * atan(la / lc) - 
-    12 * la * lc^2 * atan(la * lb / (lc * sqrt(la^2 + lb^2 + lc^2))) - 
-    12 * la * lb^2 * atan(la * lc / (lb * sqrt(la^2 + lb^2 + lc^2))) - 
-    16 * la^3 * atan(lb * lc / (la * sqrt(la^2 + lb^2 + lc^2))) + 
-    6 * lc^3 * atanh(lb / sqrt(lb^2 + lc^2)) - 
-    6 * lc * (la^2 + lc^2) * atanh(lb / sqrt(la^2 + lb^2 + lc^2)) - 
-    15 * la^2 * lc * log(la^2 + lc^2) - lc^3 * log(la^2 + lc^2) + 
-    2 * lc^3 * log(lc / (lb + sqrt(lb^2 + lc^2))) + 
-    6 * la^2 * lc * log(sqrt(la^2 + lb^2 + lc^2) - lb) + 
-    24 * la^2 * lc * log(sqrt(la^2 + lb^2 + lc^2) + lb) + 
-    2 * lc^3 * log(sqrt(la^2 + lb^2 + lc^2) + lb) + 
-    6 * la * lb * (-2 * la * log(la^2 + lb^2) - 
-    lc * log((lb^2 + lc^2) * (sqrt(la^2 + lb^2 + lc^2) - la)) + 
-    3 * lc * log(la + sqrt(la^2 + lb^2 + lc^2)) + 
-    la * log(sqrt(la^2 + lb^2 + lc^2) - lc) + 
-    3 * la * log(sqrt(la^2 + lb^2 + lc^2) + lc)) + 
-    2 * lb^3 * (
-    log((sqrt(la^2 + lb^2 + lc^2) - lc) / (lc + sqrt(la^2 + lb^2 + lc^2))) + 
-    log(1 + (2 * lc * (lc + sqrt(lb^2 + lc^2))) / lb^2)))
+    hypAll = sqrt(la^2 + lb^2 + lc^2)
+    hypAB = hypot(la, lb)
+    hypAC = hypot(la, lc)
+    hypBC = hypot(lb, lc)
+    # asinh(lc / lb) - asinh(lc / hypAB) and its lb <-> lc mirror
+    difB = log1p(la^2 * (lc / (hypAB + lb) +
+    lc^2 / (hypAB * hypBC + lb * hypAll)) / (lb * (lc + hypAll)))
+    difC = log1p(la^2 * (lb / (hypAC + lc) +
+    lb^2 / (hypAC * hypBC + lc * hypAll)) / (lc * (lb + hypAll)))
+    return ((lb^3 / 6) * difB + (lc^3 / 6) * difC +
+    (la^2 * lb / 2) * asinh(lc / hypAB) +
+    (la^2 * lc / 2) * asinh(lb / hypAC) +
+    la * lb * lc * asinh(la / hypBC) -
+    (la^3 / 6) * atan(lb * lc / (la * hypAll)) -
+    (la * lb^2 / 2) * atan(la * lc / (lb * hypAll)) -
+    (la * lc^2 / 2) * atan(la * lb / (lc * hypAll)) -
+    (la^2 * lb * lc / 3) / (hypBC + hypAll)) / (2 * π * frqPhz(cmpInf)^2)
 end
-#= 
-Direct evaluation of 1 / (4 * π * dstMag) integral for a pair of flat edge 
-panels. la and lb are the edge lengths, and lb is assumed to be ``doubled''. 
+#=
+Direct evaluation of 1 / (4 * π * dstMag * frqPhz^2) integral for a pair of flat
+edge panels. la and lb are the edge lengths, and lb is assumed to be
+``doubled''. In the difference variables the pair reduces to the moments M_ij of
+1 / sqrt(u^2 + v^2) used by rSrfSlf, giving
+la * M01(la, lb) - M11(la, lb) + g(2 * lb) - g(lb), with
+g(q) = 2 * lb * la * M00(la, q) - 2 * lb * M10(la, q) - la * M01(la, q) +
+M11(la, q). The polynomial part collapses to
+2 * hypA^3 - hypB^3 - la^3 + 6 * lb^3, which cancels to O(la * lb^2) for slender
+panels and to O(la^3) for short shared edges; it is rewritten as a manifestly
+negative product, and the two asinh differences as log1p of positive ratios.
 =#
-@inline function rSrfEdgFlt(la::AbstractFloat, lb::AbstractFloat, 
+@inline function rSrfEdgFlt(la::AbstractFloat, lb::AbstractFloat,
     cmpInf::GlaKerOpt)::ComplexF64
-       
-    return (1 / (12 * π * frqPhz(cmpInf)^2)) * (-la^3 + 2 * lb^2 * 
-    (3 * lb + sqrt(la^2 + lb^2) - 2 * sqrt(la^2 + 4 * lb^2)) + la^2 * 
-    (2 * sqrt(la^2 + lb^2) - sqrt(la^2 + 4 * lb^2))) + 
-    (1 / (64 * π)) * la * lb * (lb * (-62 * log(2) - 
-    5 * log(-la + sqrt(la^2 + lb^2)) + 
-    4 * log(8 * lb^2 * (-la + sqrt(la^2 + lb^2))) - 
-    33 * log(la + sqrt(la^2 + lb^2)) + 17 * log(-la + sqrt(la^2 + 4 * lb^2)) - 
-    24 * log(lb * (-la + sqrt(la^2 + 4 * lb^2))) + 
-    57 * log(la + sqrt(la^2 + 4 * lb^2))) + 
-    4 * la * (-8 * asinh(lb / la) + 6 * asinh(2 * lb / la) + 
-    6 * atanh(lb / sqrt(la^2 + lb^2)) + 12 * log(la) - 
-    13 * log(-lb + sqrt(la^2 + lb^2)) + log((-lb + sqrt(la^2 + lb^2)) / la) + 
-    log(la / (lb + sqrt(la^2 + lb^2))) - 7 * log(lb + sqrt(la^2 + lb^2)) - 
-    2 * log((lb + sqrt(la^2 + lb^2))/la) - 
-    3 * log(-(((lb + sqrt(la^2 + lb^2)) * 
-    (2 * lb - sqrt(la^2 + 4 * lb^2))) / (la^2))) - 
-    3 * log((-lb + sqrt(la^2 + lb^2)) / (-2 * lb + sqrt(la^2 + 4 * lb^2))) + 
-    11 * log(-2 * lb + sqrt(la^2 + 4 * lb^2)) - 
-    3 * log((lb + sqrt(la^2 + lb^2)) / (2 * lb + sqrt(la^2 + 4 * lb^2))) + 
-    log(2 * lb + sqrt(la^2 + 4 * lb^2)) + 
-    9 * log((2 * lb + sqrt(la^2 + 4 * lb^2)) / (lb + sqrt(la^2 + lb^2))) - 
-    2 * log(la^2 + 2 * lb * (lb - sqrt(la^2 + lb^2)))))
+
+    hypA = hypot(la, lb)
+    hypB = hypot(la, 2 * lb)
+    hypSum = hypB + 2 * hypA
+    # asinh(2 * lb / la) - asinh(lb / la)
+    difA = log1p((lb + 3 * lb^2 / (hypA + hypB)) / (lb + hypA))
+    # 2 * asinh(la / (2 * lb)) - asinh(la / lb)
+    difB = log1p(la^3 * (la / (hypA + lb)^2 + 1 / (hypB + 2 * lb)) /
+    (2 * lb * (la + hypA)))
+    # 2 * hypA^3 - hypB^3 - la^3 + 6 * lb^3, cancellation-free
+    plyPrt = -2 * la^3 * lb^2 *
+    (3 * la / (hypSum * (hypA + lb) * (hypB + 2 * lb)) +
+    (1 + 3 * la / hypSum) / ((hypA + la) * (hypB + la)))
+    return (plyPrt + 6 * la^2 * lb * difA + 6 * la * lb^2 * difB) /
+    (12 * π * frqPhz(cmpInf)^2)
 end
