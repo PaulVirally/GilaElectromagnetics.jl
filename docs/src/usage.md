@@ -75,6 +75,14 @@ for the [`GlaOprMem`](library.md#GilaElectromagnetics.GlaOprMem). It is *not* a
 matrix, but it can be used as a linear operator, i.e., you can multiply a vector
 by it.
 
+!!! warning "Cells coarser than a quarter wavelength"
+    Building an operator whose cell scale exceeds ``\lambda/4`` in any
+    direction warns that it is outside the range the fixed quadrature orders
+    were measured on (see [quadrature](./concepts.md#quadrature)); the operator is
+    still built, with the coarsest order in the table. Refine the cells if the
+    result matters, since such a discretization is in any case too coarse to
+    resolve the field.
+
 ## [Precision](@id precision)
 
 Every operator and field carries a real type parameter `T<:AbstractFloat`

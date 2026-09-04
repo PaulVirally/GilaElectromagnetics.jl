@@ -92,10 +92,11 @@ end
         intDifV = real(maximum(abs.(wv1 .- wv2) ./ abs.(wv2)))
         return [intDifS, intDifE, intDifV]
     end
-    # Use only (2,2,2) — (4,4,4) re-integration takes 14+ minutes in isolation.
-    # In the full suite context GC is active enough that this completes safely (~3.5 min).
+    # Use only (2,2,2) — the triple is re-integrated at intOrd and intOrd + 8.
+    # At the intOrd 48 default the measured worst component is 4.0e-11 at this
+    # cell size (1.4e-10 at a λ/4 cell), so the bound is 1e-9 rather than 1e-8.
     intDif = wekIntChk(_vacMem2.srcVol.scl, _vacMem2.cmpInf.intOrd)
-    @test maximum(abs.(intDif)) < 1e-8
+    @test maximum(abs.(intDif)) < 1e-9
     @test length(intDif) == 3
 end
 

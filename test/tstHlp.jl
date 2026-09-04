@@ -75,3 +75,5 @@ asymMat(m) = (m - m') / 2im
 symMat(m)  = (m + m') / 2
 
 relErr(a, b) = opnorm(a - b) / opnorm(b)
+# Frobenius version, for vectors and for arrays opnorm does not take
+frbErr(a, b) = norm(a .- b) / norm(b)

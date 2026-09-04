@@ -38,16 +38,17 @@ end
 
 Construct a CPUKerOpt of storage precision `T` with default values.
 
-The default integration order of 32 provides a good balance between accuracy and computational cost for most applications.
+The default integration order of 48 keeps the singular corrections near
+5e-11. This is affordable because the weak integrals fold their redundant terms.
 
 # Returns
 - `CPUKerOpt{T}`: A new CPU kernel options object with:
   - Phase factor of 1.0 + 0.0im
-  - Integration order of 32
+  - Integration order of 48
   - Adjoint mode disabled
   - Default CPU backend
 """
-CPUKerOpt{T}() where T<:AbstractFloat = CPUKerOpt{T}(1.0+0.0im, 32, false, CPU())
+CPUKerOpt{T}() where T<:AbstractFloat = CPUKerOpt{T}(1.0+0.0im, 48, false, CPU())
 
 """
     CPUKerOpt(frqPhz, intOrd, adjMod, bckEnd)
@@ -192,18 +193,21 @@ end
 
 Construct a GPUKerOpt of storage precision `T` with default values.
 
-The default thread and block counts are chosen to provide good performance on most NVIDIA GPUs. The default integration order of 32 provides a good balance between accuracy and computational cost for most applications.
+The default thread and block counts are chosen to provide good performance on
+most NVIDIA GPUs. The default integration order of 48 keeps the singular
+corrections near 5e-11. This is affordable because the weak integrals fold their
+redundant terms.
 
 # Returns
 - `GPUKerOpt{T}`: A new GPU kernel options object with:
   - Phase factor of 1.0 + 0.0im
-  - Integration order of 32
+  - Integration order of 48
   - 128 threads per block
   - 256 blocks
   - Adjoint mode disabled
   - Default CUDA backend
 """
-GPUKerOpt{T}() where T<:AbstractFloat = GPUKerOpt{T}(1.0+0.0im, 32, (128, 2, 1), (1, 128, 256), false, CUDABackend())
+GPUKerOpt{T}() where T<:AbstractFloat = GPUKerOpt{T}(1.0+0.0im, 48, (128, 2, 1), (1, 128, 256), false, CUDABackend())
 
 """
     GPUKerOpt(frqPhz, intOrd, numTrd, numBlk, adjMod, bckEnd)

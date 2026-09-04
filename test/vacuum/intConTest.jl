@@ -1,6 +1,7 @@
 using Test, GilaElectromagnetics
 
-const cubRelTol = 1e-8
+# intOrd 48 vs 56 measures 4.0e-11 at this cell size, so 1e-9 has teeth
+const cubRelTol = 1e-9
 const cubAbsTol = 1e-12
 
 #=

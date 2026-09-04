@@ -43,9 +43,6 @@ const prcMul64 = MulRegGlaOprVac{Float64}([prcVol2, prcTrg2], [prcVol2, prcTrg2]
 const prcCmpDns32 = dnsMat(prcCmp32)
 const prcDflOpr = GlaOprVac(prcVol2)
 
-# Vectors, where tstHlp's opnorm based relErr does not apply
-prcVecErr(a, b) = norm(a .- b) / norm(b)
-
 # Entrywise error against the largest entry, so one bad entry cannot hide in a norm
 prcEntErr(m32, m64) = maximum(abs.(ComplexF64.(m32) .- m64)) / maximum(abs.(m64))
 
@@ -294,8 +291,8 @@ end
 
     resIr = norm(_invSct() * copy(solIr) - b64) / norm(b64)
     res32 = norm(_invSct() * copy(sol32) - b64) / norm(b64)
-    errIr = prcVecErr(solIr, solRef)
-    err32 = prcVecErr(sol32, solRef)
+    errIr = frbErr(solIr, solRef)
+    err32 = frbErr(sol32, solRef)
     @info "IR fp64 residual = $resIr, relErr = $errIr; fp32 residual in fp64 = $res32, relErr = $err32"
     @test resIr < 1e-9
     @test errIr < 1e-7
@@ -316,20 +313,20 @@ end
     setSus!(invSct, susNew)
     solNew = solve(invSct, copy(b64), rfn)
     invNew = InvSctOpr(_g0(), susNew)
-    @test prcVecErr(solNew, solve(invNew, copy(b64), prcRef)) < 1e-7
+    @test frbErr(solNew, solve(invNew, copy(b64), prcRef)) < 1e-7
     @test norm(invNew * copy(solNew) - b64) / norm(b64) < 1e-9
 
     # The refinement is the solver of a scattering operator, used through mul!
     for opr in (SctOpr, GlaOpr)
         act = opr(_g0(), prcSus64; slv=MixPrcRfn(Float32; relTol=prcTgt)) * copy(b64)
         ref = opr(_g0(), prcSus64; slv=prcRef) * copy(b64)
-        @test prcVecErr(act, ref) < 1e-7
+        @test frbErr(act, ref) < 1e-7
     end
 
     # The inner solver is pluggable
     solBcg = solve(_invSct(), copy(b64), MixPrcRfn(Float32; innSlv=BiCGStabSolver(), relTol=prcTgt))
     @test norm(_invSct() * copy(solBcg) - b64) / norm(b64) < 1e-9
-    @test prcVecErr(solBcg, solRef) < 1e-7
+    @test frbErr(solBcg, solRef) < 1e-7
 
     #= The inverse paths of the wrappers route their solve through the vacuum
     default rather than the operator's own solver, so this checks that a
@@ -340,10 +337,10 @@ end
     w, wRef = zeros(ComplexF64, 192), zeros(ComplexF64, 192)
     invMul!(w, gla, copy(b64), one(ComplexF64), zero(ComplexF64))
     invMul!(wRef, glaRef, copy(b64), one(ComplexF64), zero(ComplexF64))
-    @test prcVecErr(w, wRef) < 1e-7
+    @test frbErr(w, wRef) < 1e-7
     invMulAdj!(w, gla, copy(b64), one(ComplexF64), zero(ComplexF64))
     invMulAdj!(wRef, glaRef, copy(b64), one(ComplexF64), zero(ComplexF64))
-    @test prcVecErr(w, wRef) < 1e-7
+    @test frbErr(w, wRef) < 1e-7
     @test !isadjoint(gla)
 
     # An adjoint! on the high operator also has to reach the cached copy

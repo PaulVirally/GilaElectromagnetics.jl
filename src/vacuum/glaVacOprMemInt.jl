@@ -56,12 +56,13 @@ separation distance dstMag is assumed to be scaled by the wavelength. The
 function is used in the included glaIntSup.jl code to improve the convergence of
 all weakly singular integrals.
 =#
-@inline function sclEgoN_(dstMag::Number, frqPhz::Number) 
-    if dstMag > 1e-7
-        return (cis(2π * dstMag * frqPhz) - 1) / 
-        (4 * π * dstMag * frqPhz^2)
-    end
-    return ((im / frqPhz) - π * dstMag) / 2
+@inline function sclEgoN_(dstMag::Number, frqPhz::Number)
+    # Computes g = [exp(im z) - 1] / (4π dstMag frqPhz^2) with z = 2π dstMag frqPhz.
+    # Note that expressing g in terms of a sinc improves numerical stability for
+    # small z and for complex frqPhz. For very large imaginary parts, the sinc
+    # stays within a few ulp of a 256 bit BigFloat reference.
+    xPrd = dstMag * frqPhz
+    return im * cispi(xPrd) * sinc(xPrd) / (2 * frqPhz)
 end
 function sclEgoN(dstMag::Number, frqPhz::ComplexF64)
     if imag(frqPhz) == zero(real(typeof(frqPhz)))
@@ -89,45 +90,66 @@ function wekS(scl::NTuple{3,Number}, glQud1::AbstractMatrix{<:AbstractFloat},
 
     # grdPts = Array{Float64}(undef, 3, 18)
     grdPts = MMatrix{3, 18, Float64}(undef)
-    # weak self integrals for the three characteristic faces of a cuboid 
-    # dir = 1 -> xy face (z-nrm)   dir = 2 -> xz face (y-nrm) 
+    # weak self integrals for the three characteristic faces of a cuboid
+    # dir = 1 -> xy face (z-nrm)   dir = 2 -> xz face (y-nrm)
     # dir = 3 -> yz face (x-nrm)
+    #= For a cubic cell the three directions see the same grid points, so one
+    evaluation is bitwise the value of all three. =#
+    if cubScl(scl)
+        val = wekSDir(1, scl, grdPts, glQud1, cmpInf)
+        return [val + rSrfSlf(Float64(scl[2]), Float64(scl[3]), cmpInf);
+        val + rSrfSlf(Float64(scl[1]), Float64(scl[3]), cmpInf);
+        val + rSrfSlf(Float64(scl[1]), Float64(scl[2]), cmpInf)]
+    end
     return [wekSDir(3, scl, grdPts, glQud1, cmpInf) +
     rSrfSlf(Float64(scl[2]), Float64(scl[3]), cmpInf);
     wekSDir(2, scl, grdPts, glQud1, cmpInf) +
-    rSrfSlf(Float64(scl[1]), Float64(scl[3]), cmpInf); 
-    wekSDir(1, scl, grdPts, glQud1, cmpInf) + 
+    rSrfSlf(Float64(scl[1]), Float64(scl[3]), cmpInf);
+    wekSDir(1, scl, grdPts, glQud1, cmpInf) +
     rSrfSlf(Float64(scl[1]), Float64(scl[2]), cmpInf)]
 end
 #=
-Weak self-integral of a particular face.
+The three characteristic faces of a cell coincide when its scales are equal. We
+check this equality over Rational types to avoid floating point errors. The
+panel integrands depend only on the separation |r - r'|, so every panel integral
+is invariant under rigid motions of the pair, and a cubic cell presents grid
+points related by the coordinate permutation in all three directions. The three
+faces of a cubic cell have identical panel geometries, so we only need one
+evaluation for all three.
 =#
-function wekSDir(dir::Integer, scl::NTuple{3,Number}, 
-    grdPts::AbstractMatrix{<:AbstractFloat}, glQud1::AbstractMatrix{<:AbstractFloat}, 
+@inline cubScl(scl::NTuple{3,Number}) = scl[1] == scl[2] && scl[2] == scl[3]
+#=
+Weak self-integral of a particular face. The four self terms of the two diagonal
+splits integrate congruent right triangles. The 180 degree rotation about the
+face centre maps one triangle of a split onto the other, a reflection in a face
+axis maps one split onto the other. Thus, only one evaluation is needed for all
+four. On a square face the reflection in the other diagonal (note: needs to be
+a square) maps the edge pair of one split onto the edge pair of the other, so
+the second split's edge terms is the same as the first's. Both identities rest
+on the kernel depending only on |r - r'| (see cubScl). They must be re-derived
+before using a kernel that is not invariant under reflections in the cell axes,
+such as an anisotropic background or an oblique lattice.
+=#
+function wekSDir(dir::Integer, scl::NTuple{3,Number},
+    grdPts::AbstractMatrix{<:AbstractFloat}, glQud1::AbstractMatrix{<:AbstractFloat},
     cmpInf::GlaKerOpt)
 
     wekGrdPts!(dir, scl, grdPts)
-    return (((
-    wekSInt(hcat(grdPts[:,1], grdPts[:,2], grdPts[:,5]), glQud1, 
-        cmpInf) +
-    wekSInt(hcat(grdPts[:,1], grdPts[:,5], grdPts[:,4]), glQud1, 
-        cmpInf) +
-    wekEInt(hcat(grdPts[:,1], grdPts[:,2], grdPts[:,5], 
-        grdPts[:,1], grdPts[:,5], grdPts[:,4]), glQud1, 
-    cmpInf) +
-    wekEInt(hcat(grdPts[:,1], grdPts[:,5], grdPts[:,4], 
-        grdPts[:,1], grdPts[:,2], grdPts[:,5]), glQud1, 
-    cmpInf)) + (
-    wekSInt(hcat(grdPts[:,4], grdPts[:,1], grdPts[:,2]), glQud1, 
-        cmpInf) +
-    wekSInt(hcat(grdPts[:,4], grdPts[:,2], grdPts[:,5]), glQud1, 
-        cmpInf) +
-    wekEInt(hcat(grdPts[:,4], grdPts[:,1], grdPts[:,2], 
-        grdPts[:,4], grdPts[:,2], grdPts[:,5]), glQud1, 
-    cmpInf) +
-    wekEInt(hcat(grdPts[:,4], grdPts[:,2], grdPts[:,5], 
-        grdPts[:,4], grdPts[:,1], grdPts[:,2]), glQud1, 
-    cmpInf))) / 2.0)
+    sSlf = wekSInt(hcat(grdPts[:,1], grdPts[:,2], grdPts[:,5]), glQud1, cmpInf)
+    edgA = wekEInt(hcat(grdPts[:,1], grdPts[:,2], grdPts[:,5],
+        grdPts[:,1], grdPts[:,5], grdPts[:,4]), glQud1, cmpInf)
+    edgB = wekEInt(hcat(grdPts[:,1], grdPts[:,5], grdPts[:,4],
+        grdPts[:,1], grdPts[:,2], grdPts[:,5]), glQud1, cmpInf)
+    # square face: the two in-plane scales, compared as the Rationals they are
+    if scl[mod1(5 - dir, 3)] == scl[mod1(6 - dir, 3)]
+        return ((sSlf + sSlf) + edgA) + edgB
+    end
+    edgC = wekEInt(hcat(grdPts[:,4], grdPts[:,1], grdPts[:,2],
+        grdPts[:,4], grdPts[:,2], grdPts[:,5]), glQud1, cmpInf)
+    edgD = wekEInt(hcat(grdPts[:,4], grdPts[:,2], grdPts[:,5],
+        grdPts[:,4], grdPts[:,1], grdPts[:,2]), glQud1, cmpInf)
+    return ((((sSlf + sSlf) + edgA) + edgB) +
+    (((sSlf + sSlf) + edgC) + edgD)) / 2.0
 end
 #=
 Head function for integration over edge adjacent square panels. See wekS for 
@@ -137,8 +159,10 @@ function wekE(scl::NTuple{3,Number}, glQud1::AbstractMatrix{<:AbstractFloat},
     cmpInf::GlaKerOpt)
     
     grdPts = Array{Float64,2}(undef, 3, 18)
+    # a cubic cell sees the same grid points in all three directions
+    cubMod = cubScl(scl)
     # labels are panelDir-panelDir-gridIncrement
-    vals = wekEDir(3, scl, grdPts, glQud1, cmpInf)
+    vals = valsCub = wekEDir(3, scl, grdPts, glQud1, cmpInf)
     # lower case letters reference the normal directions of the rectangles
     # upper case letter reference the increasing axis direction when necessary 
     # first set
@@ -148,7 +172,7 @@ function wekE(scl::NTuple{3,Number}, glQud1::AbstractMatrix{<:AbstractFloat},
         Float64(scl[1]), cmpInf)
     xzA = vals[4] + rSrfEdgCrn(Float64(scl[2]), Float64(scl[3]), 
         Float64(scl[1]), cmpInf)
-    vals = wekEDir(2, scl, grdPts, glQud1, cmpInf)
+    vals = cubMod ? valsCub : wekEDir(2, scl, grdPts, glQud1, cmpInf)
     # second set
     yyZ = vals[1] + rSrfEdgFlt(Float64(scl[1]), Float64(scl[3]), cmpInf)
     yyX = vals[3] + rSrfEdgFlt(Float64(scl[3]), Float64(scl[1]), cmpInf)
@@ -156,7 +180,7 @@ function wekE(scl::NTuple{3,Number}, glQud1::AbstractMatrix{<:AbstractFloat},
         Float64(scl[2]), cmpInf)
     xyB = vals[4] + rSrfEdgCrn(Float64(scl[3]), Float64(scl[2]), 
         Float64(scl[1]), cmpInf)
-    vals = wekEDir(1, scl, grdPts, glQud1, cmpInf)
+    vals = cubMod ? valsCub : wekEDir(1, scl, grdPts, glQud1, cmpInf)
     # third set
     zzX = vals[1] + rSrfEdgFlt(Float64(scl[2]), Float64(scl[1]), cmpInf)
     zzY = vals[3] + rSrfEdgFlt(Float64(scl[1]), Float64(scl[2]), cmpInf)
@@ -225,18 +249,20 @@ function wekV(scl::NTuple{3,Number}, glQud1::AbstractMatrix{<:AbstractFloat},
 
     # grdPts = Array{Float64,2}(undef,3,18)
     grdPts = MMatrix{3, 18, Float64}(undef)
+    # a cubic cell sees the same grid points in all three directions
+    cubMod = cubScl(scl)
     # vertex integrals for x-normal face
-    vals = wekVDir(3, scl, grdPts, glQud1, cmpInf)
+    vals = valsCub = wekVDir(3, scl, grdPts, glQud1, cmpInf)
     xxO = vals[1]
     xyA = vals[2]
     xzA = vals[3]
     # vertex integrals for y-normal face
-    vals = wekVDir(2, scl, grdPts, glQud1, cmpInf)
+    vals = cubMod ? valsCub : wekVDir(2, scl, grdPts, glQud1, cmpInf)
     yyO = vals[1]
     yzA = vals[2]
     xyB = vals[3]
     # vertex integrals for z-normal face
-    vals = wekVDir(1, scl, grdPts, glQud1, cmpInf)
+    vals = cubMod ? valsCub : wekVDir(1, scl, grdPts, glQud1, cmpInf)
     zzO = vals[1]
     xzB = vals[2]
     yzB = vals[3]

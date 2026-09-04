@@ -147,6 +147,35 @@ as the inverse of ``\textbf{M}_0``:
 Solving for the Green function in matter can be done indirectly with Gila. See
 the next section, [usage](usage.md), for more information.
 
+## [Quadrature](@id quadrature)
+
+Each entry of the discretized ``\textbf{G}_0`` is a sum of 36 four-dimensional
+integrals, one per pair of faces of the source and target cells. Cells that
+touch, and the self cell, keep the singularity-resolving treatment: analytic
+evaluation of the ``1/r`` part plus the DIRECTFN chains, the face pairs that
+need no correction being integrated normally. Every cell pair separated
+by two cells or more is instead integrated with a fixed tensor
+Gauss-Legendre rule, whose order per dimension comes from a lookup on the
+max-norm separation in cells: 9 at 2 cells, 7 at 3-4, 6 at 5-6, 5 at 7-16, and
+4 beyond, floored at 5 for cells above ``\lambda/8`` and at 6 for cells
+approaching ``\lambda/4``. Cell size matters only through that floor; the
+separation sets the order otherwise.
+
+The schedule targets ``10^{-10}`` relative error on the assembled cell
+interaction, one order of margin over the smallest order measured to reach it.
+Accuracy is judged on the assembled interaction rather than on individual face
+pairs because assembly subtracts the 36 face-pair integrals from one another,
+amplifying face-pair error by one to three orders of magnitude. The fixed rule
+also replaces error that was neither uniform nor controlled: at the previous
+adaptive tolerances, well separated cell pairs terminated after a single
+Genz-Malik step, leaving errors near ``10^{-6}``, and the cost per cell varied
+by orders of magnitude across a volume. The fixed rule costs a few times more
+time in the non-contact fill and buys about four orders of accuracy, and
+`benchmark/quadCnv.jl` regenerates the measurements behind it. The uncorrected
+face pairs of a touching cell pair are a full cell apart, so they take the same
+fixed rule at a constant order 9, leaving adaptive cubature only for the
+misaligned near pairs of a cross-scale volume pair.
+
 ## Precision
 
 Gila stores the discretized Green function ``\textbf{G}_0`` as `Complex{T}`
