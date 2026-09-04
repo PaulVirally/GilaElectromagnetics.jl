@@ -176,6 +176,13 @@ face pairs of a touching cell pair are a full cell apart, so they take the same
 fixed rule at a constant order 9, leaving adaptive cubature only for the
 misaligned near pairs of a cross-scale volume pair.
 
+The analytic ``1/r`` panel integrals that the contact treatment adds are
+evaluated from closed forms grouped to be cancellation-free: the cubic
+differences as ``p^3 - p^2(h^2 + hq + q^2)/(h + q)``, the ``\mathrm{asinh}``
+differences as `log1p` of a ratio of positive quantities. This holds them to
+under a digit of loss over nine decades of panel aspect ratio, where the
+unregrouped forms lost up to 15.
+
 ## Precision
 
 Gila stores the discretized Green function ``\textbf{G}_0`` as `Complex{T}`
