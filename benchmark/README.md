@@ -48,8 +48,8 @@ Suite keys: `<create|apply>/<cpu|gpu>/self/<NxNxN>` and
   `1//32`, plus the non-cubic `(32,16,8)` to catch FFT anisotropy.
 - **External operators**: same-size cubic pairs (`n ∈ {8, 16, 24}`, aligned
   grids), separated along x by a face-to-face gap: `touching` (0 cells, the
-  `genCntVol` + `egoFunExtCnt!` contact path), `close` (1 cell, near-singular
-  cubature), `mid` (`n` cells), `far` (`20n` cells, FFT-dominated).
+  `genCntVol` + `egoCntOut!` contact path), `close` (1 cell, near-singular
+  expansion), `mid` (`n` cells), `far` (`20n` cells, FFT-dominated).
 - Creation uses `samples=5, evals=1, gcsample=true`. Trial memory/allocations
   are recorded. GPU application benchmarks `CUDA.@sync(opr * vec)` with the
   input already a `CuArray` (i.e., we don't measure the implicit host→ device

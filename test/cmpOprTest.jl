@@ -3,24 +3,25 @@
 # at the finest cell size of the tiling. A composite target row is the mean of
 # the fine rows it covers, a composite source column injects unit density into
 # the fine cells it covers, and the √ΔV basis puts sqrt(ΔVᵢ/ΔVⱼ) on block (i, j).
-using Test, GilaElectromagnetics, LinearAlgebra, CUDA
+import GilaElectromagnetics.GilaVolumes: _lwrEdg
+import GilaElectromagnetics.GilaVacuum: arrTyp
 
-const cmpScl16 = (1//16, 1//16, 1//16)
-const cmpScl32 = (1//32, 1//32, 1//32)
-const cmpOrg0 = (0//1, 0//1, 0//1)
+# The smallest tiling this file uses: one region of 2×2×2 cells of 1/16 λ
+const smlVol = GlaVol((2, 2, 2), scl16, stdOrg)
+const smlCvl = GlaCmpVol(smlVol)
 
-cmpRelFro(matA, matB) = norm(matA - matB) / norm(matB)
-cmpLwrEdg(vol::GlaVol) = Tuple(first.(vol.grd) .- (vol.scl .// 2))
+# Geometries closer than λ/3 warn once on construction; pin it instead of printing
+prxBld(bld) = @test_logs (:warn, r"third of a wavelength") bld()
 
 # Linear indices in refVol of the cells under each cell of cvol, in layout order
 function cmpChdIdx(cvol::GlaCmpVol, refVol::GlaVol)
     lin = LinearIndices(Tuple(refVol.cel))
-    refLwr = cmpLwrEdg(refVol)
+    refLwr = _lwrEdg(refVol)
     chd = Vector{Vector{Int}}()
     for reg in regions(cvol)
         rat = ntuple(dir -> Int(reg.scl[dir] // refVol.scl[dir]), 3)
         bas = ntuple(dir ->
-            Int((cmpLwrEdg(reg)[dir] - refLwr[dir]) // refVol.scl[dir]), 3)
+            Int((_lwrEdg(reg)[dir] - refLwr[dir]) // refVol.scl[dir]), 3)
         for celInd in CartesianIndices(Tuple(reg.cel))
             push!(chd, vec([lin[ntuple(dir ->
                 bas[dir] + (celInd[dir] - 1) * rat[dir] + off[dir], 3)...]
@@ -78,9 +79,6 @@ end
 cmpAgrRef(cvol::GlaCmpVol, refVol::GlaVol, refMat::AbstractMatrix{ComplexF64}) =
     cmpAgrRef(cvol, refVol, cvol, refVol, refMat)
 
-const GlaSnd = GilaElectromagnetics.GilaOperators.GlaSndOprVac
-import GilaElectromagnetics.GilaVacuum: arrTyp
-
 # Self, external, masked union, and fine mesh blocks of a composite operator
 cmpBlkCnt(opr) = (count(blk -> blk isa GlaOprVac && isselfoperator(blk), opr.blkMat),
     count(blk -> blk isa GlaOprVac && isexternaloperator(blk), opr.blkMat),
@@ -89,19 +87,19 @@ cmpBlkCnt(opr) = (count(blk -> blk isa GlaOprVac && isselfoperator(blk), opr.blk
 
 #= The money geometry: a (4,4,4) volume of 1/16 λ cells with its low x half
 refined, so the tiling is one fine region face to face with one coarse one. =#
-const mnyVol = GlaVol((4, 4, 4), cmpScl16, cmpOrg0)
+const mnyVol = GlaVol((4, 4, 4), scl16, stdOrg)
 const mnyCvl = refine(GlaCmpVol(mnyVol), ((-1//16, 0//1, 0//1), (1//8, 1//4, 1//4)))
-const mnyRef = GlaVol((8, 8, 8), cmpScl32, cmpOrg0)
+const mnyRef = GlaVol((8, 8, 8), stdScl, stdOrg)
 const mnyOpr = GlaCmpOprVac{Float64}(mnyCvl)
 const mnyMat = dnsMat(mnyOpr)
 const mnyAgr = cmpAgrRef(mnyCvl, mnyRef, dnsMat(GlaOprVac{Float64}(mnyRef)))
 
-@testset "Composite operator geometry" begin
+@testset "Composite operator traits" begin
     @test nregions(mnyCvl) == 2
     @test regions(mnyCvl)[1].cel == (4, 8, 8)
-    @test regions(mnyCvl)[1].scl == cmpScl32
+    @test regions(mnyCvl)[1].scl == stdScl
     @test regions(mnyCvl)[2].cel == (2, 4, 4)
-    @test regions(mnyCvl)[2].scl == cmpScl16
+    @test regions(mnyCvl)[2].scl == scl16
     @test size(mnyOpr) == (864, 864)
     @test size(mnyOpr, 1) == 864
     @test eltype(mnyOpr) == ComplexF64
@@ -118,13 +116,11 @@ end
 
 @testset "Composite operator against a uniform reference" begin
     @test all(isfinite, mnyMat)
-    @test cmpRelFro(mnyMat, mnyAgr) < 1e-6
+    @test frbErr(mnyMat, mnyAgr) < 1e-12
     # A composite target row is a mean, not a sum, so the wrong convention shows
-    @test cmpRelFro(mnyMat, 8 .* mnyAgr) > 1e-3
-end
-
-@testset "Composite operator complex symmetry" begin
-    @test cmpRelFro(mnyMat, transpose(mnyMat)) < 1e-8
+    @test frbErr(mnyMat, 8 .* mnyAgr) > 1e-3
+    # A self operator is complex symmetric
+    @test frbErr(mnyMat, transpose(mnyMat)) < 1e-13
 end
 
 @testset "Composite operator adjoint" begin
@@ -133,13 +129,13 @@ end
     @test isadjoint(adjOpr)
     @test !isadjoint(mnyOpr)
     @test size(adjOpr) == reverse(size(mnyOpr))
-    @test cmpRelFro(dnsMat(adjOpr), mnyMat') < 1e-13
+    @test frbErr(dnsMat(adjOpr), mnyMat') < 1e-13
     # The original operator is untouched
     @test dnsMat(mnyOpr) == mnyMat
 end
 
 @testset "Composite operator on a field" begin
-    fld = discretize!(zerofield(Float64, mnyCvl), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+    fld = discretize!(zerofield(Float64, mnyCvl), tstDns)
     out = mnyOpr * fld
     @test out isa GlaFld
     @test out.cvol === mnyCvl
@@ -156,16 +152,14 @@ end
     mul!(outMul, mnyOpr, fld, 2.0, 0.0)
     @test norm(outMul.dat - 2 .* out.dat) < 1e-12 * norm(out.dat)
     # Densification through getindex
-    @test cmpRelFro(mnyOpr[1:4, 1:4], mnyMat[1:4, 1:4]) < 1e-12
+    @test frbErr(mnyOpr[1:4, 1:4], mnyMat[1:4, 1:4]) < 1e-12
 end
-
-const cmpSym = GilaElectromagnetics.GilaOperators.sym
 
 #= The two Hermitian parts are read entry by entry off the composite matrix,
 which the complex symmetry of the self operator makes exact. Both are built from
 the same block matrix, so a matvec costs one application of G₀. =#
 @testset "Composite operator Hermitian parts" begin
-    asyOpr, symOpr = asym(mnyOpr), cmpSym(mnyOpr)
+    asyOpr, symOpr = asym(mnyOpr), glaSym(mnyOpr)
     @test asyOpr isa AsyGlaCmpOprVac
     @test symOpr isa SymGlaCmpOprVac
     @test AsymCompositeVacuumGreenOperator === AsyGlaCmpOprVac
@@ -187,20 +181,20 @@ the same block matrix, so a matvec costs one application of G₀. =#
 
     asyDns, symDns = dnsMat(asyOpr), dnsMat(symOpr)
     @test all(isfinite, asyDns)
-    @test cmpRelFro(asyDns, asymMat(mnyMat)) < 1e-12
-    @test cmpRelFro(symDns, symMat(mnyMat)) < 1e-12
+    @test frbErr(asyDns, asymMat(mnyMat)) < 1e-12
+    @test frbErr(symDns, symMat(mnyMat)) < 1e-12
     # Both parts are Hermitian, and together they rebuild the operator
-    @test cmpRelFro(asyDns, asyDns') < 1e-12
-    @test cmpRelFro(symDns, symDns') < 1e-12
-    @test cmpRelFro(symDns + im .* asyDns, mnyMat) < 1e-12
+    @test frbErr(asyDns, asyDns') < 1e-12
+    @test frbErr(symDns, symDns') < 1e-12
+    @test frbErr(symDns + im .* asyDns, mnyMat) < 1e-12
     # The operator the part was taken from is untouched
     @test dnsMat(mnyOpr) == mnyMat
 
     # Hermitian, so adjoint! hands the operator back
     @test GilaElectromagnetics.adjoint!(asyOpr) === asyOpr
-    @test cmpRelFro(dnsMat(adjoint(asyOpr)), asyDns) < 1e-12
+    @test frbErr(dnsMat(adjoint(asyOpr)), asyDns) < 1e-12
 
-    fld = discretize!(zerofield(Float64, mnyCvl), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+    fld = discretize!(zerofield(Float64, mnyCvl), tstDns)
     out = asyOpr * fld
     @test out isa GlaFld
     @test out.cvol === mnyCvl
@@ -208,27 +202,27 @@ the same block matrix, so a matvec costs one application of G₀. =#
     @test asyOpr * collect(fld.dat) == out.dat
     @test_throws ArgumentError asyOpr * zerofield(Float64, GlaCmpVol(mnyRef))
     @test_throws ArgumentError asyOpr * zeros(ComplexF64, 863)
-    @test cmpRelFro(asyOpr[1:4, 1:4], asyDns[1:4, 1:4]) < 1e-12
+    @test frbErr(asyOpr[1:4, 1:4], asyDns[1:4, 1:4]) < 1e-12
 
     # A part only makes sense for a self operator, and not in adjoint mode
-    extOpr = GlaCmpOprVac{Float64}(GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, cmpOrg0)),
-        GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, (1//1, 0//1, 0//1))))
+    extOpr = GlaCmpOprVac{Float64}(smlCvl,
+        GlaCmpVol(GlaVol((2, 2, 2), scl16, (1//1, 0//1, 0//1))))
     @test_throws ArgumentError asym(extOpr)
-    @test_throws ArgumentError cmpSym(extOpr)
+    @test_throws ArgumentError glaSym(extOpr)
     @test_throws ArgumentError asym(adjoint(mnyOpr))
 
     # The volume constructor builds the operator it needs
-    @test AsyGlaCmpOprVac{Float64}(GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, cmpOrg0))) isa AsyGlaCmpOprVac
-    @test SymGlaCmpOprVac{Float64}(GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, cmpOrg0))) isa SymGlaCmpOprVac
+    @test AsyGlaCmpOprVac{Float64}(smlCvl) isa AsyGlaCmpOprVac
+    @test SymGlaCmpOprVac{Float64}(smlCvl) isa SymGlaCmpOprVac
 end
 
 #= A coarse region on each side of a fine one, so a sandwich block appears in
 both orientations and the two coarse regions see each other across a gap. =#
-const triCvl = refine(GlaCmpVol(GlaVol((6, 4, 4), cmpScl16, cmpOrg0)),
-    (cmpOrg0, (1//8, 1//4, 1//4)))
-const triRef = GlaVol((12, 8, 8), cmpScl32, cmpOrg0)
+const triCvl = refine(GlaCmpVol(GlaVol((6, 4, 4), scl16, stdOrg)),
+    (stdOrg, (1//8, 1//4, 1//4)))
+const triRef = GlaVol((12, 8, 8), stdScl, stdOrg)
 
-@testset "Composite operator with three regions" begin
+@testset "Composite operator three regions" begin
     @test nregions(triCvl) == 3
     @test regions(triCvl)[1].cel == (4, 8, 8)
     @test all(reg -> reg.cel == (2, 4, 4), regions(triCvl)[2:3])
@@ -239,57 +233,54 @@ const triRef = GlaVol((12, 8, 8), cmpScl32, cmpOrg0)
     triMat = dnsMat(triOpr)
     @test all(isfinite, triMat)
     triAgr = cmpAgrRef(triCvl, triRef, dnsMat(GlaOprVac{Float64}(triRef)))
-    @test cmpRelFro(triMat, triAgr) < 1e-6
-    @test cmpRelFro(triMat, transpose(triMat)) < 1e-8
-    @test cmpRelFro(dnsMat(adjoint(triOpr)), triMat') < 1e-13
+    @test frbErr(triMat, triAgr) < 1e-13
+    @test frbErr(triMat, transpose(triMat)) < 1e-13
+    @test frbErr(dnsMat(adjoint(triOpr)), triMat') < 1e-13
     # Sandwich blocks in both orientations, plus a same-scale external pair
-    @test cmpRelFro(dnsMat(asym(triOpr)), asymMat(triMat)) < 1e-12
-    @test cmpRelFro(dnsMat(cmpSym(triOpr)), symMat(triMat)) < 1e-12
+    @test frbErr(dnsMat(asym(triOpr)), asymMat(triMat)) < 1e-12
+    @test frbErr(dnsMat(glaSym(triOpr)), symMat(triMat)) < 1e-12
 end
 
 @testset "Composite operator between two bodies" begin
-    srcCvl = GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, (1//2, 0//1, 0//1)))
-    opr = GlaCmpOprVac{Float64}(mnyCvl, srcCvl)
+    srcCvl = GlaCmpVol(GlaVol((2, 2, 2), scl16, (1//2, 0//1, 0//1)))
+    opr = prxBld(() -> GlaCmpOprVac{Float64}(mnyCvl, srcCvl))
     @test isexternaloperator(opr)
     @test !isselfoperator(opr)
     @test size(opr) == (864, 24)
-    # Half a wavelength away, so both blocks take the ordinary external route
+    # Apart and at the same scale, so both blocks take the ordinary external route
     @test cmpBlkCnt(opr) == (0, 2, 0, 0)
     mat = dnsMat(opr)
     @test all(isfinite, mat)
-    srcRef = GlaVol((4, 4, 4), cmpScl32, (1//2, 0//1, 0//1))
-    refMat = dnsMat(GlaOprVac{Float64}(mnyRef, srcRef))
-    @test cmpRelFro(mat, cmpAgrRef(mnyCvl, mnyRef, srcCvl, srcRef, refMat)) < 1e-6
-    @test cmpRelFro(dnsMat(adjoint(opr)), mat') < 1e-13
+    srcRef = GlaVol((4, 4, 4), stdScl, (1//2, 0//1, 0//1))
+    refMat = dnsMat(prxBld(() -> GlaOprVac{Float64}(mnyRef, srcRef)))
+    @test frbErr(mat, cmpAgrRef(mnyCvl, mnyRef, srcCvl, srcRef, refMat)) < 1e-13
+    @test frbErr(dnsMat(adjoint(opr)), mat') < 1e-13
     # The two argument constructor spelling
-    @test GlaOprVac{Float64}(mnyCvl, srcCvl) isa GlaCmpOprVac
+    @test prxBld(() -> GlaOprVac{Float64}(mnyCvl, srcCvl)) isa GlaCmpOprVac
 end
 
 @testset "Composite operator cross-scale near pair" begin
     # A coarse volume and a fine one, one coarse cell apart in x
-    srcCvl = GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, cmpOrg0))
-    trgCvl = GlaCmpVol(GlaVol((4, 4, 4), cmpScl32, (3//16, 0//1, 0//1)))
-    opr = GlaCmpOprVac{Float64}(trgCvl, srcCvl)
-    # A gap of one coarse cell keeps the pair off the contact quadrature
+    trgCvl = GlaCmpVol(GlaVol((4, 4, 4), stdScl, (3//16, 0//1, 0//1)))
+    opr = prxBld(() -> GlaCmpOprVac{Float64}(trgCvl, smlCvl))
+    # A gap of one coarse cell keeps the pair off the contact path
     @test opr.blkMat[1, 1] isa GlaOprVac
     mat = dnsMat(opr)
     @test all(isfinite, mat)
-    srcRef = GlaVol((4, 4, 4), cmpScl32, cmpOrg0)
-    refMat = dnsMat(GlaOprVac{Float64}(regions(trgCvl)[1], srcRef))
-    #= The cross-scale quadrature over a coarse cell is less accurate the closer
-    the two volumes are. At one coarse cell of separation it agrees with the fine
-    reference to a few times 1e-5, and the error falls by more than an order of
-    magnitude for every doubling of the gap. =#
-    @test cmpRelFro(mat, cmpAgrRef(trgCvl, regions(trgCvl)[1], srcCvl, srcRef,
-        refMat)) < 1e-4
-    farCvl = GlaCmpVol(GlaVol((4, 4, 4), cmpScl32, (3//8, 0//1, 0//1)))
-    farMat = dnsMat(GlaCmpOprVac{Float64}(farCvl, srcCvl))
-    farRef = dnsMat(GlaOprVac{Float64}(regions(farCvl)[1], srcRef))
-    @test cmpRelFro(farMat, cmpAgrRef(farCvl, regions(farCvl)[1], srcCvl, srcRef,
-        farRef)) < 1e-6
+    srcRef = GlaVol((4, 4, 4), stdScl, stdOrg)
+    refMat = dnsMat(prxBld(() -> GlaOprVac{Float64}(regions(trgCvl)[1], srcRef)))
+    #= The cross-scale expansion is exact in the pulse basis, so the composite
+    matrix is the aggregated fine reference to the Float64 floor at any gap. =#
+    @test frbErr(mat, cmpAgrRef(trgCvl, regions(trgCvl)[1], smlCvl, srcRef,
+        refMat)) < 1e-12
+    farCvl = GlaCmpVol(GlaVol((4, 4, 4), stdScl, (3//8, 0//1, 0//1)))
+    farMat = dnsMat(prxBld(() -> GlaCmpOprVac{Float64}(farCvl, smlCvl)))
+    farRef = dnsMat(prxBld(() -> GlaOprVac{Float64}(regions(farCvl)[1], srcRef)))
+    @test frbErr(farMat, cmpAgrRef(farCvl, regions(farCvl)[1], smlCvl, srcRef,
+        farRef)) < 1e-12
     # Moving the fine volume onto the coarse one switches the block over
-    tchCvl = GlaCmpVol(GlaVol((4, 4, 4), cmpScl32, (1//8, 0//1, 0//1)))
-    tchOpr = GlaCmpOprVac{Float64}(tchCvl, srcCvl)
+    tchCvl = GlaCmpVol(GlaVol((4, 4, 4), stdScl, (1//8, 0//1, 0//1)))
+    tchOpr = GlaCmpOprVac{Float64}(tchCvl, smlCvl)
     @test tchOpr.blkMat[1, 1] isa GlaSnd
     @test all(isfinite, dnsMat(tchOpr))
 end
@@ -298,57 +289,53 @@ end
     #= A small volume face to face with a taller one. The external construction
     corrects for the cells in contact, and the answer is the self operator of the
     union of the two, masked down. =#
-    trgCvl = GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, cmpOrg0))
-    srcCvl = GlaCmpVol(GlaVol((2, 4, 4), cmpScl16, (1//8, 0//1, 0//1)))
-    opr = GlaCmpOprVac{Float64}(trgCvl, srcCvl)
+    srcCvl = GlaCmpVol(GlaVol((2, 4, 4), scl16, (1//8, 0//1, 0//1)))
+    opr = GlaCmpOprVac{Float64}(smlCvl, srcCvl)
     @test cmpBlkCnt(opr) == (0, 1, 0, 0)
     mat = dnsMat(opr)
     @test size(mat) == (24, 96)
     @test all(isfinite, mat)
     # The same entries read off the densified self operator of the union
-    uniMat = dnsMat(GlaOprVac{Float64}(GlaVol((4, 4, 4), cmpScl16, (1//16, 0//1, 0//1))))
+    uniMat = dnsMat(GlaOprVac{Float64}(GlaVol((4, 4, 4), scl16, (1//16, 0//1, 0//1))))
     lin = LinearIndices((4, 4, 4))
     rowCel = vec([lin[xItr, yItr, zItr] for xItr in 1:2, yItr in 2:3, zItr in 2:3])
     colCel = vec([lin[xItr, yItr, zItr] for xItr in 3:4, yItr in 1:4, zItr in 1:4])
     rowDof = vcat([(dir - 1) * 64 .+ rowCel for dir in 1:3]...)
     colDof = vcat([(dir - 1) * 64 .+ colCel for dir in 1:3]...)
-    @test cmpRelFro(mat, uniMat[rowDof, colDof]) < 1e-12
-    @test cmpRelFro(dnsMat(adjoint(opr)), mat') < 1e-13
+    @test frbErr(mat, uniMat[rowDof, colDof]) < 1e-12
+    @test frbErr(dnsMat(adjoint(opr)), mat') < 1e-13
 end
 
 @testset "Composite operator overlapping bodies" begin
-    cvolA = GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, cmpOrg0))
-    cvolB = GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, (1//16, 0//1, 0//1)))
-    @test_throws ArgumentError GlaCmpOprVac{Float64}(cvolA, cvolB)
+    cvolB = GlaCmpVol(GlaVol((2, 2, 2), scl16, (1//16, 0//1, 0//1)))
+    @test_throws ArgumentError GlaCmpOprVac{Float64}(smlCvl, cvolB)
     # Two equal tilings are the same body, so the self operator is meant
-    @test isselfoperator(GlaCmpOprVac{Float64}(cvolA, GlaCmpVol(GlaVol((2, 2, 2), cmpScl16, cmpOrg0))))
+    @test isselfoperator(GlaCmpOprVac{Float64}(smlCvl, GlaCmpVol(smlVol)))
 end
 
-@testset "Composite operator on a uniform mesh" begin
-    vol = GlaVol((2, 2, 2), cmpScl16, cmpOrg0)
-    opr = VacuumGreenOperator{Float64}(GlaCmpVol(vol))
+@testset "Composite operator one region" begin
+    opr = VacuumGreenOperator{Float64}(smlCvl)
     @test opr isa GlaCmpOprVac
     @test size(opr) == (24, 24)
     @test isselfoperator(opr)
     @test cmpBlkCnt(opr) == (1, 0, 0, 0)
     # One region means one cell volume, so the normalization is the identity
-    @test dnsMat(opr) == dnsMat(GlaOprVac{Float64}(vol))
+    @test dnsMat(opr) == dnsMat(GlaOprVac{Float64}(smlVol))
     # One region reproduces the plain anti-Hermitian operator
-    @test cmpRelFro(dnsMat(asym(opr)), dnsMat(AsyGlaOprVac{Float64}(vol))) < 1e-12
+    @test frbErr(dnsMat(asym(opr)), dnsMat(AsyGlaOprVac{Float64}(smlVol))) < 1e-12
     @test slv(opr) isa GlaSlv
     @test arrTyp(opr) <: Array
     @test useCpu!(opr) === opr
     @test occursin("composite G₀", sprint(show, opr))
 end
 
-@testset "Plain operator on a field" begin
+@testset "Plain against composite on a field" begin
     #= A plain operator over one region is the one region composite, so the two
     have to agree on a field, including the sqrt(ΔV_trg / ΔV_src) of the basis. =#
-    srcVol = GlaVol((2, 2, 2), cmpScl16, cmpOrg0)
-    trgVol = GlaVol((4, 4, 4), cmpScl32, (3//8, 0//1, 0//1))
-    fld = discretize!(zerofield(Float64, srcVol), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
-    cmpOut = GlaCmpOprVac{Float64}(GlaCmpVol(trgVol), GlaCmpVol(srcVol)) * fld
-    plnOut = GlaOprVac{Float64}(trgVol, srcVol) * fld
+    trgVol = GlaVol((4, 4, 4), stdScl, (3//8, 0//1, 0//1))
+    fld = discretize!(zerofield(Float64, smlVol), tstDns)
+    cmpOut = prxBld(() -> GlaCmpOprVac{Float64}(GlaCmpVol(trgVol), smlCvl)) * fld
+    plnOut = prxBld(() -> GlaOprVac{Float64}(trgVol, smlVol)) * fld
     @test plnOut isa GlaFld
     @test regions(plnOut.cvol)[1] == trgVol
     @test norm(plnOut.dat - cmpOut.dat) < 1e-13 * norm(cmpOut.dat)
@@ -359,13 +346,11 @@ end
         oprGpu = GlaCmpOprVac{Float64}(mnyCvl; useGpu=true)
         @test isgpu(oprGpu)
         @test arrTyp(oprGpu) <: CuArray
-        fldGpu = discretize!(zerofield(Float64, mnyCvl; useGpu=true),
-            pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+        fldGpu = discretize!(zerofield(Float64, mnyCvl; useGpu=true), tstDns)
         outGpu = oprGpu * fldGpu
         @test outGpu isa GlaFld
         @test parent(outGpu) isa CuVector{ComplexF64}
-        fldCpu = discretize!(zerofield(Float64, mnyCvl),
-            pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+        fldCpu = discretize!(zerofield(Float64, mnyCvl), tstDns)
         outCpu = mnyOpr * fldCpu
         @test norm(Array(outGpu.dat) - outCpu.dat) < 1e-10 * norm(outCpu.dat)
 

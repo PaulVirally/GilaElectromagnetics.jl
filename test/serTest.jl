@@ -4,48 +4,36 @@ the written format is recomputed, and the copy has to apply, which only works if
 the FFTW plans were rebuilt on load rather than read back as raw pointers. =#
 using Test, GilaElectromagnetics, LinearAlgebra, Serialization
 
-const serScl16 = (1//16, 1//16, 1//16)
-const serOrg0 = (0//1, 0//1, 0//1)
 const serSus = 0.5 + 0.05im
-const serSnd = GilaElectromagnetics.GilaOperators.GlaSndOprVac
-const serSym = GilaElectromagnetics.GilaOperators.sym
-
-serRelFro(matA, matB) = norm(matA - matB) / norm(matB)
-
-function serRnd(opr)
-    buf = IOBuffer()
-    serialize(buf, opr)
-    seekstart(buf)
-    return deserialize(buf, typeof(opr))
-end
-
-# tol is loosened for the operators whose application runs an iterative solve
-function serChk(opr; tol=1e-12)
-    desOpr = serRnd(opr)
-    @test desOpr isa typeof(opr)
-    @test serRelFro(dnsMat(desOpr), dnsMat(opr)) < tol
-    innVec = rand(ComplexF64, size(opr, 2))
-    @test norm(desOpr * innVec - opr * innVec) < tol * norm(opr * innVec)
-    return desOpr
-end
 
 #= A coarse region face to face with a region refined in x alone, so both
 cross-scale blocks run the contact quadrature and are a fine mesh block. =#
-const serCvl = refine(GlaCmpVol(GlaVol((4, 2, 2), serScl16, serOrg0)),
+const serCvl = refine(GlaCmpVol(GlaVol((4, 2, 2), scl16, stdOrg)),
     ((-1//16, 0//1, 0//1), (1//8, 1//8, 1//8)); factor=(2, 1, 1))
 const serOpr = GlaCmpOprVac{Float64}(serCvl)
-const serFarVol = GlaVol((2, 2, 2), serScl16, (1//1, 0//1, 0//1))
+const serFarVol = GlaVol((2, 2, 2), scl16, (1//1, 0//1, 0//1))
 #= Two volumes sharing interior, so construction folds them into their union and
 the masks become the only record of the sub-volumes. =#
-const serOvrA = GlaVol((2, 2, 2), serScl16, serOrg0)
-const serOvrB = GlaVol((2, 2, 2), serScl16, (1//16, 1//16, 1//16))
-serFld() = discretize!(zerofield(Float64, serCvl), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+const serOvrA = GlaVol((2, 2, 2), scl16, stdOrg)
+const serOvrB = GlaVol((2, 2, 2), scl16, (1//16, 1//16, 1//16))
+serFld() = discretize!(zerofield(Float64, serCvl), tstDns)
 
 @testset "Vacuum operator serialization" begin
-    serChk(_g0s())
-    serChk(_gExt())
-    # A block matrix, whose blocks go through the generic serializer
-    serChk(MulRegGlaOprVac(reshape([_g0(), GlaOprVac{Float64}(_vol4, _trgV4)], 1, 2)))
+    # The block matrix reaches the generic serializer, the rest are tagged kinds
+    for opr in (_g0s(), _gExt(), _asys(), SymGlaOprVac(_g0s()),
+        MulRegGlaOprVac(reshape([_g0(), GlaOprVac{Float64}(_vol4, _trgV4)], 1, 2)))
+        serChk(opr)
+    end
+    # An operator nested in a container takes the same route
+    tmpFil = tempname()
+    try
+        open(tmpFil, "w") do io; serialize(io, [_g0s()]); end
+        @test isnothing(findfirst(codeunits("FFTW"), read(tmpFil)))
+        innVec = rand(ComplexF64, size(_g0s(), 2))
+        @test only(open(deserialize, tmpFil)) * innVec ≈ _g0s() * innVec
+    finally
+        rm(tmpFil; force=true)
+    end
 end
 
 @testset "Overlapping operator serialization" begin
@@ -59,15 +47,14 @@ end
 end
 
 @testset "Composite operator serialization" begin
-    @test count(blk -> blk isa serSnd, serOpr.blkMat) == 2
+    @test count(blk -> blk isa GlaSnd, serOpr.blkMat) == 2
     desOpr = serChk(serOpr)
     @test nregions(desOpr.srcCvl) == 2
     @test desOpr.srcCvl == serCvl
     @test isselfoperator(desOpr)
-    @test count(blk -> blk isa serSnd, desOpr.blkMat) == 2
+    @test count(blk -> blk isa GlaSnd, desOpr.blkMat) == 2
     # A field on the original tiling still applies, the tilings compare equal
-    @test norm((desOpr * serFld()).dat - (serOpr * serFld()).dat) <
-        1e-12 * norm((serOpr * serFld()).dat)
+    @test (desOpr * serFld()).dat == (serOpr * serFld()).dat
     # Two bodies, so the block matrix is not square
     serChk(GlaCmpOprVac{Float64}(serCvl, GlaCmpVol(serFarVol)))
 end
@@ -75,14 +62,14 @@ end
 #= The parts hold the transformed Fourier coefficients of their blocks, so the
 reader must not take the part again. =#
 @testset "Composite Hermitian part serialization" begin
-    for opr in (asym(serOpr), serSym(serOpr))
+    for opr in (asym(serOpr), glaSym(serOpr))
         desOpr = serChk(opr)
         @test GilaElectromagnetics.adjoint!(desOpr) === desOpr
         desDns = dnsMat(desOpr)
-        @test serRelFro(desDns, desDns') < 1e-12
+        @test frbErr(desDns, desDns') < 5e-16
     end
     # The imaginary part taken twice is not the imaginary part
-    @test serRelFro(dnsMat(serRnd(asym(serOpr))), asymMat(dnsMat(serOpr))) < 1e-12
+    @test frbErr(dnsMat(serRnd(asym(serOpr))), asymMat(dnsMat(serOpr))) < 5e-15
 end
 
 # The kind of vacuum operator is tagged in the stream, so every kind reads back
@@ -97,14 +84,13 @@ end
 
 @testset "Scattering operator serialization" begin
     for invSct in (_invScts(), InvSctOpr(serOpr, serSus))
-        serChk(SctOpr(invSct, BiCGStabSolver()); tol=1e-6)
-        serChk(GlaOpr(SctOpr(invSct, BiCGStabSolver())); tol=1e-6)
+        serChk(SctOpr(invSct, BiCGStabSolver()))
+        serChk(GlaOpr(SctOpr(invSct, BiCGStabSolver())))
     end
     # The composite application path, on a field and on the flat vector
     invSct = InvSctOpr(serOpr, serSus)
     desInv = serRnd(invSct)
-    @test norm((desInv * serFld()).dat - (invSct * serFld()).dat) <
-        1e-12 * norm((invSct * serFld()).dat)
+    @test (desInv * serFld()).dat == (invSct * serFld()).dat
     fldDat = collect(serFld().dat)
-    @test norm(desInv * fldDat - invSct * fldDat) < 1e-12 * norm(invSct * fldDat)
+    @test desInv * fldDat == invSct * fldDat
 end

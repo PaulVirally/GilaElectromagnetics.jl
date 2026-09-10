@@ -77,41 +77,21 @@ end
     @test_throws ArgumentError solve(opr32, zeros(ComplexF64, n), MixPrcRfn(Float32))
 end
 
-@testset "solve residuals — GlaOprVac" begin
-    for dim in [(4,4,4), (4,2,6)]
-        vol = mkVol(dim)
-        opr = GlaOprVac{Float64}(vol)
+# G₀ is indefinite where (I - XG₀) is not, so both are worth a residual
+@testset "solve residuals" begin
+    for opr in (_g0(), _invSct())
         rhs = ones(ComplexF64, size(opr, 1))
-
-        sol_bcg = solve(opr, rhs, BiCGStabSolver())
-        @test size(sol_bcg) == (size(opr, 2),)
-        @test norm(opr * sol_bcg - rhs) < sqrt(eps(Float64)) * norm(rhs)
-
-        sol_gmr = solve(opr, rhs, GMRESSolver())
-        @test size(sol_gmr) == (size(opr, 2),)
-        @test norm(opr * sol_gmr - rhs) < sqrt(eps(Float64)) * norm(rhs)
-    end
-end
-
-@testset "solve residuals — InvSctOpr" begin
-    for dim in [(4,4,4), (4,2,6)]
-        vol = mkVol(dim)
-        sus = mkSus(dim)
-        opr = InvSctOpr{Float64}(vol, sus)
-        rhs = ones(ComplexF64, size(opr, 1))
-
-        sol_bcg = solve(opr, rhs, BiCGStabSolver())
-        @test norm(opr * sol_bcg - rhs) < sqrt(eps(Float64)) * norm(rhs)
-
-        sol_gmr = solve(opr, rhs, GMRESSolver())
-        @test norm(opr * sol_gmr - rhs) < sqrt(eps(Float64)) * norm(rhs)
+        for slv in (BiCGStabSolver(), GMRESSolver())
+            sol = solve(opr, rhs, slv)
+            @test size(sol) == (size(opr, 2),)
+            @test norm(opr * sol - rhs) < sqrt(eps(Float64)) * norm(rhs)
+        end
     end
 end
 
 @testset "lstSqrHss" begin
     # Build a random upper-Hessenberg (n+1)×n matrix and rhs = β*e₁
     n = 5
-    rng_state = copy(Random.GLOBAL_RNG)
     H = zeros(ComplexF64, n+1, n)
     for j in 1:n, i in 1:(j+1)
         H[i, j] = randn(ComplexF64)

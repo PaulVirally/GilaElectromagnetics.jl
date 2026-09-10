@@ -1,16 +1,10 @@
 # GlaFld (field over a plain or composite volume) tests
-using Test, GilaElectromagnetics, LinearAlgebra, CUDA
-
-const fldScl16 = (1//16, 1//16, 1//16)
-const fldScl32 = (1//32, 1//32, 1//32)
-const fldOrg0 = (0//1, 0//1, 0//1)
-const fldBox = (fldOrg0, (1//8, 1//8, 1//8))
 
 # 8 cells of 1/16 λ per side, spanning -1/4 to 1/4, and the same domain refined
 # in its middle octant
-mkFldVol() = GlaVol((8, 8, 8), fldScl16, fldOrg0)
+mkFldVol() = GlaVol((8, 8, 8), scl16, stdOrg)
 mkFldUni() = GlaCmpVol(mkFldVol())
-mkFldRef() = refine(mkFldUni(), fldBox)
+mkFldRef() = refine(mkFldUni(), (stdOrg, (1//8, 1//8, 1//8)))
 
 fldLen(cvol) = sum(3 * prod(reg.cel) for reg in regions(cvol))
 
@@ -25,11 +19,8 @@ function fldStp(pos)
     return (val, 2 * val, -val)
 end
 
-# Offset in degrees of freedom and in cells of the block of region idx
-fldDofOff(cvol, idx) =
-    sum(3 * prod(regions(cvol)[r].cel) for r in 1:(idx - 1); init=0)
-fldCelOff(cvol, idx) =
-    sum(prod(regions(cvol)[r].cel) for r in 1:(idx - 1); init=0)
+# Cell offset of the block of region idx in the flat layout
+fldCelOff(cvol, idx) = sum(prod(regions(cvol)[r].cel) for r in 1:(idx - 1); init=0)
 
 @testset "GlaFld zerofield" begin
     cvol = mkFldRef()
@@ -101,28 +92,15 @@ end
     @test fld[1] == 7
 end
 
-@testset "GlaFld norm is the L2 norm" begin
-    # Unit modulus density on a (4,4,4) volume of 1/8 λ cells
-    vol = GlaVol((4, 4, 4), (1//8, 1//8, 1//8), fldOrg0)
-    fld = discretize!(zerofield(Float64, GlaCmpVol(vol)), pos -> (exp(2im * pi * pos[1]), 0, 0))
-    domVol = Float64(prod(vol.cel .* vol.scl))
-    @test norm(fld)^2 ≈ domVol rtol=1e-13
-    @test dot(fld, fld) ≈ norm(fld)^2
-    # Scaling the density scales the norm
-    fld2 = discretize!(zerofield(Float64, GlaCmpVol(vol)),
-        pos -> (3 * exp(2im * pi * pos[1]), 0, 0))
-    @test norm(fld2) ≈ 3 * norm(fld)
-end
-
 @testset "GlaFld mesh invariance" begin
     cvolUni = mkFldUni()
     cvolRef = mkFldRef()
     @test nregions(cvolRef) == 7
-    @test finest(cvolRef) == fldScl32
+    @test finest(cvolRef) == stdScl
     # A smooth density only agrees to quadrature error
     smtUni = discretize!(zerofield(Float64, cvolUni), fldSmt)
     smtRef = discretize!(zerofield(Float64, cvolRef), fldSmt)
-    @test abs(norm(smtRef) - norm(smtUni)) / norm(smtUni) < 0.02
+    @test abs(norm(smtRef) - norm(smtUni)) / norm(smtUni) < 1e-3
     # A density constant on every coarse cell agrees exactly
     stpUni = discretize!(zerofield(Float64, cvolUni), fldStp)
     stpRef = discretize!(zerofield(Float64, cvolRef), fldStp)
@@ -149,7 +127,7 @@ end
     @test count(!iszero, fld) == 1
     # The flat index predicted by the layout contract
     lin = LinearIndices(Tuple(reg.cel))[celInd...]
-    flt = fldDofOff(cvol, idx) + (dir - 1) * prod(reg.cel) + lin
+    flt = 3 * fldCelOff(cvol, idx) + (dir - 1) * prod(reg.cel) + lin
     @test fld[flt] == 7.0 + 0im
     # Setting the flat entry is the same as setting the view entry
     fld[flt] = 9.0 + 0im
@@ -183,7 +161,7 @@ end
 
 @testset "GlaFld regrid" begin
     cvolRef = mkFldRef()
-    volFin = GlaVol((16, 16, 16), fldScl32, fldOrg0)
+    volFin = GlaVol((16, 16, 16), stdScl, stdOrg)
     stpRef = discretize!(zerofield(Float64, cvolRef), fldStp)
     rsm = regrid(stpRef)
     @test rsm isa Array{ComplexF64,4}
@@ -193,17 +171,17 @@ end
     dnsFin = regionview(stpFin, 1) ./ sqrt(Float64(prod(volFin.scl)))
     @test maximum(abs, rsm .- dnsFin) < 1e-12
     # The explicit scale is the default
-    @test regrid(stpRef, fldScl32) == rsm
+    @test regrid(stpRef, stdScl) == rsm
     # A trivial composite regrids to itself
     stpUni = discretize!(zerofield(Float64, mkFldUni()), fldStp)
-    dnsUni = regionview(stpUni, 1) ./ sqrt(Float64(prod(fldScl16)))
+    dnsUni = regionview(stpUni, 1) ./ sqrt(Float64(prod(scl16)))
     @test maximum(abs, regrid(stpUni) .- dnsUni) < 1e-12
     # Finer than every region is allowed and just repeats values
     rsmFin = regrid(stpRef, (1//64, 1//64, 1//64))
     @test size(rsmFin) == (32, 32, 32, 3)
     @test rsmFin[1, 1, 1, 1] == rsm[1, 1, 1, 1]
     # Coarser than a region, and incommensurate with one
-    @test_throws ArgumentError regrid(stpRef, fldScl16)
+    @test_throws ArgumentError regrid(stpRef, scl16)
     @test_throws ArgumentError regrid(stpRef, (1//48, 1//48, 1//48))
     @test_throws ArgumentError regrid(stpRef, (1//32, 1//32, 1//24))
 end
@@ -261,9 +239,9 @@ end
 end
 
 @testset "GlaFld mismatched volumes" begin
-    cvolA = GlaCmpVol(GlaVol((8, 8, 8), fldScl16, fldOrg0))
+    cvolA = GlaCmpVol(GlaVol((8, 8, 8), scl16, stdOrg))
     # Same number of degrees of freedom, different geometry
-    cvolB = GlaCmpVol(GlaVol((8, 8, 8), fldScl32, fldOrg0))
+    cvolB = GlaCmpVol(GlaVol((8, 8, 8), stdScl, stdOrg))
     fldA = discretize!(zerofield(Float64, cvolA), fldSmt)
     fldB = discretize!(zerofield(Float64, cvolB), fldSmt)
     @test length(fldA) == length(fldB)

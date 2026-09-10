@@ -1,25 +1,30 @@
 # Shared helpers — included before all topic files in runtests.jl
 # Requires: using GilaElectromagnetics, LinearAlgebra, CUDA (done in runtests.jl)
+import GilaElectromagnetics.GilaOperators: mskRng
+import GilaElectromagnetics.GilaVolumes: uniVol
 
-const volSizes    = [(2,2,2), (4,4,4), (6,6,6), (8,8,8), (6,4,8), (8,2,10)]
-const volSizesAna = [(6,6,6), (8,8,8), (6,10,8), (16,16,16)]
-# Smaller subset for tests that call GlaVacOprMem — large volumes are very slow to construct
-const vacVolSizes  = [(2,2,2), (4,4,4), (2,4,6)]
+# sym, unlike asym, is not exported; the fine mesh block type is internal as well
+const glaSym = GilaElectromagnetics.GilaOperators.sym
+const GlaSnd = GilaElectromagnetics.GilaOperators.GlaSndOprVac
+
+const volSizes = [(2,2,2), (4,4,4), (6,6,6), (8,8,8), (6,4,8), (8,2,10)]
 const stdScl = (1//32, 1//32, 1//32)
+const scl16  = (1//16, 1//16, 1//16)
 const stdOrg = (0//1, 0//1, 0//1)
 const extOrg = (1//1, 1//1, 1//1)
+
+# the density every discretize! test uses: one period across x, linear in y
+tstDns = pos -> (exp(2im * pi * pos[1]), pos[2], 0)
 
 mkVol(dim; org=stdOrg, scl=stdScl) = GlaVol(dim, scl, org)
 mkSus(::Type{T}, dim; val=0.5+0.05im) where T<:AbstractFloat = fill(Complex{T}(val), dim...)
 mkSus(dim; val=0.5+0.05im) = mkSus(Float64, dim; val=val)
-mkVac(dim) = zeros(ComplexF64, dim...)
 
 # ---------------------------------------------------------------------------
 # Shared precomputed objects — expensive GlaVacOprMem built once, reused everywhere
 # ---------------------------------------------------------------------------
 const _vol4  = mkVol((4,4,4))
 const _sus4  = mkSus((4,4,4))
-const _vac4  = mkVac((4,4,4))
 const _trgV4 = mkVol((4,4,4); org=extOrg)
 
 const _selfMem4 = GlaVacOprMem(CPUKerOpt{Float64}(), _vol4)
@@ -41,7 +46,7 @@ _gExt()   = GlaOprVac(_extMem4)
 _invSct() = InvSctOpr(_g0(), _sus4)
 _sct()    = SctOpr(_g0(), _sus4)
 _gla()    = GlaOpr(_g0(), _sus4)
-_glaVac() = GlaOpr(_g0(), _vac4)
+_glaVac() = GlaOpr(_g0(), zeros(ComplexF64, 4, 4, 4))
 # Cheap AsyGlaOprVac/SymGlaOprVac from precomputed GlaOprVac (deepcopy of egoFur, no integration)
 _asy()    = AsyGlaOprVac(_g0())
 _sym()    = SymGlaOprVac(_g0())
@@ -69,6 +74,41 @@ function dnsMat(mem::GlaVacOprMem)
         mat[:, i] .= vec(egoOpr!(mem, v))
     end
     return mat
+end
+
+# The self operator on the union of a same-scale pair, masked down to the target
+# and source cells: the reference an external operator has to reproduce
+function uniMskMat(trgVol::GlaVol, srcVol::GlaVol)
+    uniVolume = uniVol(trgVol, srcVol)
+    oprUni = GlaOprVac{Float64}(uniVolume)
+    innMsk, outMsk = mskRng(srcVol, uniVolume), mskRng(trgVol, uniVolume)
+    colNum = prod(srcVol.cel) * 3
+    mat = zeros(ComplexF64, prod(trgVol.cel) * 3, colNum)
+    for colItr in 1:colNum
+        srcVec = zeros(ComplexF64, srcVol.cel..., 3)
+        srcVec[colItr] = one(ComplexF64)
+        embVec = zeros(ComplexF64, uniVolume.cel..., 3)
+        embVec[innMsk..., :] .= srcVec
+        mat[:, colItr] .= vec((oprUni * embVec)[outMsk..., :])
+    end
+    return mat
+end
+
+function serRnd(opr)
+    buf = IOBuffer()
+    serialize(buf, opr)
+    seekstart(buf)
+    return deserialize(buf, typeof(opr))
+end
+
+# round trip an operator and compare it entrywise, not just through one matvec
+function serChk(opr; tol = 1e-12)
+    desOpr = serRnd(opr)
+    @test desOpr isa typeof(opr)
+    @test frbErr(dnsMat(desOpr), dnsMat(opr)) < tol
+    innVec = rand(ComplexF64, size(opr, 2))
+    @test norm(desOpr * innVec - opr * innVec) < tol * norm(opr * innVec)
+    return desOpr
 end
 
 asymMat(m) = (m - m') / 2im

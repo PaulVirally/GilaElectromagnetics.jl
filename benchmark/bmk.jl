@@ -73,7 +73,7 @@ Operators for the application benchmarks are built at the memory layer
 (GlaVacOprMem) rather than through GlaOprVac(trgVol, srcVol): the user-facing
 constructor reroutes volumes in face contact through the union/self path, but
 the "touching" case exists precisely to exercise the external contact fill
-(genCntVol + egoFunExtCnt!). For every other case the two constructions are
+(genCntVol + egoCntOut!). For every other case the two constructions are
 equivalent up to the (negligible) wrapper.
 =#
 function mkOprCpu(trgVol::GlaVol, srcVol::GlaVol)
