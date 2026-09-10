@@ -1,157 +1,10 @@
-using FastGaussQuadrature
-using HCubature
+include("integrals/glaVacIntMom.jl") # near-field moments and contact block
+include("integrals/glaVacIntFar.jl") # far-field expansion and block fills
 
-# settings for cubature integral evaluation: relative tolerance and absolute 
-# tolerance
-const cubRelTol = 1e-6;
-# const cubRelTol = 1e-3;
-const cubAbsTol = 1e-9;
-# const cubAbsTol = 1e-3;
-# tolerance for cell contact
-const cntTol = 1e-8;
-
-include("glaVacOprMemInt.jl") # For integrals
-
-#=
-Threaded loop over cell indices for the quadrature fill. Per-cell cost is
-non-uniform (the misaligned near pairs of a cross-scale volume pair use an
-adaptive integration scheme, which subdivides heavily), so on Julia ≥ 1.11
-greedy scheduling is used to keep those cells from serializing on a single
-thread.
-=#
-function thrCubFil!(celFun::F, itrSpc::AbstractArray{CartesianIndex{3}}) where {F<:Function}
-    @static if VERSION >= v"1.11"
-        @threads :greedy for posItr ∈ itrSpc
-            celFun(posItr)
-        end
-    else
-        @threads for posItr ∈ itrSpc
-            celFun(posItr)
-        end
-    end
-    return nothing
-end
-
-#=
-Split the circulant positions of an external volume pair into the offsets the
-batched device fill can take and the positions the host keeps. The three host
-cases mirror egoFunExt!/egoFunExtCnt!: the zero-padding indices, the
-cells in contact when cntSpl is set, and any remaining pair still inside one
-cell of separation, which egoFunOut! sends to the adaptive rule.
-=#
-function egoExtSpl(indSpt::NTuple{3,Integer}, itrSpc::CartesianIndices{3},
-    sepGrdTrg::AbstractVector{<:StepRange}, sepGrdSrc::AbstractVector{<:StepRange},
-    sclTrg::NTuple{3,Number}, sclSrc::NTuple{3,Number}, frq::Number, cntSpl::Bool)
-
-    sclMax = Float64.(max.(sclTrg, sclSrc))
-    kScl = 2π * abs(frq) * maximum(sclMax)
-    cntLim = cntTol .+ ((Float64.(sclTrg) .+ Float64.(sclSrc)) ./ 2.0)
-    batPos = CartesianIndex{3}[]
-    batSep = Float64[]
-    batOrd = Int[]
-    hstPos = CartesianIndex{3}[]
-    for posInd ∈ itrSpc
-        if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) ||
-                posInd[3] == (indSpt[3] + 1)
-            push!(hstPos, posInd)
-            continue
-        end
-        sepVec = SVector(grdSel(posInd[1], indSpt[1], 1, sepGrdTrg, sepGrdSrc),
-            grdSel(posInd[2], indSpt[2], 2, sepGrdTrg, sepGrdSrc),
-            grdSel(posInd[3], indSpt[3], 3, sepGrdTrg, sepGrdSrc))
-        sep = maximum(round.(Int, abs.(sepVec) ./ sclMax))
-        if sep <= 1 || (cntSpl && all(abs.(sepVec) .< cntLim))
-            push!(hstPos, posInd)
-        else
-            push!(batPos, posInd)
-            append!(batSep, sepVec)
-            push!(batOrd, quadOrd(sep, kScl))
-        end
-    end
-    return batPos, reshape(batSep, 3, :), batOrd, hstPos
-end
-#=
-Split the Toeplitz positions of a self volume into the offsets the batched
-device fill can take and the positions the host keeps, mirroring the branch in
-egoFunInn!. Cells whose indices are all 1 or 2 are left to egoFunSng!.
-=#
-function egoSlfSpl(itrSpc::CartesianIndices{3}, srcGrd::AbstractVector{<:StepRange},
-    scl::NTuple{3,Number}, frq::Number)
-
-    sclFlt = Float64.(scl)
-    kScl = 2π * abs(frq) * maximum(sclFlt)
-    batPos = CartesianIndex{3}[]
-    batSep = Float64[]
-    batOrd = Int[]
-    hstPos = CartesianIndex{3}[]
-    for posInd ∈ itrSpc
-        if (posInd[1] <= 2) && (posInd[2] <= 2) && (posInd[3] <= 2)
-            push!(hstPos, posInd)
-            continue
-        end
-        sepVec = SVector(Float64(srcGrd[1][posInd[1]]),
-            Float64(srcGrd[2][posInd[2]]), Float64(srcGrd[3][posInd[3]]))
-        sep = maximum(round.(Int, abs.(sepVec) ./ sclFlt))
-        if sep <= 1
-            push!(hstPos, posInd)
-        else
-            push!(batPos, posInd)
-            append!(batSep, sepVec)
-            push!(batOrd, quadOrd(sep, kScl))
-        end
-    end
-    return batPos, reshape(batSep, 3, :), batOrd, hstPos
-end
-#=
-Wait on the batched device fill, then assemble its columns into the Green
-function array on the host.
-=#
-function egoSrfFxdAsm!(egoCrc::AbstractArray{ComplexF64,5},
-    out::AbstractMatrix{ComplexF64}, batPos::AbstractVector{CartesianIndex{3}},
-    bckEnd::KernelAbstractions.Backend)
-
-    KernelAbstractions.synchronize(bckEnd)
-    outHst = Array(out)
-    @threads for itr ∈ eachindex(batPos)
-        @inbounds srfSum!(view(egoCrc, :, :, batPos[itr]), view(outHst, :, itr))
-    end
-    return nothing
-end
-
-#=
-The weakly singular corrections depend only on the cell scale, the integration
-order and the frequency. We memoize a bunch of integrals over these parameters
-to save computation time. The memo is thread-safe, and each entry is ~300 bytes,
-so the growth of the memo is neglegible. The keys to the memo are,
-(cell scale, integration order, frequency) and the values are the weakly
-singular correction triple (surface, edge, vertex). 
-=#
-const wekMem = Dict{Tuple{NTuple{3,Rational},Int,ComplexF64},
-    Tuple{Vector{ComplexF64},SVector{9,ComplexF64},SVector{6,ComplexF64}}}()
-const wekLck = ReentrantLock()
-
-function wekTrp(scl::NTuple{3,Rational}, cmpInf::GlaKerOpt)
-    key = (scl, Int(intOrd(cmpInf)), ComplexF64(frqPhz(cmpInf)))
-    hit = lock(wekLck) do
-        get(wekMem, key, nothing)
-    end
-    isnothing(hit) || return hit
-    # the triple takes seconds, so it is computed outside the lock
-    glQud = gauQud(intOrd(cmpInf))
-    celInv = ^(prod(Float64.(scl)), -1)
-    # return orders of the normal faces are xx yy zz, then
-    # xxY xxZ yyX yyZ zzX zzY xy xz yz, then xx yy zz xy xz yz
-    trp = (celInv .* wekS(scl, glQud, cmpInf), celInv .* wekE(scl, glQud, cmpInf),
-        celInv .* wekV(scl, glQud, cmpInf))
-    return lock(wekLck) do
-        get!(wekMem, key, trp)
-    end
-end
-
-function genEgoCrc!(egoCrc::AbstractArray{ComplexF64}, trgVol::GlaVol, srcVol::GlaVol, mixInf::GlaExtInf, cmpInf::GlaKerOpt)
+function genEgoCrc!(egoCrc::AbstractArray{<:Complex}, trgVol::GlaVol, srcVol::GlaVol, mixInf::GlaExtInf, cmpInf::GlaKerOpt; shpCch::Bool = false)
     # self green function case
     if srcVol == trgVol
-        return genEgoSlf!(selectdim(selectdim(egoCrc, 7, 1), 6, 1), trgVol, cmpInf)
+        return genEgoSlf!(selectdim(selectdim(egoCrc, 7, 1), 6, 1), trgVol, cmpInf; shpCch = shpCch)
     end
     # external green function case
     # total number of target and source partitions
@@ -177,163 +30,133 @@ function genEgoCrc!(egoCrc::AbstractArray{ComplexF64}, trgVol::GlaVol, srcVol::G
             # create target volume partition
             srcVolPar = GlaVol(mixInf.srcCel, srcVol.scl, srcOrgOff, srcGrdScl)
             # generate green function information for partition pair
-            genEgoExt!(selectdim(selectdim(egoCrc, 7, trgItr), 6, srcItr), trgVolPar, srcVolPar, cmpInf)
+            genEgoExt!(selectdim(selectdim(egoCrc, 7, trgItr), 6, srcItr), trgVolPar, srcVolPar, cmpInf; shpCch = shpCch)
         end
     end
     return egoCrc
 end
 
 #=
-    genEgoExt!(egoCrcExt::AbstractArray{T,5}, trgVol::GlaVol, 
-    srcVol::GlaVol, cmpInf::GlaKerOpt)::Nothing where 
-    T<:Union{ComplexF64,ComplexF32}
-    
-Calculate circulant vector for the Green function between a target volume, 
-trgVol, and source volume, srcVol.
-=#
-function genEgoExt!(egoCrcExt::AbstractArray{ComplexF64,5}, trgVol::GlaVol, srcVol::GlaVol, cmpInf::GlaKerOpt)
-    facLst = facPar()
-    trgFac = Float64.(cubFac(trgVol.scl))
-    srcFac = Float64.(cubFac(srcVol.scl))
-    sepGrdTrg = sepGrd(trgVol, srcVol, 0)
-    sepGrdSrc = sepGrd(trgVol, srcVol, 1)
-    # calculate Green function values
-    return genEgoCrcExt!(egoCrcExt, trgVol, srcVol, sepGrdTrg, sepGrdSrc, trgFac, srcFac, facLst, cmpInf)
-end
-#=
-    
-    genEgoSlf!(egoCrc::Array{ComplexF64}, slfVol::GlaVol, 
+    genEgoSlf!(egoCrc::AbstractArray{<:Complex,5}, slfVol::GlaVol,
     cmpInf::GlaKerOpt)::Nothing
 
-Calculate circulant vector of the Green function on a single domain.
+Calculate circulant vector of the Green function on a single domain: the contact block from the
+closed-form moments, every pair two or more cells apart from the far-field expansion, then the
+identity term and the circulant embedding.
 =#
-function genEgoSlf!(egoCrcSlf::AbstractArray{ComplexF64,5}, slfVol::GlaVol, cmpInf::GlaKerOpt)
-    facLst = facPar()
-    trgFac = Float64.(cubFac(slfVol.scl))
-    srcFac = Float64.(cubFac(slfVol.scl))
-    srcGrd = sepGrd(slfVol, slfVol, 0)
-    # calculate Green function values
-    return genEgoCrcSlf!(slfVol, egoCrcSlf, srcGrd, trgFac, srcFac, facLst, cmpInf)
+function genEgoSlf!(egoCrc::AbstractArray{<:Complex,5}, slfVol::GlaVol, cmpInf::GlaKerOpt;
+    shpCch::Bool = false)
+
+    prc = real(eltype(egoCrc))
+    egoToe = Array{eltype(egoCrc)}(undef, 3, 3, slfVol.cel...)
+    cntBlk!(egoToe, slfVol, cmpInf)
+    farBlk!(egoToe, slfVol.scl, Complex{prc}(frqPhz(cmpInf)); tol = farTol(prc),
+        disk = shpCch, stp = ntuple(dir ->
+            Int(step(slfVol.grd[dir]) // slfVol.scl[dir]), 3))
+    for dir ∈ 1:3
+        egoToe[dir,dir,1,1,1] -= 1 / (frqPhz(cmpInf)^2)
+    end
+    @threads for crtItr ∈ CartesianIndices(axes(egoCrc)[3:5])
+        @inbounds egoToeCrc!(view(egoCrc, :, :, crtItr), egoToe, crtItr,
+            div.(size(egoCrc)[3:5], 2))
+    end
+    return nothing
 end
 #=
-Generate the circulant vector of the Green function between a pair of distinct
-domains. Volumes that share interior are rejected. The contact branch runs when
-the two bounding boxes come within cntTol plus half the sum of the cell scales
-in every dimension, and the two grids sit on a common lattice: integer scale
-ratios per dimension, and lower corners a whole number of gcd cells apart. Near
-but unaligned pairs take the regular quadrature. Which cell pairs actually get
-the contact treatment is decided inside egoFunExtCnt!.
+Integer cell offset of every circulant index of an equal-cell pair, per dimension, with the
+sub-cell shift a pair off the cell lattice carries. Both separation grids step by a whole number
+of cells, so one shift covers the block; nothing when they do not.
 =#
-function genEgoCrcExt!(egoCrcExt::AbstractArray{ComplexF64,5}, 
-    trgVol::GlaVol, srcVol::GlaVol, sepGrdTrg::AbstractVector{<:StepRange}, 
-    sepGrdSrc::AbstractVector{<:StepRange}, trgFac::AbstractArray{<:Number,3}, 
-    srcFac::AbstractArray{<:Number,3}, facPar::AbstractMatrix{<:Integer}, 
-    cmpInf::GlaKerOpt)
-    ## calculate domain separation
-    # upper and lower edges of the source volume
-    srcEdg = (getproperty.(srcVol.grd, :start) .- (srcVol.scl .//2), 
+function extOff(nCrc::NTuple{3,Integer}, cel::NTuple{3,Integer}, scl::NTuple{3,Rational},
+    sepGrdTrg::AbstractVector{<:StepRange}, sepGrdSrc::AbstractVector{<:StepRange})
+
+    sep(dir, ind) = Rational(grdSep(ind, cel[dir], dir, sepGrdTrg, sepGrdSrc))
+    # half a cell rounds up, not to even, so a half-cell shift stays one shift
+    celOff(dir, ind) = (n = floor(Int, sep(dir, ind) / scl[dir] + 1//2);
+        (n, sep(dir, ind) - n * scl[dir]))
+    lst = ntuple(dir -> [celOff(dir, ind) for ind ∈ 1:nCrc[dir]], 3)
+    off = ntuple(dir -> lst[dir][1][2], 3)
+    for dir ∈ 1:3, ind ∈ 1:nCrc[dir]
+        ind != cel[dir] + 1 && lst[dir][ind][2] != off[dir] && return nothing
+    end
+    return (ntuple(dir -> first.(lst[dir]), 3), off)
+end
+#=
+    genEgoExt!(egoCrcExt::AbstractArray{<:Complex,5}, trgVol::GlaVol,
+    srcVol::GlaVol, cmpInf::GlaKerOpt)::Nothing
+
+Calculate circulant vector for the Green function between a target volume, trgVol, and source
+volume, srcVol. Volumes that share interior are rejected. Cells in contact average the gcd self
+block; every separated pair takes the far-field expansion, on the cell lattice for equal cells and
+on the exact rational offsets of the pair's own trapezoid otherwise.
+=#
+function genEgoExt!(egoCrcExt::AbstractArray{<:Complex,5}, trgVol::GlaVol, srcVol::GlaVol,
+    cmpInf::GlaKerOpt; shpCch::Bool = false)
+
+    sepGrdTrg = sepGrd(trgVol, srcVol, 0)
+    sepGrdSrc = sepGrd(trgVol, srcVol, 1)
+    # upper and lower edges of the source and target volumes
+    srcEdg = (getproperty.(srcVol.grd, :start) .- (srcVol.scl .//2),
             getproperty.(srcVol.grd, :stop) .+ (srcVol.scl .//2))
-    # upper and lower edges of the target volume
-    trgEdg = (getproperty.(trgVol.grd, :start) .- (trgVol.scl .//2), 
+    trgEdg = (getproperty.(trgVol.grd, :start) .- (trgVol.scl .//2),
             getproperty.(trgVol.grd, :stop) .+ (trgVol.scl .//2))
     # shared interior in every dimension is overlap
     if all(max.(srcEdg[1], trgEdg[1]) .< min.(srcEdg[2], trgEdg[2]))
         throw(ArgumentError("Source and target volumes are overlapping."))
     end
-    # separation of the closed boxes, negative where the projections meet
-    sepBox = max.(srcEdg[1] .- trgEdg[2], trgEdg[1] .- srcEdg[2])
-    cntChk = all(sepBox .< (cntTol .+ ((trgVol.scl .+ srcVol.scl) ./ 2)))
-    # contact quadrature needs both grids on a common lattice
-    fitChk = all(isinteger, max.(trgVol.scl, srcVol.scl) .//
-            min.(trgVol.scl, srcVol.scl)) &&
-        all(isinteger, (trgEdg[1] .- srcEdg[1]) .// gcd.(trgVol.scl, srcVol.scl))
     itrSpc = CartesianIndices(axes(egoCrcExt)[3:5])
-    # on a device the separated offsets are filled in one batch, in the
-    # background of the host work that follows
-    if cmpInf isa GPUKerOpt
-        batPos, batSep, batOrd, hstPos = egoExtSpl(trgVol.cel, itrSpc,
-            sepGrdTrg, sepGrdSrc, trgVol.scl, srcVol.scl, frqPhz(cmpInf),
-            cntChk && fitChk)
-        out = KernelAbstractions.allocate(bckEnd(cmpInf), ComplexF64, 36,
-            length(batPos))
-        egoSrfFxdBat!(out, batSep, batOrd, trgFac, srcFac, facPar,
-            srfScl(Float64.(trgVol.scl), Float64.(srcVol.scl)), frqPhz(cmpInf),
-            bckEnd(cmpInf))
-    else
-        hstPos = itrSpc
+    lat = trgVol.scl == srcVol.scl ? extOff(size(egoCrcExt)[3:5], trgVol.cel, trgVol.scl,
+        sepGrdTrg, sepGrdSrc) : nothing
+    prc = real(eltype(egoCrcExt))
+    cntPos = CartesianIndex{3}[]
+    farPos = CartesianIndex{3}[]
+    farOff = NTuple{3,Int}[]
+    farSep = NTuple{3,QI}[]
+    # the closed cells meet in every direction: contact, and everything else is separated
+    cntLim = (trgVol.scl .+ srcVol.scl) .// 2
+    fill!(egoCrcExt, zero(eltype(egoCrcExt)))
+    for posInd ∈ itrSpc
+        any(dir -> posInd[dir] == trgVol.cel[dir] + 1, 1:3) && continue
+        sep = ntuple(dir -> QI(grdSep(posInd[dir], trgVol.cel[dir], dir, sepGrdTrg,
+            sepGrdSrc)), 3)
+        if all(dir -> abs(sep[dir]) <= cntLim[dir], 1:3)
+            push!(cntPos, posInd)
+        else
+            push!(farPos, posInd)
+            lat === nothing ? push!(farSep, sep) :
+                push!(farOff, ntuple(dir -> lat[1][dir][posInd[dir]], 3))
+        end
     end
-    if cntChk && fitChk
-        # generate self Green function for contact cells
+    if lat !== nothing
+        farFil!(farOff, ntuple(dir -> QI(trgVol.scl[dir]), 3),
+            Complex{prc}(frqPhz(cmpInf)), ntuple(dir -> prc(lat[2][dir]), 3);
+            tol = farTol(prc), disk = shpCch) do q
+            view(egoCrcExt, :, :, farPos[q])
+        end
+    elseif !isempty(farPos)
+        # the pair's own trapezoid expansion on the exact rational offsets of a cross-scale pair
+        egoFar = Array{eltype(egoCrcExt)}(undef, 3, 3, length(farPos))
+        farBlkX!(egoFar, farSep, trgVol.scl, srcVol.scl, Complex{prc}(frqPhz(cmpInf));
+            tol = farTol(prc), disk = shpCch)
+        for posItr ∈ eachindex(farPos)
+            @inbounds copyto!(view(egoCrcExt, :, :, farPos[posItr]),
+                view(egoFar, :, :, posItr))
+        end
+    end
+    if !isempty(cntPos)
+        # the contact average is over cells of the gcd, which both grids must sit on
+        all(isinteger, max.(trgVol.scl, srcVol.scl) .// min.(trgVol.scl, srcVol.scl)) &&
+            all(isinteger, (trgEdg[1] .- srcEdg[1]) .// gcd.(trgVol.scl, srcVol.scl)) ||
+            throw(ArgumentError("Cells in contact must sit on a common lattice."))
         cntVol = genCntVol(trgVol, srcVol)
         egoCrcCnt = Array{eltype(egoCrcExt)}(undef, 3, 3, (2 .* cntVol.cel)...)
-        genEgoSlf!(egoCrcCnt, cntVol, cmpInf)
-        # pull values for cells in contact
-        thrCubFil!(hstPos) do posItr
-            egoFunExtCnt!(cntVol, view(egoCrcExt, :, :, posItr), egoCrcCnt,
-                posItr, trgVol.cel, sepGrdTrg, sepGrdSrc, trgVol.scl,
-                srcVol.scl, trgFac, srcFac, facPar, cmpInf)
+        genEgoSlf!(egoCrcCnt, cntVol, cmpInf; shpCch = shpCch)
+        @threads for posInd ∈ cntPos
+            egoCntOut!(cntVol, egoCrcCnt, view(egoCrcExt, :, :, posInd), posInd,
+                trgVol.scl, srcVol.scl, SVector(grdSel(posInd[1], trgVol.cel[1], 1,
+                sepGrdTrg, sepGrdSrc), grdSel(posInd[2], trgVol.cel[2], 2, sepGrdTrg,
+                sepGrdSrc), grdSel(posInd[3], trgVol.cel[3], 3, sepGrdTrg, sepGrdSrc)))
         end
-    else
-        thrCubFil!(hstPos) do posItr
-            egoFunExt!(view(egoCrcExt, :, :, posItr), posItr, trgVol.cel,
-                sepGrdTrg, sepGrdSrc, trgVol.scl, srcVol.scl, trgFac, srcFac,
-                facPar, cmpInf)
-        end
-    end
-    if cmpInf isa GPUKerOpt
-        egoSrfFxdAsm!(egoCrcExt, out, batPos, bckEnd(cmpInf))
-    end
-    return nothing
-end
-#=
-Generate circulant vector for self Green function.
-=#
-function genEgoCrcSlf!(slfVol::GlaVol, egoCrc::AbstractArray{ComplexF64,5},  
-    srcGrd::AbstractVector{<:StepRange}, trgFac::AbstractArray{<:AbstractFloat,3}, 
-    srcFac::AbstractArray{<:AbstractFloat,3}, facPar::AbstractMatrix{<:Integer}, 
-    cmpInf::GlaKerOpt)
-    # allocate intermediate storage for Toeplitz interaction vector
-    egoToe = Array{eltype(egoCrc)}(undef, 3, 3, slfVol.cel...)
-    itrSpc = CartesianIndices(axes(egoToe)[3:5])
-    #= On a device the separated offsets are filled in one batch, in the
-    background of the singular corrections below. The batch never collides with
-    egoFunSng!. srcGrd steps by at least the cell scale, so every offset with an
-    index above 2 is at least two cells away, while egoFunSng! only writes the
-    cells whose indices are all 1 or 2. =#
-    if cmpInf isa GPUKerOpt
-        batPos, batSep, batOrd, hstPos = egoSlfSpl(itrSpc, srcGrd, slfVol.scl,
-            frqPhz(cmpInf))
-        out = KernelAbstractions.allocate(bckEnd(cmpInf), ComplexF64, 36,
-            length(batPos))
-        egoSrfFxdBat!(out, batSep, batOrd, trgFac, srcFac, facPar,
-            srfScl(Float64.(slfVol.scl), Float64.(slfVol.scl)), frqPhz(cmpInf),
-            bckEnd(cmpInf))
-    else
-        hstPos = itrSpc
-    end
-    # write Green function, ignoring weakly singular integrals
-    thrCubFil!(hstPos) do crtItr
-        @inbounds egoFunInn!(egoToe, crtItr, srcGrd, slfVol.scl, trgFac,
-            srcFac, facPar, cmpInf)
-    end
-    # correction values for singular integrals
-    wS, wE, wV = wekTrp(slfVol.scl, cmpInf)
-    # correct singular integrals for coincident and adjacent cells
-    for posItr ∈ CartesianIndices(ntuple(itr -> min(slfVol.cel[itr], 2), 3))
-        egoFunSng!(view(egoToe, :, :, posItr), posItr, wS, wE, wV,
-            srcGrd, slfVol, trgFac, srcFac, facPar, cmpInf)
-    end
-    if cmpInf isa GPUKerOpt
-        egoSrfFxdAsm!(egoToe, out, batPos, bckEnd(cmpInf))
-    end
-    # include identity component
-    egoToe[1,1,1,1,1] -= 1 / (frqPhz(cmpInf)^2)
-    egoToe[2,2,1,1,1] -= 1 / (frqPhz(cmpInf)^2)
-    egoToe[3,3,1,1,1] -= 1 / (frqPhz(cmpInf)^2)
-    # embed self Toeplitz vector into a circulant vector
-    @threads for crtItr ∈ CartesianIndices(axes(egoCrc)[3:5])
-        @inbounds egoToeCrc!(view(egoCrc, :, :, crtItr), egoToe, crtItr, 
-            div.(size(egoCrc)[3:5], 2))
     end
     return nothing
 end
@@ -342,7 +165,7 @@ Generate circulant self Green function from Toeplitz self Green function. The
 implemented mask takes into account the relative flip in the assumed dipole 
 direction under a coordinate reflection. 
 =#
-function egoToeCrc!(egoCrc::AbstractArray{ComplexF64,2}, egoToe::AbstractArray{ComplexF64,5},
+function egoToeCrc!(egoCrc::AbstractArray{<:Complex,2}, egoToe::AbstractArray{<:Complex,5},
     posInd::CartesianIndex{3}, indSpt::Tuple{Vararg{Integer}})
     
     if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) ||
@@ -364,100 +187,10 @@ function egoToeCrc!(egoCrc::AbstractArray{ComplexF64,2}, egoToe::AbstractArray{C
     return nothing
 end
 #=
-Write Green function element for a pair of cubes in distinct domains. Recall 
-that grids span the separations between a pair of volumes. No field flips are 
-required when calculating an external Green function. 
-=#
-@inline function egoFunExt!(egoCrcExt::AbstractMatrix{ComplexF64}, 
-    posInd::CartesianIndex{3}, 
-    indSpt::Union{AbstractVector{<:Integer},NTuple{3,Integer}}, 
-    sepGrdTrg::AbstractVector{<:StepRange}, sepGrdSrc::AbstractVector{<:StepRange}, 
-    sclTrg::NTuple{3,Number}, sclSrc::NTuple{3,Number}, 
-    trgFac::AbstractArray{<:Number,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
-    facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt)
-    
-    if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) ||
-            posInd[3] == (indSpt[3] + 1)
-        fill!(egoCrcExt, zero(eltype(egoCrcExt)))
-    else
-        egoFunOut!(egoCrcExt, SVector(grdSel(posInd[1], indSpt[1], 1,
-            sepGrdTrg, sepGrdSrc), grdSel(posInd[2], indSpt[2], 2,
-            sepGrdTrg, sepGrdSrc), grdSel(posInd[3], indSpt[3], 3,
-            sepGrdTrg, sepGrdSrc)), sclTrg, sclSrc, trgFac, srcFac, facPar,
-            cmpInf)
-    end
-    return nothing
-end
-#=
-Write Green element for a pair of cubes in distinct domains, checking for the 
-possibility of contact. Separation grids span the separations between the pair 
-of volumes. No field flip is required for external Green function. 
-=#
-function egoFunExtCnt!(cntVol::GlaVol, egoCrc::AbstractMatrix{ComplexF64},
-    egoCrcCnt::AbstractArray{ComplexF64,5}, posInd::CartesianIndex{3}, 
-    indSpt::NTuple{3,Integer}, sepGrdTrg::AbstractVector{<:StepRange}, 
-    sepGrdSrc::AbstractVector{<:StepRange}, sclTrg::NTuple{3,Number}, 
-    sclSrc::NTuple{3,Number}, trgFac::AbstractArray{<:AbstractFloat,3}, 
-    srcFac::AbstractArray{<:AbstractFloat,3}, facPar::AbstractMatrix{<:Integer}, 
-    cmpInf::GlaKerOpt)
-    # separation vector
-    sepVec = SVector(grdSel(posInd[1], indSpt[1], 1, sepGrdTrg, sepGrdSrc),
-        grdSel(posInd[2], indSpt[2], 2, sepGrdTrg, sepGrdSrc),
-        grdSel(posInd[3], indSpt[3], 3, sepGrdTrg, sepGrdSrc))
-    # absolute separation
-    absSep = abs.(sepVec)
-    # branch between contact and non-contact cases
-    # contact case
-    if all(absSep .< (cntTol .+ ((sclTrg .+ sclSrc) ./ 2.0)))
-        if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) ||
-            posInd[3] == (indSpt[3] + 1)
-            fill!(egoCrc, zero(eltype(egoCrc)))
-        else
-            egoCntOut!(cntVol, egoCrcCnt, egoCrc, posInd, sclTrg, sclSrc,
-                sepVec)
-        end
-    # non-contact case
-    else
-        if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) ||
-            posInd[3] == (indSpt[3] + 1)
-            fill!(egoCrc, zero(eltype(egoCrc)))
-        else
-            egoFunOut!(egoCrc, sepVec, sclTrg, sclSrc, trgFac,
-                srcFac, facPar, cmpInf)
-        end
-    end
-    return nothing
-end
-#=
-General external Green function interaction element. 
-=#
-function egoFunOut!(egoCrc::AbstractMatrix{ComplexF64}, grd::AbstractVector{<:AbstractFloat}, 
-    sclTrg::NTuple{3,Number}, sclSrc::NTuple{3,Number}, 
-    trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
-    facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt)
-
-    srfMat = zeros(MVector{36,ComplexF64})
-    srfScales = srfScl(Float64.(sclTrg), Float64.(sclSrc))
-    # separation in cells, taken per direction with the coarser of the two cells
-    sclMax = Float64.(max.(sclTrg, sclSrc))
-    sep = maximum(round.(Int, abs.(grd) ./ sclMax))
-    # only cross-scale pairs reach sep <= 1, at half a coarse cell of face gap
-    if sep <= 1
-        egoSrfAdp!(grd[1], grd[2], grd[3], srfMat, trgFac, srcFac, 1:36,
-                   facPar, srfScales, cmpInf)
-    else
-        egoSrfFxd!(grd[1], grd[2], grd[3], srfMat, trgFac, srcFac, 1:36,
-                   facPar, srfScales, cmpInf,
-                   quadOrd(sep, 2π * abs(frqPhz(cmpInf)) * maximum(sclMax)))
-    end
-    # sum contributions depending on source and target current orientation
-    return srfSum!(egoCrc, srfMat)
-end
-#=
 Compute Green function element for cells in contact. 
 =#
-function egoCntOut!(cntVol::GlaVol, egoCrcCnt::AbstractArray{ComplexF64,5}, 
-    egoCrc::AbstractMatrix{ComplexF64}, posInd::CartesianIndex{3}, 
+function egoCntOut!(cntVol::GlaVol, egoCrcCnt::AbstractArray{<:Complex,5},
+    egoCrc::AbstractMatrix{<:Complex}, posInd::CartesianIndex{3}, 
     sclTrg::NTuple{3,Number}, sclSrc::NTuple{3,Number}, 
     sepVec::AbstractVector{<:AbstractFloat})
     # safety zero local section of the Green function
@@ -512,226 +245,25 @@ function egoCntOut!(cntVol::GlaVol, egoCrcCnt::AbstractArray{ComplexF64,5},
 end
 
 #=
-General self Green function interaction element. 
+All unique pairs of cube faces. Row 1 is the target face and row 2 the source
+face, the convention srfSum! assembles by: the tensor component (a, b) sums the
+face pairs whose row 1 normal is a and row 2 normal is b.
 =#
-function egoFunInn!(egoToe::AbstractArray{ComplexF64,5}, posInd::CartesianIndex{3},
-    srcGrd::AbstractVector{<:StepRange}, scl::NTuple{3,Number}, 
-    trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
-    facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt)
-
-    # calculate interaction contributions between all cube faces
-    if (posInd[1] > 2) || (posInd[2] > 2) || (posInd[3] > 2)
-        srfMat = zeros(MVector{36,ComplexF64})
-        grd = SVector(Float64(srcGrd[1][posInd[1]]),
-            Float64(srcGrd[2][posInd[2]]), Float64(srcGrd[3][posInd[3]]))
-        srfScales = Float64.(srfScl(Float64.(scl), Float64.(scl)))
-        sclFlt = Float64.(scl)
-        sep = maximum(round.(Int, abs.(grd) ./ sclFlt))
-        if sep <= 1
-            egoSrfAdp!(grd[1], grd[2], grd[3], srfMat, trgFac, srcFac, 1:36,
-                facPar, srfScales, cmpInf)
-        else
-            egoSrfFxd!(grd[1], grd[2], grd[3], srfMat, trgFac, srcFac, 1:36,
-                facPar, srfScales, cmpInf,
-                quadOrd(sep, 2π * abs(frqPhz(cmpInf)) * maximum(sclFlt)))
-        end
-        # add contributions based on source and target current orientation
-        srfSum!(view(egoToe, :, :, posInd), srfMat)
+const facPar = let
+    fPairs = Array{Int,2}(undef, 2, 36)
+    for i ∈ 1:6, j ∈ 1:6
+        k = (i - 1) * 6 + j
+        fPairs[1, k] = i
+        fPairs[2, k] = j
     end
-    return nothing
-end
-#=
-Calculate Green function elements for adjacent cubes, assumed to be in the same 
-domain. wS, wE, and wV refer to self-intersecting, edge intersecting, and 
-vertex intersecting cube face integrals respectively. In the wE and wV cases, 
-the first value returned is for in-plane faces, and the second value is for 
-``cornered'' faces. 
-
-The convention by which facePairs are generated begins by looping over the 
-source faces. Because of this choice, the transpose of the mask  follows the 
-standard source to target matrix convention used elsewhere. 
-=#
-function egoFunSng!(egoCrc::AbstractMatrix{ComplexF64}, posInd::CartesianIndex{3}, 
-    wS::AbstractVector{ComplexF64}, wE::AbstractVector{ComplexF64}, wV::AbstractVector{ComplexF64}, 
-    srcGrd::AbstractVector{<:StepRange}, slfVol::GlaVol, 
-    trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
-    facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt)
-
-    srfMat = zeros(MVector{36,ComplexF64})
-    # linear index conversion
-    linCon = LinearIndices((1:6, 1:6))
-    # face convention yzL yzU (x-faces) xzL xzU (y-faces) xyL xyU (z-faces)
-    # index based corrections.
-    if posInd == CartesianIndex(1, 1, 1)
-        corVal = [
-        wS[1]  0.0    wE[7]  wE[7]  wE[8]  wE[8]
-        0.0    wS[1]  wE[7]  wE[7]  wE[8]  wE[8]
-        wE[7]  wE[7]  wS[2]   0.0   wE[9]  wE[9]
-        wE[7]  wE[7]  0.0    wS[2]  wE[9]  wE[9]
-        wE[8]  wE[8]  wE[9]  wE[9]  wS[3]  0.0
-        wE[8]  wE[8]  wE[9]  wE[9]  0.0    wS[3]]
-        mask =[
-        1 0 1 1 1 1
-        0 1 1 1 1 1
-        1 1 1 0 1 1
-        1 1 0 1 1 1
-        1 1 1 1 1 0
-        1 1 1 1 0 1]
-    elseif posInd == CartesianIndex(2, 1, 1) && slfVol.scl[1] == 
-        getproperty(slfVol.grd[1], :step)
-        corVal = [
-        0.0  wS[1]  wE[7]  wE[7]  wE[8]  wE[8]
-        0.0  0.0    0.0    0.0    0.0    0.0
-        0.0  wE[7]  wE[3]  0.0    wV[6]  wV[6]
-        0.0  wE[7]  0.0    wE[3]  wV[6]  wV[6]
-        0.0  wE[8]  wV[6]  wV[6]  wE[5]  0.0
-        0.0  wE[8]  wV[6]  wV[6]  0.0    wE[5]]
-        mask = [
-        0 1 1 1 1 1
-        0 0 0 0 0 0
-        0 1 1 0 1 1
-        0 1 0 1 1 1
-        0 1 1 1 1 0
-        0 1 1 1 0 1]
-    elseif posInd == CartesianIndex(2, 1, 2) && slfVol.scl[1] == 
-        getproperty(slfVol.grd[1], :step) && slfVol.scl[3] == 
-        getproperty(slfVol.grd[3], :step) 
-        corVal = [
-        0.0  wE[2]  wV[4]  wV[4]  0.0  wE[8]
-        0.0  0.0    0.0    0.0    0.0  0.0
-        0.0  wV[4]  wV[2]  0.0    0.0  wV[6]
-        0.0  wV[4]  0.0    wV[2]  0.0  wV[6]
-        0.0  wE[8]  wV[6]  wV[6]  0.0  wE[5]
-        0.0  0.0    0.0    0.0    0.0  0.0]
-        mask = [
-        0 1 1 1 0 1
-        0 0 0 0 0 0
-        0 1 1 0 0 1
-        0 1 0 1 0 1
-        0 1 1 1 0 1
-        0 0 0 0 0 0] 
-    elseif posInd == CartesianIndex(1, 1, 2) && slfVol.scl[3] == 
-        getproperty(slfVol.grd[3], :step)
-        corVal = [
-        wE[2]  0.0    wV[4]  wV[4]  0.0  wE[8]
-        0.0    wE[2]  wV[4]  wV[4]  0.0  wE[8]
-        wV[4]  wV[4]  wE[4]  0.0    0.0  wE[9]
-        wV[4]  wV[4]  0.0    wE[4]  0.0  wE[9]
-        wE[8]  wE[8]  wE[9]  wE[9]  0.0  wS[3]
-        0.0    0.0    0.0    0.0    0.0  0.0]
-        mask = [
-        1 0 1 1 0 1
-        0 1 1 1 0 1
-        1 1 1 0 0 1
-        1 1 0 1 0 1
-        1 1 1 1 0 1
-        0 0 0 0 0 0]
-    elseif posInd == CartesianIndex(1, 2, 1) && slfVol.scl[2] == 
-        getproperty(slfVol.grd[2], :step)
-        corVal = [
-        wE[1]  0.0    0.0  wE[7]  wV[5]  wV[5]
-        0.0    wE[1]  0.0  wE[7]  wV[5]  wV[5]
-        wE[7]  wE[7]  0.0  wS[2]  wE[9]  wE[9]
-        0.0    0.0    0.0  0.0    0.0    0.0
-        wV[5]  wV[5]  0.0  wE[9]  wE[6]  0.0
-        wV[5]  wV[5]  0.0  wE[9]  0.0    wE[6]]
-        mask = [
-        1 0 0 1 1 1
-        0 1 0 1 1 1
-        1 1 0 1 1 1
-        0 0 0 0 0 0
-        1 1 0 1 1 0
-        1 1 0 1 0 1]
-    elseif posInd == CartesianIndex(2, 2, 1) && slfVol.scl[1] == 
-        getproperty(slfVol.grd[1], :step) && slfVol.scl[2] == 
-        getproperty(slfVol.grd[2], :step)
-        corVal = [
-        0.0  wE[1]  0.0  wE[7]  wV[5]  wV[5]
-        0.0  0.0    0.0  0.0    0.0    0.0
-        0.0  wE[7]  0.0  wE[3]  wV[6]  wV[6]
-        0.0  0.0    0.0  0.0    0.0    0.0
-        0.0  wV[5]  0.0  wV[6]  wV[3]  0.0
-        0.0  wV[5]  0.0  wV[6]  0.0    wV[3]]
-        mask = [
-        0 1 0 1 1 1
-        0 0 0 0 0 0
-        0 1 0 1 1 1
-        0 0 0 0 0 0
-        0 1 0 1 1 0
-        0 1 0 1 0 1]  
-    elseif posInd == CartesianIndex(1, 2, 2) && slfVol.scl[2] == 
-        getproperty(slfVol.grd[2], :step) && slfVol.scl[3] == 
-        getproperty(slfVol.grd[3], :step) 
-        corVal = [
-        wV[1]  0.0    0.0  wV[4]  0.0  wV[5]
-        0.0    wV[1]  0.0  wV[4]  0.0  wV[5]
-        wV[4]  wV[4]  0.0  wE[4]  0.0  wE[9]
-        0.0    0.0    0.0  0.0    0.0  0.0
-        wV[5]  wV[5]  0.0  wE[9]  0.0  wE[6]
-        0.0    0.0    0.0  0.0    0.0  0.0]
-        mask = [
-        1 0 0 1 0 1
-        0 1 0 1 0 1
-        1 1 0 1 0 1
-        0 0 0 0 0 0
-        1 1 0 1 0 1
-        0 0 0 0 0 0]  
-    elseif posInd == CartesianIndex(2, 2, 2) && slfVol.scl[1] == 
-        getproperty(slfVol.grd[1], :step) && slfVol.scl[2] == 
-        getproperty(slfVol.grd[2], :step) && slfVol.scl[3] == 
-        getproperty(slfVol.grd[3], :step)
-        corVal = [
-        0.0  wV[1]  0.0  wV[4]  0.0  wV[5]
-        0.0  0.0    0.0  0.0    0.0  0.0
-        0.0  wV[4]  0.0  wV[2]  0.0  wV[6]
-        0.0  0.0    0.0  0.0    0.0  0.0
-        0.0  wV[5]  0.0  wV[6]  0.0  wV[3]
-        0.0  0.0    0.0  0.0    0.0  0.0]
-        mask = [
-        0 1 0 1 0 1
-        0 0 0 0 0 0
-        0 1 0 1 0 1
-        0 0 0 0 0 0
-        0 1 0 1 0 1
-        0 0 0 0 0 0]
-    else
-        @warn "empty case selected"
-        corVal = [
-        0.0  0.0  0.0  0.0  0.0  0.0
-        0.0  0.0  0.0  0.0  0.0  0.0
-        0.0  0.0  0.0  0.0  0.0  0.0
-        0.0  0.0  0.0  0.0  0.0  0.0
-        0.0  0.0  0.0  0.0  0.0  0.0
-        0.0  0.0  0.0  0.0  0.0  0.0]
-        mask = [
-        0 0 0 0 0 0
-        0 0 0 0 0 0
-        0 0 0 0 0 0
-        0 0 0 0 0 0
-        0 0 0 0 0 0
-        0 0 0 0 0 0]
-    end
-    # include uncorrected surface integrals, whose faces are a cell apart
-    pairListUn = linCon[findall(iszero, transpose(mask))]
-    egoSrfFxd!(Float64(srcGrd[1][posInd[1]]), Float64(srcGrd[2][posInd[2]]),
-        Float64(srcGrd[3][posInd[3]]), srfMat, trgFac, srcFac, pairListUn,
-        facPar, Float64.(srfScl(Float64.(slfVol.scl), Float64.(slfVol.scl))),
-        cmpInf, cntOrd)
-    # correct values of srfMat where needed
-    for fp ∈ 1:36
-        if mask[facPar[1, fp], facPar[2, fp]] == 1
-            srfMat[fp] = corVal[facPar[1, fp], facPar[2, fp]]
-        end
-    end
-    # overwrite problematic elements of Green function matrix
-    return srfSum!(egoCrc, srfMat)
+    SMatrix{2, 36, Int}(fPairs)
 end
 #=
 Update egoCrc to hold Green function interactions. The storage format of egoCrc 
 is [[ii, ji, ki]^{T}; [ij, jj, kj]^{T}; [ik, jk, kk]^{T}]. 
 See documentation for explanation.
 =#
-function srfSum!(egoCrc::AbstractMatrix{ComplexF64}, srfMat::AbstractVector{ComplexF64})
+function srfSum!(egoCrc::AbstractMatrix{<:Complex}, srfMat::AbstractVector{<:Complex})
     # ii
     egoCrc[1,1] = srfMat[15] - srfMat[16] - srfMat[21] + 
     srfMat[22] + srfMat[29] - srfMat[30] - srfMat[35] + srfMat[36]
@@ -756,193 +288,23 @@ function srfSum!(egoCrc::AbstractMatrix{ComplexF64}, srfMat::AbstractVector{Comp
     return nothing
 end
 #=
-Adaptive integration of the Green function over face pairs. 
-=#
-function egoSrfAdp!(grdX::AbstractFloat, grdY::AbstractFloat, 
-    grdZ::AbstractFloat, srfMat::AbstractVector{ComplexF64}, 
-    trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3}, 
-    pairList::Union{UnitRange{<:Integer},AbstractVector{<:Integer}}, 
-    facPar::AbstractMatrix{<:Integer}, srfScales::AbstractVector{<:AbstractFloat}, 
-    cmpInf::GlaKerOpt)
-    @inbounds for fp ∈ pairList
-        srfMat[fp] = zero(eltype(srfMat))
-        # define integration kernel  
-        # intKer = (ordVec::AbstractVector{Float64}, 
-        #     vals::AbstractVector{Float64}) -> srfKer(ordVec, vals, grdX, grdY, 
-        #     grdZ, fp, trgFac, srcFac, facPar, cmpInf)
-        intKer = (ordVec::AbstractVector{Float64}) -> srfKer(ordVec, grdX, grdY, 
-            grdZ, fp, trgFac, srcFac, facPar, cmpInf)
-        # surface integration
-        srfMat[fp] = hcubature(intKer, SVector{4}(0.0, 0.0, 0.0, 0.0), 
-            SVector{4}(1.0, 1.0, 1.0, 1.0), rtol=cubRelTol, atol=cubAbsTol)[1];
-        # scaling correction
-        srfMat[fp] *= srfScales[fp]
-    end
-    return nothing
-end
-# Gauss-Legendre nodes and weights mapped to [0,1] for orders 3:12, padded into
-# 12×10 tables the host and device fills share: column ord - 2, rows 1:ord
-const gauQudPos01 = reduce(hcat, [vcat((gausslegendre(ord)[1] .+ 1) ./ 2,
-    zeros(12 - ord)) for ord ∈ 3:12])
-const gauQudWgt01 = reduce(hcat, [vcat(gausslegendre(ord)[2] ./ 2,
-    zeros(12 - ord)) for ord ∈ 3:12])
-#=
-Order schedule for the fixed rule, measured with benchmark/quadCnv.jl on the
-assembled dyadic (relative Frobenius error against adaptive rtol 1e-12, or GL24
-at s ≤ 3, references) for cells of λ/4 to λ/128, separations of 2 to 32 cells,
-and axial, face-diagonal and body-diagonal offsets. Smallest order reaching
-1e-10 relative: 7-8 (s=2), 6 (s=3), 5-6 (s=4), 5 (s=5-6), 4-5 (s=8-16), 3-5
-(s ≥ 24); the schedule below adds roughly one order of margin. Cell size enters
-only through the floor: at λ/16 and finer the order is set by s alone, while
-cells approaching λ/4 need 6 at every separation. Convergence is 0.4-0.8
-decades per unit order, far slower than the ρ^(-2n) estimate for an analytic integrand, so
-the margin is cheap but not negligible. Orders are set by the assembled tensor
-rather than by single face pairs because srfSum! differences the 36 face pairs,
-amplifying face-pair error by 10-1000x. Reference-quality adaptive hcubature
-(rtol 1e-12) costs 1-80 s per offset against ≤ 12 ms for this rule; at the
-production tolerances (cubRelTol, cubAbsTol) the adaptive rule instead stopped
-after a single Genz-Malik step for separated cells, which is where its 1e-6
-level error came from. The fixed rule therefore costs 3-6x more time in the
-non-contact fill and buys about four orders of accuracy.
-=#
-"""One-dimensional Gauss-Legendre order for a cell pair at max-norm separation `sep` cells and cell size `kScl` radians."""
-function quadOrd(sep::Integer, kScl::Real)
-    if kScl > 1.6
-        @warn "cells are coarser than λ/4, outside the tested quadrature range" kScl maxlog=1
-    end
-    ordSep = sep <= 2 ? 9 : sep <= 4 ? 7 : sep <= 6 ? 6 : sep <= 16 ? 5 : 4
-    ordFlr = kScl <= 0.4 ? 4 : kScl <= 0.8 ? 5 : 6
-    return max(ordSep, ordFlr)
-end
-# order for the non-singular face pairs of the touching shell, whose face gap is
-# exactly one cell: order 8 already reaches 5e-13 at λ/32 and λ/4, order 6 only
-# 2e-9, so 9 is the measured minimum plus one order of margin
-const cntOrd = 9
-#=
-Fixed tensor Gauss-Legendre integration of the Green function over face pairs,
-valid only for cell pairs that are not in contact.
-=#
-function egoSrfFxd!(grdX::AbstractFloat, grdY::AbstractFloat,
-    grdZ::AbstractFloat, srfMat::AbstractVector{ComplexF64},
-    trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3},
-    pairList::Union{UnitRange{<:Integer},AbstractVector{<:Integer}},
-    facPar::AbstractMatrix{<:Integer}, srfScales::AbstractVector{<:AbstractFloat},
-    cmpInf::GlaKerOpt, ord::Integer)
-
-    pos = view(gauQudPos01, 1:ord, ord - 2)
-    wgt = view(gauQudWgt01, 1:ord, ord - 2)
-    @inbounds for fp ∈ pairList
-        val = zero(eltype(srfMat))
-        for itrL ∈ 1:ord, itrK ∈ 1:ord, itrJ ∈ 1:ord, itrI ∈ 1:ord
-            val += (wgt[itrI] * wgt[itrJ] * wgt[itrK] * wgt[itrL]) *
-                srfKer(SVector(pos[itrI], pos[itrJ], pos[itrK], pos[itrL]),
-                    grdX, grdY, grdZ, fp, trgFac, srcFac, facPar, cmpInf)
-        end
-        srfMat[fp] = val * srfScales[fp]
-    end
-    return nothing
-end
-#=
-Batched device evaluation of the fixed rule: one work item per (face pair,
-offset), inner loop over the ord^4 tensor nodes. Offsets are addressed from
-offSte so that no device views are needed. Values are written already scaled by
-srfScales; assembly by srfSum! stays on the host.
-=#
-@kernel function srfFxdKer!(out::AbstractMatrix{ComplexF64}, offSte::Int,
-    @Const(sepVec), @Const(ordLst), @Const(qudPos), @Const(qudWgt),
-    trgFac::SArray{Tuple{3,4,6},Float64}, srcFac::SArray{Tuple{3,4,6},Float64},
-    facPar::SMatrix{2,36,Int}, srfScales::SVector{36,Float64}, frq::Number)
-
-    itr = @index(Global)
-    @inbounds begin
-        fp = ((itr - 1) % 36) + 1
-        offItr = offSte + ((itr - 1) ÷ 36) + 1
-        grdX = sepVec[1, offItr]
-        grdY = sepVec[2, offItr]
-        grdZ = sepVec[3, offItr]
-        ord = ordLst[offItr]
-        qudCol = ord - 2
-        val = zero(ComplexF64)
-        for itrL ∈ 1:ord, itrK ∈ 1:ord, itrJ ∈ 1:ord, itrI ∈ 1:ord
-            val += (qudWgt[itrI, qudCol] * qudWgt[itrJ, qudCol] *
-                qudWgt[itrK, qudCol] * qudWgt[itrL, qudCol]) *
-                srfKer(SVector(qudPos[itrI, qudCol], qudPos[itrJ, qudCol],
-                    qudPos[itrK, qudCol], qudPos[itrL, qudCol]), grdX, grdY,
-                    grdZ, fp, trgFac, srcFac, facPar, frq)
-        end
-        out[fp, offItr] = val * srfScales[fp]
-    end
-end
-#=
-Launch the fixed rule for a list of cell offsets, sepVec holding one separation
-per column, on a KernelAbstractions backend. out is a device 36×N matrix; the
-launches are asynchronous, so the caller must synchronize the backend before
-copying out to the host. Only the CPU backend is exercised by the test suite,
-there being no GPU on the development machine; the CUDA launch is this same
-call with bckEnd a CUDABackend.
-=#
-function egoSrfFxdBat!(out::AbstractMatrix{ComplexF64},
-    sepVec::AbstractMatrix{Float64}, ordLst::AbstractVector{Int},
-    trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3},
-    facPar::AbstractMatrix{<:Integer}, srfScales::AbstractVector{<:AbstractFloat},
-    frq::Number, bckEnd::KernelAbstractions.Backend; chnSze::Integer=65536)
-
-    numOff = size(sepVec, 2)
-    numOff == 0 && return nothing
-    sepDev = KernelAbstractions.allocate(bckEnd, Float64, 3, numOff)
-    copyto!(sepDev, sepVec)
-    ordDev = KernelAbstractions.allocate(bckEnd, Int, numOff)
-    copyto!(ordDev, ordLst)
-    posDev = KernelAbstractions.allocate(bckEnd, Float64, 12, 10)
-    copyto!(posDev, gauQudPos01)
-    wgtDev = KernelAbstractions.allocate(bckEnd, Float64, 12, 10)
-    copyto!(wgtDev, gauQudWgt01)
-    ker = srfFxdKer!(bckEnd)
-    for offSte ∈ 0:chnSze:(numOff - 1)
-        chnLen = min(chnSze, numOff - offSte)
-        ker(out, offSte, sepDev, ordDev, posDev, wgtDev,
-            SArray{Tuple{3,4,6},Float64}(trgFac),
-            SArray{Tuple{3,4,6},Float64}(srcFac), SMatrix{2,36,Int}(facPar),
-            SVector{36,Float64}(srfScales), frq; ndrange=36 * chnLen)
-    end
-    return nothing
-end
-#=
-Integration kernel for Green function surface integrals.
-=#
-@inline function srfKer(ordVec::AbstractVector{<:AbstractFloat}, grdX::AbstractFloat,
-        grdY::AbstractFloat, grdZ::AbstractFloat, fp::Integer,
-        trgFac::AbstractArray{<:AbstractFloat,3},
-        srcFac::AbstractArray{<:AbstractFloat,3},
-        facPar::AbstractMatrix{<:Integer}, frq::Number)
-    # value of scalar Green function
-    return sclEgo(dstMag(
-                      cubVecAltAdp(1, ordVec, fp, trgFac, srcFac, facPar) + grdX,
-                      cubVecAltAdp(2, ordVec, fp, trgFac, srcFac, facPar) + grdY,
-                      cubVecAltAdp(3, ordVec, fp, trgFac, srcFac, facPar) + grdZ),
-               frq)
-end
-# the frequency, not cmpInf, is what the integrand needs, so device code can share it
-@inline srfKer(ordVec::AbstractVector{<:AbstractFloat}, grdX::AbstractFloat,
-    grdY::AbstractFloat, grdZ::AbstractFloat, fp::Integer,
-    trgFac::AbstractArray{<:AbstractFloat,3}, srcFac::AbstractArray{<:AbstractFloat,3},
-    facPar::AbstractMatrix{<:Integer}, cmpInf::GlaKerOpt) =
-    srfKer(ordVec, grdX, grdY, grdZ, fp, trgFac, srcFac, facPar, frqPhz(cmpInf))
-#=
 Return the separation between two elements from circulant embedding indices and 
 domain grids. 
 =#
-@inline function grdSel(ind::Integer, indSpt::Integer, dir::Integer, 
+@inline function grdSep(ind::Integer, indSpt::Integer, dir::Integer,
     trgGrd::AbstractVector{<:StepRange}, srcGrd::AbstractVector{<:StepRange})
-    
+
     if ind <= indSpt
-        return Float64(trgGrd[dir][ind])
+        return trgGrd[dir][ind]
     end
     if ind > (1 + indSpt)
         ind -= 1
-    end     
-    return Float64(srcGrd[dir][ind - indSpt])
+    end
+    return srcGrd[dir][ind - indSpt]
 end
+@inline grdSel(ind::Integer, indSpt::Integer, dir::Integer,
+    trgGrd::AbstractVector{<:StepRange}, srcGrd::AbstractVector{<:StepRange}) =
+    Float64(grdSep(ind, indSpt, dir, trgGrd, srcGrd))
 #=
 Return a reference index relative to the embedding index of the Green function. 
 =#
@@ -959,18 +321,4 @@ Flip dipole direction based on index values.
 =#
 @inline function indFlp(posInd::Integer, indSpt::Integer)
     return posInd <= indSpt ? 1.0 : -1.0
-end
-#=
-Returns locations and weights for 1D Gauss-Legendre quadrature. Order must be  
-an integer between 1 and 64. The first column of the returned array is 
-positions, on the interval [-1,1], the second column contains the associated 
-weights.
-
-Options:
-gausschebyshev(), gausslegendre(), gaussjacobi(), gaussradau(), gausslobatto(), 
-gausslaguerre(), gausshermite()
-=#
-function gauQud(ord::Int64)
-    pos, val = gausslegendre(ord)
-    return [pos ;; val]
 end
