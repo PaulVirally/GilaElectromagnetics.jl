@@ -1,27 +1,21 @@
-# mul! and * tests across every operator type
+# mul! and * across every operator type
 # Uses the cheap (2,2,2) and (4,4,4) builders from tstHlp.jl
 
-const mulScl16 = (1//16, 1//16, 1//16)
-
-# An external pair two cells apart, so the proximity check has to be silenced
-const _mulExt = GlaOprVac{Float64}(GlaVol((2,2,2), stdScl, (4//32, 0//1, 0//1)), _vol2s;
-    prxWrn=false)
-const mulCvl = GlaCmpVol([GlaVol((2,2,2), mulScl16, (0//1, 0//1, 0//1)),
-    GlaVol((2,2,2), mulScl16, (1//8, 0//1, 0//1))])
-const _mulCmp = GlaCmpOprVac{Float64}(mulCvl)
-const _mulMlr = MulRegGlaOprVac(reshape(
+const mulExt = GlaOprVac{Float64}(GlaVol((2,2,2), stdScl, (4//32, 0//1, 0//1)), _vol2s)
+const mulCvl = GlaCmpVol([GlaVol((2,2,2), scl16, stdOrg),
+    GlaVol((2,2,2), scl16, (1//8, 0//1, 0//1))])
+const mulCmp = GlaCmpOprVac{Float64}(mulCvl)
+const mulMlr = MulRegGlaOprVac(reshape(
     [GlaOprVac(deepcopy(_selfMem4)), GlaOprVac(deepcopy(_extMem4))], 2, 1))
 
-# Operator and tolerance — the solver-backed operators carry the √ε floor
-const mulOprs = [(_g0s(), 1e-12), (_asys(), 1e-12), (_mulExt, 1e-12),
-    (_invScts(), 1e-12), (_scts(), 1e-6), (_glas(), 1e-6), (_mulCmp, 1e-12),
-    (_mulMlr, 1e-12)]
+const mulOprs = (_g0s(), _asys(), SymGlaOprVac(_g0s()), mulExt, _invScts(),
+    _scts(), _glas(), mulCmp, mulMlr)
 
 const mulNaN = ComplexF64(NaN, NaN)
 const mulScls = (0.0, 1.0, 2.0 + 1.0im)
 
 @testset "5-arg mul!" begin
-    for (opr, tol) in mulOprs
+    for opr in mulOprs
         inp = randn(ComplexF64, size(opr, 2))
         ref = opr * inp
         out0 = randn(ComplexF64, size(opr, 1))
@@ -30,7 +24,7 @@ const mulScls = (0.0, 1.0, 2.0 + 1.0im)
             out = iszero(β) ? fill!(similar(out0), mulNaN) : copy(out0)
             @test mul!(out, opr, inp, α, β) === out
             tst = iszero(β) ? α .* ref : α .* ref .+ β .* out0
-            @test norm(out - tst) <= tol * max(norm(tst), norm(ref))
+            @test norm(out - tst) <= 1e-12 * max(norm(tst), norm(ref))
         end
         @test_throws ArgumentError mul!(similar(out0), opr, inp[1:end-1], 1.0, 0.0)
         @test_throws ArgumentError mul!(similar(out0, size(opr, 1) - 1), opr, inp, 1.0, 0.0)
@@ -38,16 +32,16 @@ const mulScls = (0.0, 1.0, 2.0 + 1.0im)
 end
 
 @testset "3-arg mul!" begin
-    for (opr, tol) in mulOprs
+    for opr in mulOprs
         inp = randn(ComplexF64, size(opr, 2))
         out = fill!(similar(inp, size(opr, 1)), mulNaN)
         @test mul!(out, opr, inp) === out
-        @test norm(out - opr * inp) <= tol * norm(out)
+        @test norm(out - opr * inp) <= 1e-12 * norm(out)
     end
 end
 
 @testset "input form parity" begin
-    for (opr, tol) in mulOprs
+    for opr in mulOprs
         inp = randn(ComplexF64, size(opr, 2))
         ref = opr * inp
         @test ref isa Vector{ComplexF64}
@@ -59,8 +53,8 @@ end
         out = opr * mat
         @test out isa Matrix{ComplexF64}
         @test size(out) == (size(opr, 1), 2)
-        @test norm(out[:, 1] - ref) <= tol * norm(ref)
-        @test norm(out[:, 2] - col2) <= tol * norm(col2)
+        @test norm(out[:, 1] - ref) <= 1e-12 * norm(ref)
+        @test norm(out[:, 2] - col2) <= 1e-12 * norm(col2)
 
         # The tensor form only exists where each side is a single volume
         if glaSze(opr, 2) isa NTuple{4, Int}
@@ -68,10 +62,10 @@ end
             outTen = opr * ten
             @test outTen isa Array{ComplexF64, 4}
             @test size(outTen) == glaSze(opr, 1)
-            @test norm(vec(outTen) - ref) <= tol * norm(ref)
+            @test norm(vec(outTen) - ref) <= 1e-12 * norm(ref)
             mulTen = fill!(similar(outTen), mulNaN)
             @test mul!(mulTen, opr, ten, 1.0, 0.0) === mulTen
-            @test norm(vec(mulTen) - ref) <= tol * norm(ref)
+            @test norm(vec(mulTen) - ref) <= 1e-12 * norm(ref)
         end
     end
 end
@@ -79,7 +73,7 @@ end
 #= The kernel consumes what it is handed, so every path owes the caller a
 defensive copy. The composite block loop is the one most likely to forget. =#
 @testset "input untouched" begin
-    for opr in (_g0s(), _invScts(), _mulCmp)
+    for opr in (_g0s(), _invScts(), _scts(), _glas(), mulCmp)
         inp = randn(ComplexF64, size(opr, 2))
         sav = copy(inp)
         opr * inp
@@ -96,19 +90,19 @@ defensive copy. The composite block loop is the one most likely to forget. =#
 end
 
 @testset "adjoint dot" begin
-    for opr in (_g0s(), _invScts(), _mulCmp)
+    for opr in (_g0s(), _invScts(), mulCmp)
         x = randn(ComplexF64, size(opr, 2))
         y = randn(ComplexF64, size(opr, 1))
         adj = adjoint(opr)
         @test size(adj) == reverse(size(opr))
         lhs, rhs = dot(y, opr * x), dot(adj * y, x)
-        @test abs(lhs - rhs) <= 1e-12 * max(abs(lhs), abs(rhs))
+        @test abs(lhs - rhs) <= 1e-14 * max(abs(lhs), abs(rhs))
     end
 end
 
 @testset "GlaFld mul!" begin
-    for (opr, cvl) in ((_mulCmp, mulCvl), (_g0s(), GlaCmpVol(_vol2s)))
-        inp = discretize!(zerofield(Float64, cvl), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+    for (opr, cvl) in ((mulCmp, mulCvl), (_g0s(), GlaCmpVol(_vol2s)))
+        inp = discretize!(zerofield(Float64, cvl), tstDns)
         sav = copy(inp.dat)
         ref = opr * inp
         @test ref isa GlaFld
@@ -147,7 +141,7 @@ end
         gOut = fill!(similar(gInp, size(cmpGpu, 1)), mulNaN)
         @test mul!(gOut, cmpGpu, gInp, 1.0, 0.0) === gOut
         @test norm(Array(gOut) - gRef) <= 1e-10 * norm(gRef)
-        @test norm(gRef - _mulCmp * Array(gInp)) <= 1e-10 * norm(gRef)
+        @test norm(gRef - mulCmp * Array(gInp)) <= 1e-10 * norm(gRef)
     end
 end
 

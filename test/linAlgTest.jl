@@ -1,5 +1,6 @@
 # glaLinAlg AbstractMatrix interface tests
-# Uses _g0s(), _asys(), _invScts() (2,2,2) from tstHlp.jl for cheap loop iterations
+# Uses the (2,2,2) builders from tstHlp.jl, and oprMsk / mulMlr / mulCmp from
+# oprTest.jl and mulTest.jl, for cheap loop iterations
 
 @testset "similar" begin
     opr  = _g0s()
@@ -69,16 +70,8 @@ end
 Every operator whose adjoint! hands back a new wrapper instead of the argument has
 to survive it, in the answer and in the state it leaves behind. =#
 @testset "getindex adjoint branch" begin
-    lnaScl = (1//16, 1//16, 1//16)
-    lnaOrg = (0//1, 0//1, 0//1)
     # The masked union route, a block matrix, and a composite operator
-    mskOpr = GlaOprVac{Float64}(GlaVol((2,4,4), lnaScl, lnaOrg),
-        GlaVol((2,2,2), lnaScl, (2//16, 0//1, 0//1)))
-    mulOpr = MulRegGlaOprVac(reshape(
-        [GlaOprVac(deepcopy(_selfMem4)), GlaOprVac(deepcopy(_extMem4))], 2, 1))
-    cmpOpr = GlaCmpOprVac{Float64}(GlaCmpVol([GlaVol((2,2,2), lnaScl, lnaOrg),
-        GlaVol((2,2,2), lnaScl, (1//8, 0//1, 0//1))]))
-    for opr in (mskOpr, mulOpr, cmpOpr)
+    for opr in (oprMsk, mulMlr, mulCmp)
         dns = dnsMat(opr)
         numRow, numCol = size(opr)
         @test numRow >= numCol

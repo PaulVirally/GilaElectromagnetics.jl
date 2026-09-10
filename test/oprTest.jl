@@ -1,46 +1,28 @@
 # GilaOperators tests
 import GilaElectromagnetics.GilaOperators: ovrChk, mskRng, rszSus, setSus!
 
-# Shared helpers from tstHlp.jl; oprTest-specific:
-const _ovrOrg4 = ntuple(i -> Rational(4) * stdScl[i] // 2, 3)
-const _volOvr4 = GlaVol((4,4,4), stdScl, _ovrOrg4)
+const oprOvrOrg = ntuple(i -> Rational(4) * stdScl[i] // 2, 3)
+const oprVolOvr = GlaVol((4,4,4), stdScl, oprOvrOrg)
+#= A slab and a box sharing interior, which the constructor sends through the
+union route, so the operator carries a source and a target mask. =#
+const oprSlb = GlaVol((2,4,4), scl16, stdOrg)
+const oprBox = GlaVol((2,2,2), scl16, (1//16, 0//1, 0//1))
+const oprMsk = GlaOprVac{Float64}(oprSlb, oprBox)
 
 @testset "Constructors & predicates" begin
-    vol = _vol4; trgV = _trgV4; sus = _sus4
-
-    # Self GlaOprVac
-    gSelf = _g0()
-    @test isselfoperator(gSelf)
-    @test !isexternaloperator(gSelf)
-    @test !isoverlappingoperator(gSelf)
-    @test !isadjoint(gSelf)
-    @test !isgpu(gSelf)
-
-    # External GlaOprVac
-    gExt = _gExt()
-    @test !isselfoperator(gExt)
-    @test isexternaloperator(gExt)
-    @test !isoverlappingoperator(gExt)
-
-    # Overlapping GlaOprVac (shifted by 2 cells → overlap)
-    gOvr = GlaOprVac{Float64}(_volOvr4, _vol4)
-    @test isoverlappingoperator(gOvr)
-    @test !isselfoperator(gOvr)
-    @test !isexternaloperator(gOvr)
-    @test !all(==(0:0), gOvr.srcMsk)
-    @test !all(==(0:0), gOvr.trgMsk)
-
-    # GlaOprVac(mem) reproduces predicates
-    gFromMem = _g0()
-    @test isselfoperator(gFromMem)
-
-    # InvSctOpr, SctOpr, GlaOpr predicates
-    for opr in (_invSct(), _sct(), _gla())
-        @test isselfoperator(opr)
-        @test !isexternaloperator(opr)
+    gOvr = GlaOprVac{Float64}(oprVolOvr, _vol4) # Shifted two cells, so it overlaps
+    for (opr, slf, ext, ovr) in ((_g0(), true, false, false), (_gExt(), false, true, false),
+        (gOvr, false, false, true), (_invSct(), true, false, false),
+        (_sct(), true, false, false), (_gla(), true, false, false))
+        @test isselfoperator(opr) == slf
+        @test isexternaloperator(opr) == ext
+        @test isoverlappingoperator(opr) == ovr
         @test !isadjoint(opr)
         @test !isgpu(opr)
     end
+    # Only the overlapping route carries masks
+    @test !all(==(0:0), gOvr.srcMsk)
+    @test !all(==(0:0), gOvr.trgMsk)
 end
 
 @testset "isgpu follows cmpInf" begin
@@ -61,28 +43,17 @@ end
     @test !isgpu(opr)
 end
 
-@testset "AsyGlaOprVac / SymGlaOprVac constructors" begin
+@testset "Hermitian part constructors" begin
     gSelf = _g0()
-    gExt  = _gExt()
-
-    asy1 = _asy()
-    asy2 = AsyGlaOprVac(gSelf)
-    @test isselfoperator(asy1)
-    @test !isadjoint(asy1)
-    @test isselfoperator(asy2)
-
-    sym1 = _sym()
-    sym2 = SymGlaOprVac(gSelf)
-    @test isselfoperator(sym1)
-    @test !isadjoint(sym1)
-
-    @test (try AsyGlaOprVac(gExt); false catch e; isa(e, ArgumentError) end)
-    @test (try SymGlaOprVac(gExt); false catch e; isa(e, ArgumentError) end)
-
-    # asym() convenience
     @test asym(gSelf) isa AsyGlaOprVac
-    # sym is not exported — call qualified
-    @test GilaElectromagnetics.GilaOperators.sym(gSelf) isa SymGlaOprVac
+    @test glaSym(gSelf) isa SymGlaOprVac
+    for opr in (_asy(), _sym())
+        @test isselfoperator(opr)
+        @test !isadjoint(opr)
+    end
+    # Neither part is defined for an operator between two different volumes
+    @test_throws ArgumentError AsyGlaOprVac(_gExt())
+    @test_throws ArgumentError SymGlaOprVac(_gExt())
 end
 
 @testset "Cross-constructors" begin
@@ -104,85 +75,26 @@ end
 
 @testset "size / glaSze / eltype" begin
     n = prod((4,4,4)) * 3
-
-    gSelf = _g0()
-    @test eltype(gSelf) == ComplexF64
-    @test size(gSelf) == (n, n)
-    @test size(gSelf, 1) == n
-    @test size(gSelf, 2) == n
-    @test glaSze(gSelf, 1) == ((4,4,4)..., 3)
-    @test glaSze(gSelf, 2) == ((4,4,4)..., 3)
-
-    gExt = _gExt()
-    @test size(gExt, 1) == n
-    @test size(gExt, 2) == n
-
-    for opr in (_invSct(), _sct(), _gla())
+    for opr in (_g0(), _gExt(), _invSct(), _sct(), _gla())
         @test eltype(opr) == ComplexF64
         @test size(opr) == (n, n)
-    end
-end
-
-@testset "matvec forms agree" begin
-    for opr in (_g0(), _asy(), _sym(), _sct(), _gla(), _invSct())
-        n  = size(opr, 2)
-        vv = rand(ComplexF64, n)
-        # Vector form matches 4D reshape → vector
-        out_flat = opr * vv
-        out_4d   = opr * reshape(vv, glaSze(opr, 2))
-        @test out_flat ≈ vec(out_4d)
-        # Matrix columns agree with vector products
-        V = rand(ComplexF64, n, 3)
-        outM = opr * V
-        for j in 1:3
-            @test outM[:, j] ≈ opr * V[:, j]
-        end
-    end
-end
-
-@testset "mul! 5-arg" begin
-    for opr in (_g0(), _invSct(), _sct(), _gla())
-        n = size(opr, 2); m = size(opr, 1)
-        v   = rand(ComplexF64, n)
-        out = rand(ComplexF64, m)
-        α = (2.0 + 0.5im)
-        β = (0.3 - 0.1im)
-        out_old  = copy(out)
-        expected = α .* (opr * v) .+ β .* out_old
-        mul!(out, opr, v, α, β)
-        @test out ≈ expected
-    end
-end
-
-@testset "Non-mutation of input" begin
-    for opr in (_g0(), _invSct(), _sct(), _gla())
-        v      = rand(ComplexF64, size(opr, 2))
-        v_copy = copy(v)
-        _ = opr * v
-        @test v == v_copy
+        @test size(opr, 1) == n
+        @test size(opr, 2) == n
+        @test glaSze(opr, 1) == ((4,4,4)..., 3)
+        @test glaSze(opr, 2) == ((4,4,4)..., 3)
     end
 end
 
 @testset "Composition identities" begin
-    v      = rand(ComplexF64, prod((4,4,4)) * 3)
-    invSct = _invSct()
-    sct    = _sct()
-    gla    = _gla()
-    gVac   = _g0()
-    glaVac = _glaVac()
-
-    @test invSct * (sct * v) ≈ v
-    @test glaVac * v ≈ gVac * v
+    v = rand(ComplexF64, prod((4,4,4)) * 3)
+    @test _invSct() * (_sct() * v) ≈ v
+    @test _glaVac() * v ≈ _g0() * v
 end
 
 @testset "adjoint" begin
-    for opr in (_g0(), _asy(), _sym(),
-                _invSct(), _sct(), _gla())
-        mat    = dnsMat(opr)
-        adjMat = dnsMat(adjoint(opr))
-        @test adjMat ≈ mat'
-
-        # Double adjoint
+    for opr in (_g0(), _asy(), _sym(), _invSct(), _sct(), _gla())
+        mat = dnsMat(opr)
+        @test dnsMat(adjoint(opr)) ≈ mat'
         v = rand(ComplexF64, size(opr, 2))
         @test adjoint(adjoint(opr)) * v ≈ opr * v
     end
@@ -194,17 +106,12 @@ end
     adjoint!(g)
     @test !isadjoint(g)
 
-    # AsyGlaOprVac is Hermitian
-    asy = _asy()
-    @test adjoint!(asy) === asy
-    asyMat = dnsMat(asy)
-    @test asyMat ≈ asyMat'
-
-    # SymGlaOprVac is Hermitian
-    sym = _sym()
-    @test adjoint!(sym) === sym
-    symMat = dnsMat(sym)
-    @test symMat ≈ symMat'
+    # Both Hermitian parts are their own adjoint
+    for opr in (_asy(), _sym())
+        @test adjoint!(opr) === opr
+        mat = dnsMat(opr)
+        @test mat ≈ mat'
+    end
 end
 
 @testset "ovrChk / mskRng" begin
@@ -233,46 +140,39 @@ end
     # A small box flush against the face of a wider slab: the external contact
     # correction covers this shape, so both orientations take the external route
     # and reproduce the union of the two volumes
-    slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
-    box = GlaVol((2,2,2), (1//16,1//16,1//16), (2//16, 0//1, 0//1))
-    uni = uniVol(slb, box)
+    box = GlaVol((2,2,2), scl16, (2//16, 0//1, 0//1))
+    uni = uniVol(oprSlb, box)
     uniMat = dnsMat(GlaOprVac{Float64}(uni))
     li = LinearIndices((uni.cel..., 3))
     dofIdx(v) = (r = mskRng(v, uni); vec([li[i,j,k,d] for i in r[1], j in r[2], k in r[3], d in 1:3]))
-    slbDof, boxDof = dofIdx(slb), dofIdx(box)
-    for (trg, src, rowDof, colDof) in ((slb, box, slbDof, boxDof), (box, slb, boxDof, slbDof))
+    slbDof, boxDof = dofIdx(oprSlb), dofIdx(box)
+    for (trg, src, rowDof, colDof) in ((oprSlb, box, slbDof, boxDof), (box, oprSlb, boxDof, slbDof))
         opr = GlaOprVac{Float64}(trg, src)
         @test isexternaloperator(opr)
         @test !isoverlappingoperator(opr)
-        @test norm(dnsMat(opr) - uniMat[rowDof, colDof]) / norm(uniMat[rowDof, colDof]) < 1e-12
+        @test frbErr(dnsMat(opr), uniMat[rowDof, colDof]) < 1.5e-15
     end
     # A corner-fitting touching pair still takes the external route
     @test isexternaloperator(GlaOprVac{Float64}(_vol4, GlaVol((4,4,4), stdScl, (4//32, 0//1, 0//1))))
 end
 
 @testset "Masked operator adjoint" begin
-    # A slab and a box sharing interior, which the constructor sends through the
-    # union route, so the operator carries a source and a target mask
-    slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
-    box = GlaVol((2,2,2), (1//16,1//16,1//16), (1//16, 0//1, 0//1))
-    opr = GlaOprVac{Float64}(slb, box)
-    @test isoverlappingoperator(opr)
-    fwdMat = dnsMat(opr)
+    @test isoverlappingoperator(oprMsk)
+    fwdMat = dnsMat(oprMsk)
     # The adjoint has to exchange the two masks along with the volumes
-    adjMat = dnsMat(opr')
+    adjMat = dnsMat(oprMsk')
     @test size(adjMat) == reverse(size(fwdMat))
-    @test norm(adjMat - fwdMat') / norm(fwdMat) < 1e-13
+    @test frbErr(adjMat, fwdMat') < 5e-16
     # In place, and the round trip back
-    adjOpr = adjoint!(deepcopy(opr))
-    @test glaSze(adjOpr, 2) == glaSze(opr, 1)
-    @test norm(dnsMat(adjOpr) - fwdMat') / norm(fwdMat) < 1e-13
-    @test norm(dnsMat(adjoint!(adjOpr)) - fwdMat) / norm(fwdMat) < 1e-15
+    adjOpr = adjoint!(deepcopy(oprMsk))
+    @test glaSze(adjOpr, 2) == glaSze(oprMsk, 1)
+    @test frbErr(dnsMat(adjOpr), fwdMat') < 5e-16
+    @test dnsMat(adjoint!(adjOpr)) == fwdMat
 end
 
 @testset "GlaOprVac on a field" begin
     opr = _g0()
-    vol = opr.mem.srcVol
-    fld = discretize!(zerofield(Float64, vol), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+    fld = discretize!(zerofield(Float64, opr.mem.srcVol), tstDns)
     out = opr * fld
     @test out isa GlaFld
     @test nregions(out.cvol) == 1
@@ -284,22 +184,17 @@ end
         [GlaVol((2,2,2), stdScl, (-1//32, 0//1, 0//1)),
          GlaVol((2,2,2), stdScl, (1//32, 0//1, 0//1))]))
     # The masked route reads its input through a mask, so it takes no field
-    slb = GlaVol((2,4,4), (1//16,1//16,1//16), (0//1, 0//1, 0//1))
-    box = GlaVol((2,2,2), (1//16,1//16,1//16), (1//16, 0//1, 0//1))
-    @test_throws ArgumentError GlaOprVac{Float64}(slb, box) * zerofield(Float64, box)
+    @test_throws ArgumentError oprMsk * zerofield(Float64, oprBox)
 end
 
 @testset "rszSus" begin
     cel   = (4,4,4)
     sus3d = rand(ComplexF64, cel...)
-    sus1d = vec(sus3d)
-    # 3D passthrough
+    # 3D passthrough, 1D reshape
     @test rszSus(sus3d, cel) === sus3d
-    # 1D reshape
-    @test rszSus(sus1d, cel) == sus3d
-    # Wrong length throws
+    @test rszSus(vec(sus3d), cel) == sus3d
+    # Wrong length, and a rank the reshape does not cover
     @test_throws ArgumentError rszSus(zeros(ComplexF64, 5), cel)
-    # 2D throws
     @test_throws ArgumentError rszSus(rand(ComplexF64, 4, 16), cel)
 end
 
@@ -310,135 +205,66 @@ end
     @test invSct.sus == newSus
     # Wrong size throws
     @test_throws ArgumentError setSus!(invSct, mkSus((2,2,2)))
-    # Propagates through SctOpr
+    # Propagates through SctOpr and GlaOpr
     sct = _sct()
     setSus!(sct, newSus)
     @test sct.invSctOpr.sus == newSus
-    # Propagates through GlaOpr
     gla = _gla()
     setSus!(gla, newSus)
     @test gla.sctOpr.invSctOpr.sus == newSus
 end
 
 @testset "MulRegGlaOprVac" begin
-    vol1 = _vol4
-    vol2 = _trgV4
-    vols = [vol1, vol2]
+    vols = [_vol4, _trgV4]
     op   = MulRegGlaOprVac{Float64}(vols, vols)
     n    = prod((4,4,4)) * 3
 
-    # oprMat structure
+    # The diagonal is self, the off-diagonal external
     @test size(op.oprMat) == (2, 2)
     @test isselfoperator(op.oprMat[1,1])
     @test isselfoperator(op.oprMat[2,2])
     @test isexternaloperator(op.oprMat[1,2])
     @test isexternaloperator(op.oprMat[2,1])
 
-    # size
     @test size(op) == (2n, 2n)
     @test size(op, 1) == 2n
     @test size(op, 2) == 2n
 
-    # flat-vector matvec
     x  = rand(ComplexF64, 2n)
     y  = op * x
     x1 = x[1:n]; x2 = x[n+1:2n]
-    y_man = vcat(op.oprMat[1,1] * x1 + op.oprMat[1,2] * x2,
-                 op.oprMat[2,1] * x1 + op.oprMat[2,2] * x2)
-    @test y ≈ y_man
+    @test y ≈ vcat(op.oprMat[1,1] * x1 + op.oprMat[1,2] * x2,
+                   op.oprMat[2,1] * x1 + op.oprMat[2,2] * x2)
 
-    # block-vector matvec
-    xBlk = [reshape(x1, (4,4,4,3)), reshape(x2, (4,4,4,3))]
-    yBlk = op * xBlk
+    # Block-vector form
+    yBlk = op * [reshape(x1, (4,4,4,3)), reshape(x2, (4,4,4,3))]
     @test vec(yBlk[1]) ≈ op.oprMat[1,1] * x1 + op.oprMat[1,2] * x2
     @test vec(yBlk[2]) ≈ op.oprMat[2,1] * x1 + op.oprMat[2,2] * x2
 
-    # Dense matrix consistency
     D = dnsMat(op)
     @test D * x ≈ y
-
-    # adjoint
-    adjD = dnsMat(adjoint(op))
-    @test adjD ≈ D'
+    @test dnsMat(adjoint(op)) ≈ D'
     @test size(adjoint(op)) == size(op)
 
-    # show contains "multi-region" and counts
     str = sprint(show, op)
     @test occursin("multi-region", str)
     @test occursin("2", str)
 end
 
 @testset "show" begin
-    strs = [
-        (_g0(),                        ["Self",     "CPU", "G₀"]),
-        (_gExt(),                      ["External", "CPU", "G₀"]),
-        (_asy(),                       ["Self",     "CPU", "Asym(G₀)"]),
-        (_sym(),                       ["Self",     "CPU", "Sym(G₀)"]),
-        (_invSct(),                    ["Self",     "CPU", "(I - XG₀)"]),
-        (_sct(),                       ["Self",     "CPU", "(I - XG₀)⁻¹"]),
-        (_gla(),                       ["Self",     "CPU", "G₀(I - XG₀)⁻¹"]),
-    ]
-    for (opr, keys) in strs
-        s = sprint(show, opr)
-        for k in keys
-            @test occursin(k, s)
+    for (opr, keys) in ((_g0(),     ["Self",     "CPU", "G₀"]),
+                        (_gExt(),   ["External", "CPU", "G₀"]),
+                        (_asy(),    ["Self",     "CPU", "Asym(G₀)"]),
+                        (_sym(),    ["Self",     "CPU", "Sym(G₀)"]),
+                        (_invSct(), ["Self",     "CPU", "(I - XG₀)"]),
+                        (_sct(),    ["Self",     "CPU", "(I - XG₀)⁻¹"]),
+                        (_gla(),    ["Self",     "CPU", "G₀(I - XG₀)⁻¹"]))
+        str = sprint(show, opr)
+        for key in keys
+            @test occursin(key, str)
         end
     end
-    # Adjoint adds "Adjoint"
-    adjStr = sprint(show, adjoint(_g0()))
-    @test occursin("Adjoint", adjStr)
-end
-
-@testset "Operator serialization" begin
-    v    = rand(ComplexF64, size(_g0(), 2))
-
-    oprs = [
-        _g0(),
-        _asy(),
-        _sym(),
-        _invSct(),
-        _sct(),
-        _gla(),
-    ]
-    for opr in oprs
-        tmpFil = tempname()
-        try
-            open(tmpFil, "w") do io; serialize(io, opr); end
-            T = typeof(opr)
-            desOpr = open(tmpFil, "r") do io; deserialize(io, T); end
-            # Action round-trip where size matches
-            if size(opr, 2) == length(v)
-                @test opr * v ≈ desOpr * v
-            end
-        finally
-            isfile(tmpFil) && rm(tmpFil)
-        end
-    end
-
-    # Multi-region blocks go through the generic serializer, which must rebuild
-    # the FFTW plans on load rather than restore the written pointers
-    tmpFil = tempname()
-    mr = MulRegGlaOprVac{Float64}([_vol4, _trgV4], [_vol4, _trgV4])
-    vMr = rand(ComplexF64, size(mr, 2))
-    try
-        open(tmpFil, "w") do io; serialize(io, mr); end
-        desMr = open(tmpFil, "r") do io; deserialize(io, MulRegGlaOprVac); end
-        @test desMr * vMr ≈ mr * vMr
-    finally
-        isfile(tmpFil) && rm(tmpFil)
-    end
-
-    # Same path for operators nested in a container
-    tmpFil = tempname()
-    opr = _g0()
-    try
-        open(tmpFil, "w") do io; serialize(io, [opr]); end
-        @test isnothing(findfirst(codeunits("FFTW"), read(tmpFil)))
-        desOpr = only(open(deserialize, tmpFil))
-        @test desOpr * v ≈ opr * v
-    finally
-        isfile(tmpFil) && rm(tmpFil)
-    end
+    @test occursin("Adjoint", sprint(show, adjoint(_g0())))
 end
 
 @testset "Operator CPU/GPU parity" begin

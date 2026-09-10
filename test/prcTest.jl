@@ -6,9 +6,6 @@ using Test, GilaElectromagnetics, LinearAlgebra, LinearMaps, Serialization, CUDA
 import GilaElectromagnetics.GilaVacuum: arrTyp, useGpu
 import GilaElectromagnetics.GilaOperators: setSus!, invMul!, invMulAdj!
 
-const prcScl16 = (1//16, 1//16, 1//16)
-const prcScl32 = (1//32, 1//32, 1//32)
-
 const prcVol   = mkVol((4,4,4))
 const prcTrg   = mkVol((4,4,4); org=extOrg)
 const prcVol2  = mkVol((2,2,2))
@@ -20,18 +17,16 @@ const prcSus64 = mkSus((4,4,4))
 const prcSlfMem32 = GlaVacOprMem(CPUKerOpt{Float32}(), prcVol)
 const prcExtMem32 = GlaVacOprMem(CPUKerOpt{Float32}(), prcTrg, prcVol)
 
-prcG032()  = GlaOprVac(prcSlfMem32)
-prcGExt32() = GlaOprVac(prcExtMem32)
+prcG032() = GlaOprVac(prcSlfMem32)
 
 const prcDns32 = dnsMat(prcG032())
-const prcDns64 = dnsMat(_g0())
 
 # Two touching regions, so both cross-scale blocks take the fine mesh route
-const prcCvl = refine(GlaCmpVol(GlaVol((4,2,2), prcScl16, stdOrg)),
+const prcCvl = refine(GlaCmpVol(GlaVol((4,2,2), scl16, stdOrg)),
     ((-1//16, 0//1, 0//1), (1//8, 1//8, 1//8)); factor=(2, 1, 1))
 # A coarse tiling and a fine one half a wavelength apart, the cross-scale pair
-const prcCrsCvl = GlaCmpVol(GlaVol((2,2,2), prcScl16, stdOrg))
-const prcFinCvl = GlaCmpVol(GlaVol((4,4,4), prcScl32, (1//2, 0//1, 0//1)))
+const prcCrsCvl = GlaCmpVol(GlaVol((2,2,2), scl16, stdOrg))
+const prcFinCvl = GlaCmpVol(GlaVol((4,4,4), stdScl, (1//2, 0//1, 0//1)))
 
 # Every operator below costs a numerical integration, so each pair is built once
 const prcCmp32 = GlaCmpOprVac{Float32}(prcCvl)
@@ -79,6 +74,17 @@ end
     @test useGpu(CPUKerOpt{Float32}()) isa GPUKerOpt{Float32}
     @test useGpu(CPUKerOpt{Float64}()) isa GPUKerOpt{Float64}
 
+    # generation at Float32 returns NaN, and the options are mutable, so the guard has
+    # to sit on the assignment as well as on the constructor
+    prcOptGen = CPUKerOpt{Float64}()
+    @test_throws ArgumentError CPUKerOpt{Float64}(1.0+0.0im, Float32, false, prcOptGen.bckEnd)
+    @test_throws ArgumentError (prcOptGen.genPrc = Float32)
+    @test_throws ArgumentError (useGpu(prcOptGen).genPrc = Float32)
+    prcOptGen.genPrc = Float64
+    prcOptGen.frqPhz = 1.0 + 0.1im
+    @test prcOptGen.genPrc === Float64
+    @test prcOptGen.frqPhz == 1.0 + 0.1im
+
     opr32 = prcG032()
     @test eltype(opr32) == ComplexF32
     @test eltype(typeof(opr32)) == ComplexF32
@@ -87,7 +93,7 @@ end
     @test !isgpu(opr32)
     @test arrTyp(opr32) == Array{ComplexF32}
     @test isselfoperator(opr32)
-    for opr in (AsyGlaOprVac(opr32), SymGlaOprVac(opr32), prcGExt32(),
+    for opr in (AsyGlaOprVac(opr32), SymGlaOprVac(opr32), GlaOprVac(prcExtMem32),
         InvSctOpr(opr32, prcSus32), SctOpr(opr32, prcSus32), GlaOpr(opr32, prcSus32))
         @test eltype(opr) == ComplexF32
     end
@@ -117,11 +123,8 @@ end
 end
 
 @testset "Dense truncation accuracy" begin
-    nrmErr, entErr = relErr(ComplexF64.(prcDns32), prcDns64), prcEntErr(prcDns32, prcDns64)
-    @info "self GlaOprVac: dense relErr = $nrmErr, entrywise = $entErr"
-    @test nrmErr < 1e-5
-    @test entErr < 1e-6
-    prcChkDns(prcGExt32(), _gExt(), "external GlaOprVac")
+    prcChkDns(prcG032(), _g0(), "self GlaOprVac")
+    prcChkDns(GlaOprVac(prcExtMem32), _gExt(), "external GlaOprVac")
     prcChkDns(AsyGlaOprVac(prcG032()), _asy(), "AsyGlaOprVac")
     prcChkDns(SymGlaOprVac(prcG032()), _sym(), "SymGlaOprVac")
     prcChkDns(prcMul32, prcMul64, "MulRegGlaOprVac")
@@ -226,7 +229,7 @@ end
     @test eltype(parent(fld)) == ComplexF32
     @test eltype(similar(fld)) == ComplexF32
 
-    dsc = discretize!(zerofield(Float32, cvol), pos -> (exp(2im * pi * pos[1]), pos[2], 0))
+    dsc = discretize!(zerofield(Float32, cvol), tstDns)
     @test eltype(dsc.dat) == ComplexF32
     # Broadcast keeps the wrapper and the precision
     bct = 2 .* dsc .+ dsc
@@ -394,7 +397,6 @@ end
     @test Matrix(lmp) == prcDns32
 end
 
-# Untested here: CUDA is not functional on this machine
 @testset "Float32 GPU" begin
     if CUDA.functional()
         opr32 = GlaOprVac{Float32}(prcVol; useGpu=true)

@@ -39,7 +39,7 @@ end
     v1 = mkVol((4,4,4))
     v2 = mkVol((4,4,4))
     v3 = mkVol((4,4,4); org=extOrg)
-    v4 = mkVol((4,4,4); scl=(1//16, 1//16, 1//16))
+    v4 = mkVol((4,4,4); scl=scl16)
     v5 = mkVol((6,4,4))
     @test v1 == v2
     @test v1 != v3
@@ -49,7 +49,7 @@ end
 
 @testset "GlaVol constructor error" begin
     # celScl > grdScl should throw
-    @test_throws ErrorException GlaVol((4,4,4), (1//16, 1//16, 1//16), stdOrg, (1//32, 1//32, 1//32))
+    @test_throws ErrorException GlaVol((4,4,4), scl16, stdOrg, stdScl)
     # celScl == grdScl is fine
     @test_nowarn GlaVol((4,4,4), stdScl, stdOrg, stdScl)
 end
@@ -78,33 +78,22 @@ end
     @test_throws AssertionError uniVol(v1, vBad)
 end
 
-@testset "GlaExtInf equal-scale" begin
-    v1 = mkVol((4,4,4))
-    v2 = mkVol((4,4,4); org=extOrg)
-    inf = GlaExtInf(v1, v2)
-    @test inf.minScl == stdScl
-    @test inf.trgDiv == (1,1,1)
-    @test inf.srcDiv == (1,1,1)
-    @test inf.trgCel == (4,4,4)
-    @test inf.srcCel == (4,4,4)
-    @test length(inf.trgPar) == 1
-    @test length(inf.srcPar) == 1
-end
-
-@testset "GlaExtInf mixed-scale (ratio 2)" begin
-    sclCoarse = (2//32, 2//32, 2//32)
-    vCoarse = GlaVol((4,4,4), sclCoarse, stdOrg)
-    vFine   = GlaVol((8,8,8), stdScl, extOrg)
-    inf = GlaExtInf(vCoarse, vFine)
-    # minScl = (1/32), maxScl = (2/32)
+@testset "GlaExtInf" begin
+    # Mixed-scale row: minScl = (1/32), maxScl = (2/32)
     # trgDiv = maxScl/coarseScl = 1; srcDiv = maxScl/fineScl = 2
-    @test inf.minScl == stdScl
-    @test inf.trgDiv == (1,1,1)
-    @test inf.srcDiv == (2,2,2)
-    @test inf.trgCel == (4,4,4)
-    @test inf.srcCel == (4,4,4)
-    @test length(inf.trgPar) == 1
-    @test length(inf.srcPar) == 8
+    for (trgVol, srcVol, trgDiv, srcDiv) in (
+        (mkVol((4,4,4)), mkVol((4,4,4); org=extOrg), (1,1,1), (1,1,1)),
+        (GlaVol((4,4,4), (2//32, 2//32, 2//32), stdOrg),
+            GlaVol((8,8,8), stdScl, extOrg), (1,1,1), (2,2,2)))
+        inf = GlaExtInf(trgVol, srcVol)
+        @test inf.minScl == stdScl
+        @test inf.trgDiv == trgDiv
+        @test inf.srcDiv == srcDiv
+        @test inf.trgCel == (4,4,4)
+        @test inf.srcCel == (4,4,4)
+        @test length(inf.trgPar) == prod(trgDiv)
+        @test length(inf.srcPar) == prod(srcDiv)
+    end
 end
 
 @testset "GlaExtInf error cases" begin
@@ -178,15 +167,9 @@ end
 @testset "crcIndClc" begin
     cntVol = GlaVol((4,4,4), stdScl, stdOrg)
     # Positive separation: index is trgInd - srcInd + CartesianIndex(1,1,1)
-    trgInd = CartesianIndex(3, 3, 3)
-    srcInd = CartesianIndex(1, 1, 1)
-    idx = crcIndClc(cntVol, trgInd, srcInd)
-    @test idx == CartesianIndex(3, 3, 3)
-    # Negative separation: wraps with +2*cel+1 per dim
-    trgInd2 = CartesianIndex(1, 1, 1)
-    srcInd2 = CartesianIndex(3, 3, 3)
-    idx2 = crcIndClc(cntVol, trgInd2, srcInd2)
-    sep = trgInd2 - srcInd2  # (-2,-2,-2)
-    expected = CartesianIndex(ntuple(i -> -2 + 2*4 + 1, 3))  # = (7,7,7)
-    @test idx2 == expected
+    @test crcIndClc(cntVol, CartesianIndex(3,3,3), CartesianIndex(1,1,1)) ==
+        CartesianIndex(3, 3, 3)
+    # Negative separation wraps with +2*cel+1 per dim: -2 + 2*4 + 1 == 7
+    @test crcIndClc(cntVol, CartesianIndex(1,1,1), CartesianIndex(3,3,3)) ==
+        CartesianIndex(7, 7, 7)
 end

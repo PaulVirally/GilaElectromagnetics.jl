@@ -1,9 +1,9 @@
 # Physics tests
 # Requires: uniVol imported in volTest.jl (same scope), eigvals from LinearAlgebra
 
-# PSD tolerance: assert min eigenvalue > -rtol * opnorm(Asym).
-# Starting from 1e-9; raise to next power of ten if empirically needed.
-const psdRtol = 1e-9
+# PSD tolerance: assert min eigenvalue > -rtol * opnorm(Asym). The worst measured
+# here is -1.1e-15 normalized; posDefTest.jl carries the tight per-shape bars.
+const psdRtol = 1e-12
 
 function checkPsd(mat, label)
     # mat should already be the matrix to check for PSD (callers extract Asym if needed)
@@ -19,7 +19,7 @@ function checkPsd(mat, label)
     @test wrs >= -psdRtol * nrm
 end
 
-# Analytic free-space dyadic Green function for a point dipole (see anaTest.jl)
+# Analytic free-space dyadic Green function for a point dipole
 function egoAna!(anaOut::AbstractVector{ComplexF64}, slfVol::GlaVol,
                  trgRng::Vector{<:StepRange}, dipPos::Vector{<:Rational},
                  dipVec::Vector{ComplexF64})
@@ -48,11 +48,6 @@ function egoAna!(anaOut::AbstractVector{ComplexF64}, slfVol::GlaVol,
         end
     end
     return nothing
-end
-
-@testset "Asym(G₀) PSD — self GlaOprVac" begin
-    # Use precomputed _selfMem4 — no new GlaVacOprMem construction
-    checkPsd(asymMat(dnsMat(_g0())), "self GlaOprVac (4,4,4)")
 end
 
 @testset "Asym(G₀) PSD — AsyGlaOprVac itself" begin
@@ -102,47 +97,49 @@ end
     @test relErr(dnsMat(_sym()), symMat(D))  < 1e-14
 end
 
+#= The one absolute physical check in the suite: the discretized operator against
+the point-dipole dyadic. The 5 % bar is the discretization error of a pulse basis
+at 32 cells per wavelength, not slack, and cannot be tightened. (6,6,6) is the
+smallest volume that leaves cells outside the exclusion window. =#
 @testset "Analytic dyadic Green function" begin
     lowTol = 1.0e-12
-    # Use (6,6,6) — enough cells for Green function to converge; (4,4,4) gives winInt=2
-    # which would require index 0 (out of bounds for dipLoc=[2,2,2]).
-    for volDim in [(6,6,6)]
-        vol    = mkVol(volDim)
-        oprMem = GlaVacOprMem(CPUKerOpt{Float64}(), vol)
-        dipVec = zeros(ComplexF64, 3)
-        relErrDir = zeros(Float64, 3)
-        anaOut = Array{ComplexF64}(undef, 3 * prod(vol.cel))
-        numOut = Array{ComplexF64}(undef, vol.cel..., 3)
-        difMat = Array{Float64}(undef, vol.cel..., 3)
-        innVec = Array{ComplexF64}(undef, vol.cel..., 3)
+    # half width, in cells, of the window around the dipole where the pulse-basis
+    # field is not the point-dipole field
+    winInt = 2
+    vol    = mkVol((6,6,6))
+    oprMem = GlaVacOprMem(CPUKerOpt{Float64}(), vol)
+    dipVec = zeros(ComplexF64, 3)
+    relErrDir = zeros(Float64, 3)
+    anaOut = Array{ComplexF64}(undef, 3 * prod(vol.cel))
+    numOut = Array{ComplexF64}(undef, vol.cel..., 3)
+    difMat = Array{Float64}(undef, vol.cel..., 3)
+    innVec = Array{ComplexF64}(undef, vol.cel..., 3)
+    dipLoc = div.(vol.cel, 2)
+    dipPos = Rational.([vol.grd[d][dipLoc[d]] for d in 1:3])
 
-        winInt = min(Int(div(1//2 * 4 * minimum(vol.scl), minimum(vol.scl))),
-                     minimum(vol.cel))
+    for dipDir in 1:3
+        dipVec .= 0.0im
+        dipVec[dipDir] = 1.0 + 0.0im
+        fill!(innVec, zero(ComplexF64))
+        innVec[dipLoc..., dipDir] = (1.0 + 0.0im) / prod(vol.scl)
+        copyto!(numOut, egoOpr!(oprMem, innVec))
+        egoAna!(anaOut, vol, deepcopy(vol.grd), dipPos, dipVec)
+        anaRsh = reshape(anaOut, vol.cel..., 3)
 
-        for dipDir in 1:3
-            dipLoc = [div(vol.cel[1], 2), div(vol.cel[2], 2), div(vol.cel[3], 2)]
-            dipVec .= 0.0im
-            dipVec[dipDir] = 1.0 + 0.0im
-            dipPos = Rational.([vol.grd[1][dipLoc[1]], vol.grd[2][dipLoc[2]], vol.grd[3][dipLoc[3]]])
-            trgRng = deepcopy(vol.grd)
-
-            fill!(innVec, zero(ComplexF64))
-            innVec[dipLoc[1], dipLoc[2], dipLoc[3], dipDir] = (1.0 + 0.0im) / prod(vol.scl)
-            copyto!(numOut, egoOpr!(oprMem, innVec))
-            egoAna!(anaOut, vol, trgRng, dipPos, dipVec)
-            anaOut_r = reshape(anaOut, vol.cel..., 3)
-
-            for crtItr in CartesianIndices((vol.cel..., 3))
-                fldDif = abs(anaOut_r[crtItr] - numOut[crtItr])
-                difMat[crtItr] = min(fldDif, fldDif / max(abs(numOut[crtItr]), lowTol))
-            end
-            difMat[(dipLoc[1]-winInt):(dipLoc[1]+winInt),
-                   (dipLoc[2]-winInt):(dipLoc[2]+winInt),
-                   (dipLoc[3]-winInt):(dipLoc[3]+winInt), :] .= 0.0
-            relErrDir[dipDir] = maximum(difMat)
+        #= The clip is load-bearing, not slack: the pure relative worst is 0.0468
+        against the 0.05 bar, so entries where the numerical field nearly vanishes
+        would push it over on their absolute difference alone. =#
+        for crtItr in CartesianIndices((vol.cel..., 3))
+            fldDif = abs(anaRsh[crtItr] - numOut[crtItr])
+            difMat[crtItr] = min(fldDif, fldDif / max(abs(numOut[crtItr]), lowTol))
         end
-        @test all(relErrDir .< 0.05)
+        difMat[(dipLoc[1]-winInt):(dipLoc[1]+winInt),
+               (dipLoc[2]-winInt):(dipLoc[2]+winInt),
+               (dipLoc[3]-winInt):(dipLoc[3]+winInt), :] .= 0.0
+        relErrDir[dipDir] = maximum(difMat)
     end
+    @info "analytic dyadic, worst outside the window = $(maximum(relErrDir))"
+    @test all(relErrDir .< 0.05)
 end
 
 @testset "Scattering composition" begin
