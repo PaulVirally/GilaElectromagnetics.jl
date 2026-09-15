@@ -51,7 +51,7 @@ function prcChkDns(opr32, opr64, label)
 end
 
 @testset "Default precision" begin
-    @test dfltPrc === Float32
+    @test dflPrc === Float32
     @test CPUKerOpt() isa CPUKerOpt{Float32}
     @test GPUKerOpt() isa GPUKerOpt{Float32}
     @test prcDflOpr isa GlaOprVac{Float32}

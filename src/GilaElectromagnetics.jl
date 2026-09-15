@@ -10,7 +10,7 @@ module GilaElectromagnetics
 
 include("glaTyp.jl")
 using .GilaTypes
-export GlaSlv, AbstractGlaOpr, AbstractGlaVacOpr, dfltPrc
+export GlaSlv, AbstractGlaOpr, AbstractGlaVacOpr, dflPrc
 
 include("glaVol.jl")
 using .GilaVolumes

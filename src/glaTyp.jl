@@ -8,15 +8,15 @@ module GilaTypes
 
 using LinearAlgebra
 
-export GlaSlv, AbstractGlaOpr, AbstractGlaVacOpr, dfltPrc
+export GlaSlv, AbstractGlaOpr, AbstractGlaVacOpr, dflPrc
 
 """
-    dfltPrc
+    dflPrc
 
 Storage precision (`Float32`) used by every unparameterized constructor. Request
 another precision with the type parameter (e.g. `GlaOpr{Float64}(...)`).
 """
-const dfltPrc = Float32
+const dflPrc = Float32
 
 """
     GlaSlv

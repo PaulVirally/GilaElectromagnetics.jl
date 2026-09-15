@@ -268,7 +268,7 @@ function GlaCmpOprVac{T}(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol;
     return GlaCmpOprVac{T}(trgCvl, srcCvl, blkMat)
 end
 GlaCmpOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false) =
-    GlaCmpOprVac{dfltPrc}(trgCvl, srcCvl; useGpu=useGpu)
+    GlaCmpOprVac{dflPrc}(trgCvl, srcCvl; useGpu=useGpu)
 
 """
     GlaCmpOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false)
@@ -284,7 +284,7 @@ Construct the self vacuum Green function operator of a composite volume.
 - `GlaCmpOprVac`: The composite operator
 """
 GlaCmpOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false) where T<:AbstractFloat = GlaCmpOprVac{T}(cvol, cvol; useGpu=useGpu)
-GlaCmpOprVac(cvol::GlaCmpVol; useGpu::Bool=false) = GlaCmpOprVac{dfltPrc}(cvol, cvol; useGpu=useGpu)
+GlaCmpOprVac(cvol::GlaCmpVol; useGpu::Bool=false) = GlaCmpOprVac{dflPrc}(cvol, cvol; useGpu=useGpu)
 
 """
     GlaOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false)
@@ -303,7 +303,7 @@ is a `GlaCmpOprVac` and not a `GlaOprVac`. Both are `AbstractGlaVacOpr`.
 - `GlaCmpOprVac`: The composite operator
 """
 GlaOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false) where T<:AbstractFloat = GlaCmpOprVac{T}(cvol; useGpu=useGpu)
-GlaOprVac(cvol::GlaCmpVol; useGpu::Bool=false) = GlaCmpOprVac{dfltPrc}(cvol; useGpu=useGpu)
+GlaOprVac(cvol::GlaCmpVol; useGpu::Bool=false) = GlaCmpOprVac{dflPrc}(cvol; useGpu=useGpu)
 
 """
     GlaOprVac{T}(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false)
@@ -325,7 +325,7 @@ GlaOprVac{T}(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol;
     useGpu::Bool=false) where T<:AbstractFloat =
     GlaCmpOprVac{T}(trgCvl, srcCvl; useGpu=useGpu)
 GlaOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false) =
-    GlaCmpOprVac{dfltPrc}(trgCvl, srcCvl; useGpu=useGpu)
+    GlaCmpOprVac{dflPrc}(trgCvl, srcCvl; useGpu=useGpu)
 
 #= Sign picked up by each stored tensor component when the real space kernel is
 reflected in the directions flagged in dirRfl. Storage order is xx, yy, zz, xy,
@@ -408,7 +408,7 @@ composite volume.
 AsyGlaCmpOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false) where T<:AbstractFloat =
     AsyGlaCmpOprVac{T}(GlaCmpOprVac{T}(cvol; useGpu=useGpu))
 AsyGlaCmpOprVac(cvol::GlaCmpVol; useGpu::Bool=false) =
-    AsyGlaCmpOprVac{dfltPrc}(cvol; useGpu=useGpu)
+    AsyGlaCmpOprVac{dflPrc}(cvol; useGpu=useGpu)
 
 """
     SymGlaCmpOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false)
@@ -427,7 +427,7 @@ composite volume.
 SymGlaCmpOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false) where T<:AbstractFloat =
     SymGlaCmpOprVac{T}(GlaCmpOprVac{T}(cvol; useGpu=useGpu))
 SymGlaCmpOprVac(cvol::GlaCmpVol; useGpu::Bool=false) =
-    SymGlaCmpOprVac{dfltPrc}(cvol; useGpu=useGpu)
+    SymGlaCmpOprVac{dflPrc}(cvol; useGpu=useGpu)
 
 """
     asym(opr::GlaCmpOprVac)
@@ -722,7 +722,7 @@ constructor takes the same forms.
 InvSctOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false) where T<:AbstractFloat =
     InvSctOpr{T}(GlaCmpOprVac{T}(cvol; useGpu=useGpu), sus)
 InvSctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false) =
-    InvSctOpr{dfltPrc}(cvol, sus; useGpu=useGpu)
+    InvSctOpr{dflPrc}(cvol, sus; useGpu=useGpu)
 
 """
     SctOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
@@ -742,7 +742,7 @@ Construct the scattering operator `(I - XG₀)⁻¹` over a composite volume.
 SctOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat =
     SctOpr{T}(InvSctOpr{T}(cvol, sus; useGpu=useGpu), slv)
 SctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver()) =
-    SctOpr{dfltPrc}(cvol, sus; useGpu=useGpu, slv=slv)
+    SctOpr{dflPrc}(cvol, sus; useGpu=useGpu, slv=slv)
 
 """
     SctOpr(opr::GlaCmpOprVac, sus; slv::GlaSlv=BiCGStabSolver())
@@ -778,7 +778,7 @@ Construct the full Green function operator `G₀(I - XG₀)⁻¹` over a composi
 GlaOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat =
     GlaOpr{T}(SctOpr{T}(cvol, sus; useGpu=useGpu, slv=slv))
 GlaOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver()) =
-    GlaOpr{dfltPrc}(cvol, sus; useGpu=useGpu, slv=slv)
+    GlaOpr{dflPrc}(cvol, sus; useGpu=useGpu, slv=slv)
 
 """
     GlaOpr(opr::GlaCmpOprVac, sus; slv::GlaSlv=BiCGStabSolver())

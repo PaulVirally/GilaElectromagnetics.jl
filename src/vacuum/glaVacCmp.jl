@@ -68,10 +68,10 @@ CPUKerOpt{T}() where T<:AbstractFloat = CPUKerOpt{T}(1.0+0.0im, Float64, false, 
     CPUKerOpt(frqPhz, genPrc, adjMod, bckEnd)
     CPUKerOpt()
 
-Construct a CPUKerOpt of the default storage precision `dfltPrc`.
+Construct a CPUKerOpt of the default storage precision `dflPrc`.
 """
-CPUKerOpt(frqPhz::Number, genPrc::Type{<:AbstractFloat}, adjMod::Bool, bckEnd::CPU) = CPUKerOpt{dfltPrc}(frqPhz, genPrc, adjMod, bckEnd)
-CPUKerOpt() = CPUKerOpt{dfltPrc}()
+CPUKerOpt(frqPhz::Number, genPrc::Type{<:AbstractFloat}, adjMod::Bool, bckEnd::CPU) = CPUKerOpt{dflPrc}(frqPhz, genPrc, adjMod, bckEnd)
+CPUKerOpt() = CPUKerOpt{dflPrc}()
 
 """
     CPUKerOpt{T}(opt::CPUKerOpt)
@@ -229,10 +229,10 @@ GPUKerOpt{T}() where T<:AbstractFloat = GPUKerOpt{T}(1.0+0.0im, Float64, (128, 2
     GPUKerOpt(frqPhz, genPrc, numTrd, numBlk, adjMod, bckEnd)
     GPUKerOpt()
 
-Construct a GPUKerOpt of the default storage precision `dfltPrc`.
+Construct a GPUKerOpt of the default storage precision `dflPrc`.
 """
-GPUKerOpt(frqPhz::Number, genPrc::Type{<:AbstractFloat}, numTrd::NTuple{3,Integer}, numBlk::NTuple{3,Integer}, adjMod::Bool, bckEnd::GPU) = GPUKerOpt{dfltPrc}(frqPhz, genPrc, numTrd, numBlk, adjMod, bckEnd)
-GPUKerOpt() = GPUKerOpt{dfltPrc}()
+GPUKerOpt(frqPhz::Number, genPrc::Type{<:AbstractFloat}, numTrd::NTuple{3,Integer}, numBlk::NTuple{3,Integer}, adjMod::Bool, bckEnd::GPU) = GPUKerOpt{dflPrc}(frqPhz, genPrc, numTrd, numBlk, adjMod, bckEnd)
+GPUKerOpt() = GPUKerOpt{dflPrc}()
 
 """
     GPUKerOpt{T}(opt::GPUKerOpt)

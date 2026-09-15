@@ -209,7 +209,7 @@ end
 
 Construct a vacuum Green function operator for external interactions between different volumes.
 
-The storage precision `T` defaults to `dfltPrc`; generation is always done in `Float64` and rounded once.
+The storage precision `T` defaults to `dflPrc`; generation is always done in `Float64` and rounded once.
 
 This constructor creates an external Green function operator that describes electromagnetic interactions between distinct regions in free space. The operator maps sources in the source volume to fields in the target volume, enabling the modeling of coupling effects between different parts of an electromagnetic system. For the computation to work correctly, the source and target volumes must share a common scale grid.
 
@@ -240,7 +240,7 @@ function GlaOprVac{T}(trgVol::GlaVol, srcVol::GlaVol;
     return GlaOprVac{T}(mem, innMsk, outMsk)
 end
 GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false, prxWrn::Bool=true) =
-    GlaOprVac{dfltPrc}(trgVol, srcVol; useGpu=useGpu, prxWrn=prxWrn)
+    GlaOprVac{dflPrc}(trgVol, srcVol; useGpu=useGpu, prxWrn=prxWrn)
 
 """
     GlaOprVac(mem::GlaVacOprMem)
@@ -284,7 +284,7 @@ This constructor creates a self-interaction Green function operator where the so
 
 """
 GlaOprVac{T}(vol::GlaVol; useGpu::Bool=false) where T<:AbstractFloat = GlaOprVac{T}(vol, vol; useGpu=useGpu)
-GlaOprVac(vol::GlaVol; useGpu::Bool=false) = GlaOprVac{dfltPrc}(vol, vol; useGpu=useGpu)
+GlaOprVac(vol::GlaVol; useGpu::Bool=false) = GlaOprVac{dflPrc}(vol, vol; useGpu=useGpu)
 
 """
     GlaOprVac{T}(opr::GlaOprVac)
@@ -355,7 +355,7 @@ function AsyGlaOprVac{T}(vol::GlaVol; useGpu::Bool=false) where T<:AbstractFloat
     map!(fur -> complex.(imag.(fur)), mem.egoFur) # Take the imaginary part of the Fourier coefficients since Asym commutes with the FFT (to machine epsilon)
     return AsyGlaOprVac{T}(mem)
 end
-AsyGlaOprVac(vol::GlaVol; useGpu::Bool=false) = AsyGlaOprVac{dfltPrc}(vol; useGpu=useGpu)
+AsyGlaOprVac(vol::GlaVol; useGpu::Bool=false) = AsyGlaOprVac{dflPrc}(vol; useGpu=useGpu)
 
 """
     AsyGlaOprVac{T}(opr::AsyGlaOprVac)
@@ -407,7 +407,7 @@ function SymGlaOprVac{T}(vol::GlaVol; useGpu::Bool=false) where T<:AbstractFloat
     map!(fur -> complex.(real.(fur)), mem.egoFur) # Take the real part of the Fourier coefficients since Sym commutes with the FFT (to machine epsilon)
     return SymGlaOprVac{T}(mem)
 end
-SymGlaOprVac(vol::GlaVol; useGpu::Bool=false) = SymGlaOprVac{dfltPrc}(vol; useGpu=useGpu)
+SymGlaOprVac(vol::GlaVol; useGpu::Bool=false) = SymGlaOprVac{dflPrc}(vol; useGpu=useGpu)
 
 """
     SymGlaOprVac{T}(opr::SymGlaOprVac)
@@ -459,7 +459,7 @@ function MulRegGlaOprVac{T}(trgVols::VT, srcVols::VT; useGpu::Bool=false) where 
     return MulRegGlaOprVac{T}(ops)
 end
 MulRegGlaOprVac(trgVols::VT, srcVols::VT; useGpu::Bool=false) where VT <: AbstractVector{GlaVol} =
-    MulRegGlaOprVac{dfltPrc}(trgVols, srcVols; useGpu=useGpu)
+    MulRegGlaOprVac{dflPrc}(trgVols, srcVols; useGpu=useGpu)
 
 """
     MulRegGlaOprVac{T}(opr::MulRegGlaOprVac)
@@ -483,7 +483,7 @@ Construct an inverse scattering operator for external interactions between diffe
 - `useGpu::Bool=false`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 
 # Returns
-- `InvSctOpr{T}`: The inverse scattering operator, of storage precision `T` (`dfltPrc` when unrequested)
+- `InvSctOpr{T}`: The inverse scattering operator, of storage precision `T` (`dflPrc` when unrequested)
 
 This constructor creates an external inverse scattering operator that describes how electromagnetic fields interact with a material medium between distinct regions. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the source volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the source volume.
 """
@@ -500,7 +500,7 @@ function InvSctOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Numbe
     return InvSctOpr{T}(oprVac, susTen)
 end
 InvSctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray)) =
-    InvSctOpr{dfltPrc}(trgVol, srcVol, sus; useGpu=useGpu)
+    InvSctOpr{dflPrc}(trgVol, srcVol, sus; useGpu=useGpu)
 
 """
     InvSctOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray))
@@ -514,14 +514,14 @@ Construct an inverse scattering operator for self-interactions on a single volum
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
 
 # Returns
-- `InvSctOpr{T}`: The inverse scattering operator, of storage precision `T` (`dfltPrc` when unrequested)
+- `InvSctOpr{T}`: The inverse scattering operator, of storage precision `T` (`dflPrc` when unrequested)
 
 This constructor creates a self-interaction inverse scattering operator that describes how electromagnetic fields interact with a material medium within a single volume. The susceptibility tensor can be provided either as a flat vector (which will be reshaped to match the volume dimensions) or as a 3-tensor directly. The tensor must match the dimensions of the volume.
 """
 InvSctOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray)) where T<:AbstractFloat =
     InvSctOpr{T}(vol, vol, sus; useGpu=useGpu)
 InvSctOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray)) =
-    InvSctOpr{dfltPrc}(vol, vol, sus; useGpu=useGpu)
+    InvSctOpr{dflPrc}(vol, vol, sus; useGpu=useGpu)
 
 """
     InvSctOpr{T}(opr::InvSctOpr)
@@ -593,7 +593,7 @@ This constructor creates a self-interaction scattering operator that describes h
 SctOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat =
     SctOpr{T}(vol, vol, sus; useGpu=useGpu, slv=slv)
 SctOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) =
-    SctOpr{dfltPrc}(vol, vol, sus; useGpu=useGpu, slv=slv)
+    SctOpr{dflPrc}(vol, vol, sus; useGpu=useGpu, slv=slv)
 
 """
     SctOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
@@ -618,7 +618,7 @@ function SctOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number};
     return SctOpr{T}(invSctOpr, slv)
 end
 SctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) =
-    SctOpr{dfltPrc}(trgVol, srcVol, sus; useGpu=useGpu, slv=slv)
+    SctOpr{dflPrc}(trgVol, srcVol, sus; useGpu=useGpu, slv=slv)
 
 """
     SctOpr(opr::GlaOprVac, sus::AbstractArray{<:Number}; slv::GlaSlv=BiCGStabSolver())
@@ -682,7 +682,7 @@ This constructor creates a self-interaction full Green function operator that co
 GlaOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat =
     GlaOpr{T}(vol, vol, sus; useGpu=useGpu, slv=slv)
 GlaOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) =
-    GlaOpr{dfltPrc}(vol, vol, sus; useGpu=useGpu, slv=slv)
+    GlaOpr{dflPrc}(vol, vol, sus; useGpu=useGpu, slv=slv)
 
 """
     GlaOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
@@ -707,7 +707,7 @@ function GlaOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number};
     return GlaOpr{T}(sctOpr)
 end
 GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver()) =
-    GlaOpr{dfltPrc}(trgVol, srcVol, sus; useGpu=useGpu, slv=slv)
+    GlaOpr{dflPrc}(trgVol, srcVol, sus; useGpu=useGpu, slv=slv)
 
 """
     GlaOpr(opr::GlaOprVac, sus::AbstractArray{<:Number}; slv::GlaSlv=BiCGStabSolver())
