@@ -614,6 +614,9 @@ isexternaloperator(::Union{AsyGlaCmpOprVac, SymGlaCmpOprVac}) = false
 isgpu(opr::GlaSndOprVac) = isgpu(opr.opr)
 isgpu(opr::GlaCmpOprVac) = all(isgpu, opr.blkMat)
 isgpu(opr::Union{AsyGlaCmpOprVac, SymGlaCmpOprVac}) = isgpu(opr.opr)
+isquasistatic(opr::GlaSndOprVac) = isquasistatic(opr.opr)
+isquasistatic(opr::GlaCmpOprVac) = all(isquasistatic, opr.blkMat)
+isquasistatic(opr::Union{AsyGlaCmpOprVac, SymGlaCmpOprVac}) = isquasistatic(opr.opr)
 
 _strKnd(opr::GlaSndOprVac) = "fine mesh G₀"
 _strKnd(opr::GlaCmpOprVac) = "composite G₀"

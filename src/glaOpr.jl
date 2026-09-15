@@ -35,7 +35,7 @@ import ..GilaVolumes: _lwrEdg, _uprEdg, _ovrLap
 
 export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, MulRegGlaOprVac, GlaCmpOprVac, AsyGlaCmpOprVac, SymGlaCmpOprVac, InvSctOpr, SctOpr, GlaOpr
 export VacuumGreenOperator, AsymVacuumGreenOperator, SymVacuumGreenOperator, MultiRegionVacuumGreenOperator, CompositeVacuumGreenOperator, AsymCompositeVacuumGreenOperator, SymCompositeVacuumGreenOperator, InverseScatteringOperator, ScatteringOperator, GreenOperator
-export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, adjoint!, glaSze, slv, asym
+export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, isquasistatic, adjoint!, glaSze, slv, asym
 
 """
     GlaOprVac{T}
@@ -851,6 +851,23 @@ isadjoint(opr::SctOpr) = isadjoint(opr.invSctOpr)
 isadjoint(opr::GlaOpr) = isadjoint(opr.sctOpr)
 
 """
+    isquasistatic(opr::AbstractGlaOpr)
+
+Checks if the operator was built from the quasistatic Green function rather than the full one.
+
+# Arguments
+- `opr::AbstractGlaOpr`: The operator to check.
+
+# Returns
+- `true` if the operator is quasistatic, `false` otherwise.
+"""
+isquasistatic(opr::Union{GlaOprVac, AsyGlaOprVac, SymGlaOprVac}) = opr.mem.cmpInf.qssApx
+isquasistatic(opr::MulRegGlaOprVac) = all(isquasistatic.(opr.oprMat))
+isquasistatic(opr::InvSctOpr) = isquasistatic(opr.oprVac)
+isquasistatic(opr::SctOpr) = isquasistatic(opr.invSctOpr)
+isquasistatic(opr::GlaOpr) = isquasistatic(opr.sctOpr)
+
+"""
     isselfoperator(opr::AbstractGlaOpr)
 
 Checks if the operator is a self Green operator.
@@ -1046,6 +1063,7 @@ function _shwOpr(io::IO, opr::AbstractGlaOpr)
     else
         print(io, "CPU ")
     end
+    isquasistatic(opr) && print(io, "quasistatic ")
     print(io, _strKnd(opr))
     print(io, " for ")
     if isselfoperator(opr)
