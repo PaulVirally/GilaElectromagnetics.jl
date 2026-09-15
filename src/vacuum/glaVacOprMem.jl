@@ -91,7 +91,7 @@ Prepare memory for Green function operator. Automatically computes the Fourier t
 """
 #= Closer than a third of a wavelength a separated pair's discretisation error
 is several times its wide separation value. The bound is a distance, not a cell
-count, and loss makes it worse; measured in notes/prx/RESULTS.md. =#
+count, and loss makes it worse. =#
 const prxSepMin = 1 / 3
 
 # Face to face distance between two volumes, or nothing when they meet
@@ -464,6 +464,7 @@ function Serialization.serialize(s::AbstractSerializer, mem::GlaVacOprMem)
     cmpInf = useCpu(mem.cmpInf)
     serialize(s, cmpInf.frqPhz)
     serialize(s, cmpInf.genPrc)
+    serialize(s, cmpInf.qssApx)
     serialize(s, cmpInf.adjMod)
     serialize(s, mem.trgVol)
     serialize(s, mem.srcVol)
@@ -474,13 +475,14 @@ function Serialization.deserialize(s::AbstractSerializer, ::Type{<:GlaVacOprMem}
     egoFur = deserialize(s)
     frqPhz = deserialize(s)
     genPrc = deserialize(s)
+    qssApx = deserialize(s)
     adjMod = deserialize(s)
     trgVol = deserialize(s)
     srcVol = deserialize(s)
     mixInf = deserialize(s)
     # storage precision is recovered from the written Fourier data
     prc = real(eltype(first(egoFur)))
-    return glaOprPrp(egoFur, trgVol, srcVol, mixInf, CPUKerOpt{prc}(frqPhz, genPrc, adjMod, CPU()))
+    return glaOprPrp(egoFur, trgVol, srcVol, mixInf, CPUKerOpt{prc}(frqPhz, genPrc, qssApx, adjMod, CPU()))
 end
 
 function Serialization.serialize(io::IO, mem::GlaVacOprMem)

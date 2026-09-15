@@ -7,7 +7,7 @@ This module provides memory structures and operations for the vacuum Green funct
 
 # Holds computational information (CPU vs GPU, number of threads, etc.) for the Green function
 include("glaVacCmp.jl")
-export GlaKerOpt, CPUKerOpt, GPUKerOpt, dflPrc, frqPhz, genPrc, adjMod, bckEnd, arrTyp
+export GlaKerOpt, CPUKerOpt, GPUKerOpt, dflPrc, frqPhz, genPrc, qssApx, adjMod, bckEnd, arrTyp
 
 # Defines GlaVacOprMem, the struct holding the info to compute the Green function
 include("glaVacOprMem.jl")

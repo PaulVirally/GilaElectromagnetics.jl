@@ -77,7 +77,7 @@ end
     # generation at Float32 returns NaN, and the options are mutable, so the guard has
     # to sit on the assignment as well as on the constructor
     prcOptGen = CPUKerOpt{Float64}()
-    @test_throws ArgumentError CPUKerOpt{Float64}(1.0+0.0im, Float32, false, prcOptGen.bckEnd)
+    @test_throws ArgumentError CPUKerOpt{Float64}(1.0+0.0im, Float32, false, false, prcOptGen.bckEnd)
     @test_throws ArgumentError (prcOptGen.genPrc = Float32)
     @test_throws ArgumentError (useGpu(prcOptGen).genPrc = Float32)
     prcOptGen.genPrc = Float64

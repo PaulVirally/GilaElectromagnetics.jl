@@ -42,19 +42,32 @@ end
 
 Calculate circulant vector of the Green function on a single domain: the contact block from the
 closed-form moments, every pair two or more cells apart from the far-field expansion, then the
-identity term and the circulant embedding.
+identity term and the circulant embedding. Under qssApx the same two blocks are taken at zero
+frequency, giving S = f^2 G, and the single 1/f^2 at the end keeps that identity exact.
 =#
 function genEgoSlf!(egoCrc::AbstractArray{<:Complex,5}, slfVol::GlaVol, cmpInf::GlaKerOpt;
     shpCch::Bool = false)
 
     prc = real(eltype(egoCrc))
     egoToe = Array{eltype(egoCrc)}(undef, 3, 3, slfVol.cel...)
-    cntBlk!(egoToe, slfVol, cmpInf)
-    farBlk!(egoToe, slfVol.scl, Complex{prc}(frqPhz(cmpInf)); tol = farTol(prc),
-        disk = shpCch, stp = ntuple(dir ->
-            Int(step(slfVol.grd[dir]) // slfVol.scl[dir]), 3))
-    for dir ∈ 1:3
-        egoToe[dir,dir,1,1,1] -= 1 / (frqPhz(cmpInf)^2)
+    stp = ntuple(dir -> Int(step(slfVol.grd[dir]) // slfVol.scl[dir]), 3)
+    if qssApx(cmpInf)
+        momBlkQss!(egoToe, slfVol, [(Tuple(itr) .- 1) .* stp # the contact offsets
+            for itr ∈ vec(CartesianIndices(min.(slfVol.cel, 2)))])
+        ner = farBlkQss!(egoToe, slfVol.scl; tol = farTol(prc), disk = shpCch, stp = stp)
+        momBlkQss!(egoToe, slfVol, ner) # the offsets the multipole refuses, left NaN
+        all(isfinite, egoToe) || error("genEgoSlf!: quasistatic near band left unfilled.")
+        for dir ∈ 1:3
+            egoToe[dir,dir,1,1,1] -= 1
+        end
+        egoToe ./= frqPhz(cmpInf)^2
+    else
+        cntBlk!(egoToe, slfVol, cmpInf)
+        farBlk!(egoToe, slfVol.scl, Complex{prc}(frqPhz(cmpInf)); tol = farTol(prc),
+            disk = shpCch, stp = stp)
+        for dir ∈ 1:3
+            egoToe[dir,dir,1,1,1] -= 1 / (frqPhz(cmpInf)^2)
+        end
     end
     @threads for crtItr ∈ CartesianIndices(axes(egoCrc)[3:5])
         @inbounds egoToeCrc!(view(egoCrc, :, :, crtItr), egoToe, crtItr,
@@ -93,6 +106,9 @@ on the exact rational offsets of the pair's own trapezoid otherwise.
 function genEgoExt!(egoCrcExt::AbstractArray{<:Complex,5}, trgVol::GlaVol, srcVol::GlaVol,
     cmpInf::GlaKerOpt; shpCch::Bool = false)
 
+    # the far blocks below stay Helmholtz, so a quasistatic contact block would silently mix
+    qssApx(cmpInf) && throw(ArgumentError("The quasistatic Green function is self volume only: " *
+        "$(trgVol.cel) cells at $(trgVol.org) and $(srcVol.cel) cells at $(srcVol.org) are an external pair."))
     sepGrdTrg = sepGrd(trgVol, srcVol, 0)
     sepGrdSrc = sepGrd(trgVol, srcVol, 1)
     # upper and lower edges of the source and target volumes

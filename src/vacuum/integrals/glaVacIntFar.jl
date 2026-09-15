@@ -555,21 +555,27 @@ function frqBox(gb::GeoBox{BigFloat}, frq::Complex{T}, nCut::Vector{Int}) where 
     FrqBox{E}(gb.L, gb.dLm, gb.dLv, Qd, gb.oLm, gb.oLv, Qo, cmx)
 end
 
-# |h_l^{(1)}(z)| <= (e^{-Im z}/|z|) sum_{s=0}^{l} (l+s)!/(s!(l-s)!(2|z|)^s)
-function hnkBnd(l::Int, z::C) where {C}
-    T = real(C); az = abs(z); s = one(T); tm = one(T)
+# log |h_l^{(1)}(z)| <= log((e^{-Im z}/|z|) sum_{s=0}^{l} (l+s)!/(s!(l-s)!(2|z|)^s)).  The bound
+# itself overflows at small |z| (l = 54, |z| = 7.9e-5 gives 1e309) exactly where its partner
+# bslTalLog underflows, so both have to stay in logarithms throughout.
+function hnkBndLog(l::Int, z::C) where {C}
+    T = real(C); az = abs(z); s = one(T); lt = zero(T); mx = zero(T)
     for q in 1:l
-        tm *= T(l + q) * T(l - q + 1) / (T(q) * 2 * az)
-        s += tm
+        lt += log(T(l + q) * T(l - q + 1) / (T(q) * 2 * az))
+        lt > mx && (s *= exp(mx - lt); mx = lt)      # log-sum-exp on the running maximum
+        s += exp(lt - mx)
     end
-    exp(-imag(z)) / az * s
+    mx + log(s) - imag(z) - log(az)
 end
-# tail of j_l after n = N: |sum_{n>N} c_ln z^{l+2n}| <=
-#   |z|^{l+2N+2} e^{|z|^2/(4l+4N+10)} / (2^{N+1} (N+1)! (2l+2N+3)!!)
-function bslTal(l::Int, N::Int, z::T) where {T}
-    df = one(T); for j in 0:(l + N + 1); df *= T(2j + 1); end
-    fc = one(T); for j in 1:(N + 1); fc *= 2 * T(j); end
-    z^(l + 2N + 2) * exp(z^2 / T(4l + 4N + 10)) / (fc * df)
+# tail of j_l after n = N at z = |k| r_d, divided by r_d^{l+2N+2} and taken as a logarithm:
+#   |sum_{n>N} c_ln z^{l+2n}| / r_d^{l+2N+2} <=
+#     |k|^{l+2N+2} e^{z^2/(4l+4N+10)} / (2^{N+1} (N+1)! (2l+2N+3)!!)
+# The r_d powers cancel analytically, so the vanishing power is never formed either.
+function bslTalLog(l::Int, N::Int, ak::T, rd::T) where {T}
+    s = (l + 2N + 2) * log(ak) + (ak * rd)^2 / T(4l + 4N + 10)
+    for j in 0:(l + N + 1); s -= log(T(2j + 1)); end
+    for j in 1:(N + 1); s -= log(2 * T(j)); end
+    s
 end
 
 # W_l = int_box wgt(d) |d|^l dd for even l: a positive sum of box moments, no cancellation
@@ -805,23 +811,26 @@ function whlThr(ls::Vector{Int}, t::NTuple{6,Vector{T}}, k::C, scf, tol::T,
 end
 
 # Truncating j_l's own series after n = N is Theorem A again, with |k|^l e^{..}/(2l+1)!! replaced
-# by bslTal(l, N, |k| r_d)/r_d^{l+2N+2} and V^{ab}_l by V^{ab}_{l+2N+2}.  The budget is
+# by exp(bslTalLog(l, N, |k|, r_d)) and V^{ab}_l by V^{ab}_{l+2N+2}.  The budget is
 # tol est/(NBUD (lTop+1)): tol is spent on the l-truncation, and nCut only certifies that the
 # stored orders are enough.  The bound is evaluated at both ends of the radius range the expansion
 # is actually used over, since its ratio to est falls with |R| for l >= 2 and rises for l = 0.
 const NBUD = 256                    # so the whole n-truncation costs at most tol/256 of est
-# per-l n-truncation cut: nCut[l+1] is the smallest N <= nCap meeting the budget, -1 if none does
+# per-l n-truncation cut: nCut[l+1] is the smallest N <= nCap meeting the budget, or nCap + 1 when
+# none does.  Every entry is an order to carry rather than a status code, so two cuts merge under
+# max. and frqBox's min(nCut[l+1], nMax) degrades to "contract every stored order" rather than to
+# an empty sum.
 cutVec(lTop::Int, mom, s::NTuple{3,T}, k::C, frq::C, kR::C, tol::T, nCap::Int) where {T,C} =
     cutVec(lTop, mom, prod(s), prod(s), sqrt(sum(s[i]^2 for i in 1:3)), k, frq, kR, tol, nCap)
 # vt = V_t (the 1/V_t prefactor), vs = (1/V_t) int_D w (the scale of est), rd = analyticity radius
 function cutVec(lTop::Int, mom, vt::T, vs::T, rd::T, k::C, frq::C, kR::C, tol::T,
                 nCap::Int) where {T,C}
     fc, wr = mom
-    ak = abs(k); pf = ak / (4 * T(pi) * abs2(frq) * vt)
-    bud = tol * est(abs(kR) / ak, k, frq, vs) / (T(NBUD) * T(lTop + 1))
-    v = fill(-1, lTop + 1)
+    ak = abs(k); lpf = log(ak / (4 * T(pi) * abs2(frq) * vt))
+    lbud = log(tol * est(abs(kR) / ak, k, frq, vs) / (T(NBUD) * T(lTop + 1)))
+    v = fill(nCap + 1, lTop + 1)
     for l in 0:lTop
-        hl = hnkBnd(l, kR)
+        lhl = hnkBndLog(l, kR)
         for N in 0:nCap
             q = l + 2N + 2; iq = div(q, 2) + 1
             iq <= length(wr) || break
@@ -830,14 +839,12 @@ function cutVec(lTop::Int, mom, vt::T, vs::T, rd::T, k::C, frq::C, kR::C, tol::T
                 a, b = ENTIJ[r]
                 vm = max(vm, fc[r][iq] + (a == b ? ak^2 * wr[iq] : zero(T)))
             end
-            b = pf * T(2l + 1) * hl * bslTal(l, N, ak * rd) / rd^q * vm
-            if b <= bud; v[l + 1] = N; break; end
+            lb = lpf + log(T(2l + 1)) + lhl + bslTalLog(l, N, ak, rd) + log(vm)
+            if lb <= lbud; v[l + 1] = N; break; end
         end
     end
     v
 end
-# elementwise max of two n-cut vectors, in which -1 (uncertified within the cap) is absorbing
-cutMax(a::Vector{Int}, b::Vector{Int}) = [(x < 0 || y < 0) ? -1 : max(x, y) for (x, y) in zip(a, b)]
 
 # lattice offsets whose whole-box bound asks for more than lDef shells; the table is sized on them.
 # off is |sub-cell shift| per axis, and a shifted offset is smallest -- so worst -- at n s - off
@@ -895,20 +902,25 @@ function farSet(sQ::NTuple{3,QI}, frq::Complex{T}; tol::Float64 = TOL,
         end
     end
     rNc == rHi && isfinite(thr[end]) && (rNc = min(rNc, thr[end]))   # no offset certified anything
-    # bslTal grows as (|k| r_d)^{2N+2}, so the order the table must carry rises with the cell size
+    # the n-tail grows as (|k| r_d)^{2N+2}, so the order the table must carry rises with cell size
     # in wavelengths.  nMax is only a floor, so a table already on disk at NMAX is reused; the cut
     # is recomputed against nCap, and the moment table widened, only when the floor falls short.
-    # cutMax, not max.(): -1 means "no N <= nc meets the budget" and must survive the two radii.
-    cut(mm, nc) = cutMax(cutVec(L, mm, s6, k6, f6, k6 * rNc, tol, nc),
-                         cutVec(L, mm, s6, k6, f6, k6 * rHi, tol, nc))
+    # Only the shells this set can ask for need certifying: no admissible radius selects more than
+    # lCut, since thr is non-increasing and rngChk holds |R| >= rNc, the radius that fixed Lw.
+    lCut = max(Lw, Lo)
+    cut(mm, nc) = max.(cutVec(L, mm, s6, k6, f6, k6 * rNc, tol, nc),
+                       cutVec(L, mm, s6, k6, f6, k6 * rHi, tol, nc))[1:(lCut + 1)]
     nCut = cut(momW, nMax)
-    if any(<(0), nCut)
-        momW = farMomW(max(L + LEXT, L + 2 * nCap + 2), s6)
+    if maximum(nCut) > nMax
+        momW = farMomW(max(L + LEXT, lCut + 2 * nCap + 2), s6)
         nCut = cut(momW, nCap)
-        any(<(0), nCut) &&
+        # the n-tail stops decreasing only once (|k| r_d)^2 > 2 nCap (2 lCut + 2 nCap)
+        maximum(nCut) > nCap &&
             error("farSet: the k-series of j_l is not certified within N = $nCap at |k| r_d = ",
-                  abs(k6) * rd6, " (cell ", s6, ", f = ", f6, "); the cell is too large in ",
-                  "wavelengths for this expansion")
+                  abs(k6) * rd6, " (cell ", s6, ", f = ", f6, "); ",
+                  abs(k6) * rd6 > sqrt(2 * nCap * (2 * lCut + 2 * nCap)) ?
+                  "the cell is too large in wavelengths for this expansion" :
+                  "this is not a cell-size limit -- raise nCap")
     end
     nNd = maximum(nCut)
     tb = farShp(sQ; Lw = Lw, Lo = Lo, nMax = max(nMax, nNd), disk = disk, dir = dir)
@@ -1200,9 +1212,9 @@ function shmFil!(ws::FarWrk{T}, u::T, v::T, w::T, L::Int) where {T}
     return Y
 end
 
-@inline function accOne(h::Vector{Complex{T}}, Y::Vector{T}, lm::Vector{Int}, lv::Vector{Int},
-                        Q::Vector{E}, Lc::Int) where {T,E}
-    s = zero(Complex{T})
+@inline function accOne(h::Vector{H}, Y::Vector{T}, lm::Vector{Int}, lv::Vector{Int},
+                        Q::Vector{E}, Lc::Int) where {H,T,E}
+    s = zero(promote_type(H, E))
     @inbounds for j in eachindex(lm)
         lv[j] > Lc && break
         s += h[lv[j] + 1] * (Y[lm[j]] * Q[j])
@@ -1561,13 +1573,13 @@ function farSetX(sTQ::NTuple{3,QI}, sSQ::NTuple{3,QI}, frq::Complex{T}; tol::Flo
         Lc >= 0 && (Lw = max(Lw, Lc); rNc = min(rNc, rr))
     end
     rNc == rHi && isfinite(thr[end]) && (rNc = min(rNc, thr[end]))   # no route-1 offset given
-    cut(mm, nc) = cutMax(cutVec(L, mm, vt6, vs6, rd6, k6, f6, k6 * rNc, tol, nc),
-                         cutVec(L, mm, vt6, vs6, rd6, k6, f6, k6 * rHi, tol, nc))
+    cut(mm, nc) = max.(cutVec(L, mm, vt6, vs6, rd6, k6, f6, k6 * rNc, tol, nc),
+                       cutVec(L, mm, vt6, vs6, rd6, k6, f6, k6 * rHi, tol, nc))
     nCut = cut(momW, nMax)
-    if any(<(0), nCut)
+    if maximum(nCut) > nMax
         momW = farMomW(max(L + LEXT, L + 2 * nCap + 2), a6, b6)
         nCut = cut(momW, nCap)
-        any(<(0), nCut) &&
+        maximum(nCut) > nCap &&
             error("farSetX: the k-series of j_l is not certified within N = $nCap at |k| r_d = ",
                   abs(k6) * rd6, " (pair ", sT, " / ", sS, ", f = ", f6, ")")
     end
@@ -1975,4 +1987,188 @@ function farBlkX!(G::AbstractArray{Complex{T},3}, Rs::AbstractVector{NTuple{3,QI
     cert || return rt
     for q in 1:n; cs[q] += 20 * eps(T) * Float64(maximum(abs, view(G, :, :, q))); end
     (rt, cs)
+end
+
+# The quasistatic tensor S_ab(R) = lim_{f -> 0} f^2 T_ab(R) is the n = 0 slice of the same tables:
+# the three powers of k in i k h_l(k|R|) c_l0(k) cancel as k -> 0 and leave
+#   S_ab(R) = sum_{l, m} (-1)^l Y_lm(Rhat) A^{ab}[.,0,lm] / ((2l+1) |R|^{l+1}) ,
+# so no frequency enters, there is no k-series to cut and no Hankel bound to evaluate.  Theorems
+# S and S' replace Theorems A and B,
+#   |S_ab - S_ab^(L)|       <= (1/(4 pi V_t)) sum_{l > L, even} V^{ab}_l /|R|^{l+1}   (whole box)
+#   |S^(j)_ab - S^(j),L_ab| <= (1/(4 pi V_t)) sum_{l > L}       Xi^{ab}_l/|V_j|^{l+1} (sub-box),
+# V^{ab}_l being farMomW's moments without their |k|^2 W_l companion and Xi^{ab}_l farMomO's with
+# every Bessel factor set to 1 and sum_m |grad(|d|^l Y_lm)|^2 = l(2l+1)^2|d|^{2l-2}/(4 pi).  Both
+# criteria are functions of the single scalar rho = r_d/|R| (sub-boxes: r_j/min_q|V_q|), which is
+# why the static band is exactly direction independent and the selector an O(1) table scan.
+
+# Theorem S terms, scaled to be dimensionless: ls[i] = 2(i-1), t[r][i] = V^{ab}_l/(4 pi V_t r_d^l),
+# so the tail after L is sum_{l > L} t[r][i] rho^l / |R|
+function qssTrmW(lTop::Int, s::NTuple{3,T}) where {T}
+    fc, _ = farMomW(lTop, s)
+    vt = prod(s); rd = sqrt(sum(s[i]^2 for i in 1:3)); ls = collect(0:2:lTop)
+    (ls, ntuple(r -> [fc[r][i] / (4 * T(pi) * vt * rd^ls[i]) for i in eachindex(ls)], 6))
+end
+
+# Theorem S' terms for one octant sub-box, scaled the same way with r_j = r_d/2; all l contribute
+function qssTrmO(lTop::Int, s::NTuple{3,T}) where {T}
+    hf = ntuple(d -> s[d] / 2, 3)
+    vt = prod(s); rj = sqrt(sum(hf[i]^2 for i in 1:3)); ls = collect(0:lTop)
+    off, gA, bA, _ = farMomO(lTop, hf)
+    t = ntuple(6) do r
+        a, b = ENTIJ[r]
+        [(a != b ? radQ(off[6 - a - b], l) :
+          sqrt(T(l) * T(2l + 1)) * radQ(gA[a], l - 1) + radQ(bA[a], l)) /
+         (4 * T(pi) * vt * rj^l) for l in ls]
+    end
+    (ls, t)
+end
+
+# cumulative tail after each l, max over the six entries.  Past ls[end] the tail continues at the
+# ratio q, bounded above by rho^2 from V_{l+2} <= r_d^2 V_l on the whole box and by
+# rho sup_l (N_{l+1}/N_l scaled) on a sub-box.  q >= 1 is a tail that does not converge, and
+# rho >= 1 always lands there.
+function qssCum(ls::Vector{Int}, t::NTuple{6,Vector{T}}, rho::T, q::T) where {T}
+    n = length(ls); q >= 1 && return fill(T(Inf), n)
+    cum = zeros(T, n); acc = zeros(T, 6); ext = zero(T)
+    for r in 1:6; ext = max(ext, t[r][n] * rho^ls[n] * q / (1 - q)); end
+    for i in n:-1:1
+        cum[i] = maximum(acc) + ext
+        for r in 1:6; acc[r] += t[r][i] * rho^ls[i]; end
+    end
+    cum
+end
+
+# largest rho each order ls[i] <= L still covers, by bisection: the tail against tol * estS(R),
+#   whole box  cum <= 3 tol V_t rho^2/(4 pi r_d^2)
+#   sub-box    cum <= 3 tol V_t rho^2/(32 pi r_j^2 (1 + rho)^3)  (an eighth of the budget each,
+#                                                                 and |R| <= |V_q|(1 + rho))
+function qssThr(ls::Vector{Int}, t::NTuple{6,Vector{T}}, s::NTuple{3,T}, tol::T, L::Int,
+                oct::Bool) where {T}
+    lT = ls[end]
+    rr = sqrt(sum(s[i]^2 for i in 1:3)) / (oct ? 2 : 1)
+    cq = sqrt(T((lT + 1) * (2lT + 3)) / T(lT * (2lT + 1)))    # sup_{l >= lT} of the sub-box ratio
+    pf = 3 * tol * prod(s) / (4 * T(pi) * rr^2)
+    ok(rho, i) = qssCum(ls, t, rho, oct ? cq * rho : rho^2)[i] <=
+                 pf * rho^2 / (oct ? 8 * (1 + rho)^3 : one(T))
+    thr = zeros(T, count(<=(L), ls))
+    for i in eachindex(thr)
+        a = zero(T); b = one(T)
+        for _ in 1:200
+            c = (a + b) / 2
+            ok(c, i) ? (a = c) : (b = c)
+            b - a <= 8 * eps(T) && break
+        end
+        thr[i] = a
+    end
+    for i in 2:length(thr); thr[i] = max(thr[i], thr[i - 1]); end
+    thr
+end
+
+# smallest tabulated order covering rho, where thr[i] belongs to l = stp (i - 1); -1 if none does
+function qssLvl(thr::Vector{T}, rho::Real, stp::Int) where {T}
+    @inbounds for i in eachindex(thr)
+        rho <= thr[i] && return stp * (i - 1)
+    end
+    return -1
+end
+
+# the n = 0 column of a geometry table, signed by (-1)^l.  Bd is the delta_ab k^2 companion and has
+# no static part; nothing is contracted here, so the cancellation estimate stays at 1.
+function qssBox(gb::GeoBox{BigFloat}, ::Type{T}) where {T}
+    sg(l) = iseven(l) ? one(T) : -one(T)
+    FrqBox{T}(gb.L, gb.dLm, gb.dLv,
+              T[sg(gb.dLv[j]) * T(gb.Ad[a, 1, j]) for a in 1:3, j in eachindex(gb.dLm)],
+              gb.oLm, gb.oLv,
+              ntuple(c -> T[sg(gb.oLv[c][j]) * T(gb.Ao[c][1, j]) for j in eachindex(gb.oLm[c])], 3),
+              1.0)
+end
+
+# the six sums sum_{lm} Y_lm(vhat) Q^{ab}_{lm}/((2l+1)|v|^{l+1}), for entries 11, 22, 33, 12, 13, 23
+function qssAcc(fb::FrqBox{T}, ws::FarWrk{T}, v::NTuple{3,T}, L::Int) where {T}
+    rr = sqrt(sum(v[i]^2 for i in 1:3))
+    shmFil!(ws, v[1] / rr, v[2] / rr, v[3] / rr, L)
+    rd = ws.jr; p = one(T)              # the radial factor, in place of hnkFil!'s h_l(k|v|)
+    @inbounds for l in 0:L
+        p /= rr; rd[l + 1] = p / T(2l + 1)
+    end
+    Y = ws.Y; lm = fb.dLm; lv = fb.dLv; Qd = fb.Qd
+    a1 = zero(T); a2 = zero(T); a3 = zero(T)
+    @inbounds for j in eachindex(lm)
+        lv[j] > L && break
+        ry = rd[lv[j] + 1] * Y[lm[j]]
+        a1 += ry * Qd[1, j]; a2 += ry * Qd[2, j]; a3 += ry * Qd[3, j]
+    end
+    (a1, a2, a3,
+     accOne(rd, Y, fb.oLm[1], fb.oLv[1], fb.Qo[1], L),
+     accOne(rd, Y, fb.oLm[2], fb.oLv[2], fb.Qo[2], L),
+     accOne(rd, Y, fb.oLm[3], fb.oLv[3], fb.Qo[3], L))
+end
+
+# Fill dst(q), a 3x3 view, with the quasistatic tensor at the offset Ds[q] cells of shape sQ.
+# Threaded; the routes are chosen first, because the geometry tables are sized on the orders those
+# routes ask for.  Offsets that neither route can certify -- the near band, non-empty for a flat
+# enough cell and empty for a cubic one -- are returned rather than filled, since which filler owns
+# them is the caller's decision.  Their dst is left NaN, so dropping the return value cannot pass
+# for a zero tensor.  This is the one place that decides what the near band is.
+function farFilQss!(dst::F, Ds::Vector{NTuple{3,Int}}, sQ::NTuple{3,QI}, ::Type{T} = Float64;
+                    tol::Float64 = TOL, L::Int = LMAX, disk::Bool = true,
+                    dir::AbstractString = TABDIR[]) where {F,T}
+    isempty(Ds) && return NTuple{3,Int}[]
+    s6 = ntuple(d -> Float64(sQ[d]), 3); hf6 = ntuple(d -> s6[d] / 2, 3)
+    rd6 = sqrt(sum(s6[i]^2 for i in 1:3))
+    wThr = qssThr(qssTrmW(L + LEXT, s6)..., s6, tol, L, false)
+    oThr = qssThr(qssTrmO(L + LEXT, s6)..., s6, tol, L, true)
+    kn = Vector{Int}(undef, length(Ds)); lv = Vector{Int}(undef, length(Ds))
+    Threads.@threads :static for q in eachindex(Ds)
+        R = ntuple(d -> Float64(Ds[q][d]) * s6[d], 3)
+        kn[q] = 1; lv[q] = qssLvl(wThr, rd6 / sqrt(sum(R[i]^2 for i in 1:3)), 2)
+        if lv[q] < 0
+            mn = minimum(sqrt(sum((sg[d] * R[d] + hf6[d])^2 for d in 1:3)) for sg in SGN8)
+            kn[q] = 2; lv[q] = qssLvl(oThr, rd6 / (2 * mn), 1)
+        end
+    end
+    ner = [Ds[q] for q in eachindex(Ds) if lv[q] < 0]
+    Lw = 0; Lo = -1
+    for q in eachindex(Ds); kn[q] == 1 ? (Lw = max(Lw, lv[q])) : (Lo = max(Lo, lv[q])); end
+    tb = farShp(sQ; Lw = Lw, Lo = Lo, nMax = NMAX, disk = disk, dir = dir)
+    fw = qssBox(tb.whl, T); fo = qssBox(tb.oct, T)
+    hf = ntuple(d -> T(sQ[d]) / 2, 3); zr = ntuple(_ -> zero(T), 3)
+    wss = [FarWrk(max(Lw, Lo), T) for _ in 1:Threads.maxthreadid()]
+    Threads.@threads :static for q in eachindex(Ds)
+        ws = wss[Threads.threadid()]; G = dst(q)
+        fill!(G, lv[q] < 0 ? NaN : 0.0)
+        lv[q] < 0 && continue
+        R = ntuple(d -> T(Ds[q][d]) * T(sQ[d]), 3)
+        # route 1 is the same sum over a single sub-box: the whole box, expanded about R itself
+        fb = kn[q] == 1 ? fw : fo; ct = kn[q] == 1 ? zr : hf
+        for u in 1:(kn[q] == 1 ? 1 : 8)
+            sg = SGN8[u]
+            a = qssAcc(fb, ws, ntuple(d -> T(sg[d]) * R[d] + ct[d], 3), lv[q])
+            for r in 1:6
+                i, j = ENTIJ[r]
+                G[i, j] += T(r <= 3 ? 1 : sg[i] * sg[j]) * a[r]
+            end
+        end
+        for r in 4:6; i, j = ENTIJ[r]; G[j, i] = G[i, j]; end
+    end
+    ner
+end
+
+# fill egoToe[:, :, i1, i2, i3] with S at the offset (i .- 1) .* stp cells, for every index with
+# max(i) >= 3; the static counterpart of farBlk!, and like it frequency is applied by the caller.
+# Returns the near band, in the same cell offsets as Ds: those entries hold NaN and are the
+# caller's to fill from the closed-form face-pair moments.
+function farBlkQss!(egoToe::AbstractArray{Complex{T},5}, s::NTuple{3,<:Rational};
+                    tol::Float64 = TOL, disk::Bool = true, stp::NTuple{3,Int} = (1, 1, 1),
+                    dir::AbstractString = TABDIR[]) where {T}
+    n1, n2, n3 = size(egoToe, 3), size(egoToe, 4), size(egoToe, 5)
+    Ds = NTuple{3,Int}[]
+    for i3 in 1:n3, i2 in 1:n2, i1 in 1:n1
+        farInd(i1, i2, i3) &&
+            push!(Ds, ((i1 - 1) * stp[1], (i2 - 1) * stp[2], (i3 - 1) * stp[3]))
+    end
+    farFilQss!(Ds, ntuple(d -> QI(s[d]), 3), T; tol = tol, disk = disk, dir = dir) do q
+        D = Ds[q]
+        view(egoToe, :, :, div(D[1], stp[1]) + 1, div(D[2], stp[2]) + 1, div(D[3], stp[3]) + 1)
+    end
 end
