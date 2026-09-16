@@ -88,7 +88,7 @@ struct SymGlaOprVac{T<:AbstractFloat} <: AbstractGlaVacOpr{T}
 end
 
 """
-    SusOpr{T, A}
+    SusOpr{T, A} ඞ
 
 Represents the susceptibility operator X, the map taking a field to the
 polarization current it drives. `T` is the real storage precision, so the
