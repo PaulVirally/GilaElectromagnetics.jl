@@ -190,9 +190,6 @@ end
     # Misaligned grids: neighbour shifted by half a cell
     volOff = GlaVol((4, 4, 4), stdScl, (9//64, 0//1, 0//1))
     @test_throws ArgumentError GlaCmpVol([volA, volOff])
-    # Aligned and disjoint, but with a gap, so the regions do not tile
-    volGap = GlaVol((4, 4, 4), stdScl, (1//4, 0//1, 0//1))
-    @test_throws ArgumentError GlaCmpVol([volA, volGap])
     # Region whose grid pitch is coarser than its cells
     volPit = GlaVol((4, 4, 4), stdScl, stdOrg, scl16)
     @test_throws ArgumentError GlaCmpVol(volPit)
@@ -201,6 +198,24 @@ end
     volCrs = GlaVol((2, 2, 2), scl16, stdOrg)
     volFin = GlaVol((2, 2, 2), stdScl, (1//16 + 1//32, 0//1, 0//1))
     @test_throws ArgumentError GlaCmpVol([volCrs, volFin])
+end
+
+@testset "GlaCmpVol gapped tiling" begin
+    # Aligned and disjoint with four cells of gap in x between them
+    volA = GlaVol((4, 4, 4), stdScl, stdOrg)
+    volB = GlaVol((4, 4, 4), stdScl, (1//4, 0//1, 0//1))
+    cvol = GlaCmpVol([volA, volB])
+    @test nregions(cvol) == 2
+    @test finest(cvol) == stdScl
+    @test cmpTilVol(cvol) == 2 * prod(volA.cel .* volA.scl)
+    # regrid spans the bounding box and leaves the gap at zero
+    fld = zerofield(Float64, cvol)
+    fld.dat .= one(ComplexF64)
+    rsm = regrid(fld)
+    @test size(rsm) == (12, 4, 4, 3)
+    @test all(iszero, rsm[5:8, :, :, :])
+    @test all(!iszero, rsm[1:4, :, :, :])
+    @test all(!iszero, rsm[9:12, :, :, :])
 end
 
 @testset "GlaCmpVol flat layout" begin

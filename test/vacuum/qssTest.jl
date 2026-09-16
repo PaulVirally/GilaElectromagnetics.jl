@@ -170,13 +170,13 @@ qssMem(cel, scl, ::Type{T} = Float64, frq = 1.0 + 0.0im) where {T} =
             for (a, b) ∈ zip(qss.egoFur, qssMem(cel, stdScl, Float32).egoFur))
     end
 
-    # a printed operator names the kernel it was built from
+    # a printed operator names the kernel it was built from, in its block form
     @testset "show" begin
         qss = GlaOprVac(qssMem((2, 2, 2), stdScl))
         cls = GlaOprVac(GlaVacOprMem(CPUKerOpt{Float64}(), mkVol((2, 2, 2))))
         @test isquasistatic(qss) && !isquasistatic(cls)
-        @test occursin("quasistatic G₀", sprint(show, qss))
-        @test occursin("quasistatic Asym(G₀)", sprint(show, asym(qss)))
-        @test !occursin("quasistatic", sprint(show, cls))
+        @test occursin("quasistatic", sprint(show, MIME"text/plain"(), qss))
+        @test occursin("quasistatic", sprint(show, MIME"text/plain"(), asym(qss)))
+        @test !occursin("quasistatic", sprint(show, MIME"text/plain"(), cls))
     end
 end

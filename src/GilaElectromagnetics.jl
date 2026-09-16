@@ -10,7 +10,7 @@ module GilaElectromagnetics
 
 include("glaTyp.jl")
 using .GilaTypes
-export GlaSlv, AbstractGlaOpr, AbstractGlaVacOpr, dflPrc
+export GlaSlv, AbstractGlaOpr, AbstractGlaVacOpr
 
 include("glaVol.jl")
 using .GilaVolumes
@@ -23,18 +23,18 @@ export GlaFld, MultiScaleField, zerofield, discretize!, regionview, eachregion, 
 
 include("vacuum/glaVac.jl")
 using .GilaVacuum
-export GlaKerOpt, CPUKerOpt, GPUKerOpt, GlaVacOprMem, egoOpr!, useCpu!, useGpu!
+export GlaKerOpt, CPUKerOpt, GPUKerOpt, GlaVacOprMem, useCpu!, useGpu!
 
 include("glaSlv.jl")
 using .GilaSolvers
-export GMRESSolver, BiCGStabSolver, MixPrcRfn, solve, ini!
+export GMRESSolver, BiCGStabSolver, MixPrcRfn, solve
 export MixedPrecisionRefinement
 
 include("glaOpr.jl")
 using .GilaOperators
-export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, MulRegGlaOprVac, GlaCmpOprVac, AsyGlaCmpOprVac, SymGlaCmpOprVac, InvSctOpr, SctOpr, GlaOpr
-export VacuumGreenOperator, AsymVacuumGreenOperator, SymVacuumGreenOperator, MultiRegionVacuumGreenOperator, CompositeVacuumGreenOperator, AsymCompositeVacuumGreenOperator, SymCompositeVacuumGreenOperator, InverseScatteringOperator, ScatteringOperator, GreenOperator
-export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, isquasistatic, adjoint!, glaSze, slv, asym
+export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, GlaCmpOprVac, AsyGlaCmpOprVac, SymGlaCmpOprVac, InvSctOpr, SctOpr, GlaOpr, SusOpr
+export VacuumGreenOperator, AsymVacuumGreenOperator, SymVacuumGreenOperator, CompositeVacuumGreenOperator, AsymCompositeVacuumGreenOperator, SymCompositeVacuumGreenOperator, InverseScatteringOperator, ScatteringOperator, GreenOperator, SusceptibilityOperator
+export isadjoint, isselfoperator, isexternaloperator, isoverlappingoperator, isgpu, isquasistatic, adjoint!, glaSze, slv, sus, asym, sym, setSus!
 
 #
 # include("glaSlv.jl")

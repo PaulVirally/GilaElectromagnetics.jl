@@ -10,7 +10,7 @@ using Test, Serialization, GilaElectromagnetics, CUDA
         tmpFil = tempname()
         try
             open(io -> serialize(io, mem), tmpFil, "w")
-            desMem = open(io -> deserialize(io, GlaVacOprMem), tmpFil, "r")
+            desMem = open(deserialize, tmpFil, "r")
             useGpu!(desMem)
             for fld in (:genPrc, :frqPhz, :adjMod)
                 @test getfield(desMem.cmpInf, fld) == getfield(mem.cmpInf, fld)

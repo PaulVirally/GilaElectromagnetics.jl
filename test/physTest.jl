@@ -21,7 +21,7 @@ end
 
 # Analytic free-space dyadic Green function for a point dipole
 function egoAna!(anaOut::AbstractVector{ComplexF64}, slfVol::GlaVol,
-                 trgRng::Vector{<:StepRange}, dipPos::Vector{<:Rational},
+                 trgRng::NTuple{3,<:StepRange}, dipPos::Vector{<:Rational},
                  dipVec::Vector{ComplexF64})
     sepTol = 1.0e-9
     linItr = zeros(Int, 3)
@@ -57,23 +57,9 @@ end
     checkPsd(mat, "AsyGlaOprVac (4,4,4)")
 end
 
-@testset "Asym(G₀) PSD — overlapping as union" begin
-    # The union GlaOprVac uses volume masks, which break the PSD property of Asym(G₀).
-    # The masked operator's asymmetric part has large negative eigenvalues (~0.4 normalized).
-    # This is a known limitation: PSD only holds for un-masked self-operators.
-    @test_broken begin
-        ovrOrg = ntuple(i -> Rational(4) * stdScl[i] // 2, 3)
-        volOvr = GlaVol((4,4,4), stdScl, ovrOrg)
-        gOvr   = GlaOprVac{Float64}(volOvr, _vol4)
-        mat = asymMat(dnsMat(gOvr))
-        nrm = opnorm(mat)
-        minimum(eigvals(Hermitian((mat + mat') / 2))) >= -1e-9 * nrm
-    end
-end
-
-@testset "Asym(G₀) PSD — MulRegGlaOprVac" begin
-    op = MulRegGlaOprVac{Float64}([_vol4, _trgV4], [_vol4, _trgV4])
-    checkPsd(asymMat(dnsMat(op)), "MulRegGlaOprVac 2 regions")
+@testset "Asym(G₀) PSD — gapped GlaCmpOprVac" begin
+    op = GlaCmpOprVac{Float64}(GlaCmpVol([_vol4, _trgV4]))
+    checkPsd(asymMat(dnsMat(op)), "GlaCmpOprVac 2 separated regions")
 end
 
 @testset "Asym undefined for external (negative control)" begin
@@ -123,7 +109,7 @@ smallest volume that leaves cells outside the exclusion window. =#
         fill!(innVec, zero(ComplexF64))
         innVec[dipLoc..., dipDir] = (1.0 + 0.0im) / prod(vol.scl)
         copyto!(numOut, egoOpr!(oprMem, innVec))
-        egoAna!(anaOut, vol, deepcopy(vol.grd), dipPos, dipVec)
+        egoAna!(anaOut, vol, vol.grd, dipPos, dipVec)
         anaRsh = reshape(anaOut, vol.cel..., 3)
 
         #= The clip is load-bearing, not slack: the pure relative worst is 0.0468

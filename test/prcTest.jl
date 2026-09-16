@@ -5,6 +5,7 @@ statement about that single rounding, not about fp32 arithmetic in the build. =#
 using Test, GilaElectromagnetics, LinearAlgebra, LinearMaps, Serialization, CUDA
 import GilaElectromagnetics.GilaVacuum: arrTyp, useGpu
 import GilaElectromagnetics.GilaOperators: setSus!, invMul!, invMulAdj!
+import GilaElectromagnetics.GilaSolvers: slvPrm
 
 const prcVol   = mkVol((4,4,4))
 const prcTrg   = mkVol((4,4,4); org=extOrg)
@@ -33,8 +34,10 @@ const prcCmp32 = GlaCmpOprVac{Float32}(prcCvl)
 const prcCmp64 = GlaCmpOprVac{Float64}(prcCvl)
 const prcXsc32 = GlaCmpOprVac{Float32}(prcFinCvl, prcCrsCvl)
 const prcXsc64 = GlaCmpOprVac{Float64}(prcFinCvl, prcCrsCvl)
-const prcMul32 = MulRegGlaOprVac{Float32}([prcVol2, prcTrg2], [prcVol2, prcTrg2])
-const prcMul64 = MulRegGlaOprVac{Float64}([prcVol2, prcTrg2], [prcVol2, prcTrg2])
+# Two separated regions, so the tiling has a gap and both blocks are external
+const prcGapCvl = GlaCmpVol([prcVol2, prcTrg2])
+const prcGap32 = GlaCmpOprVac{Float32}(prcGapCvl)
+const prcGap64 = GlaCmpOprVac{Float64}(prcGapCvl)
 const prcCmpDns32 = dnsMat(prcCmp32)
 const prcDflOpr = GlaOprVac(prcVol2)
 
@@ -88,7 +91,7 @@ end
     opr32 = prcG032()
     @test eltype(opr32) == ComplexF32
     @test eltype(typeof(opr32)) == ComplexF32
-    @test eltype(similar(opr32)) == ComplexF32
+    @test eltype(similar(opr32, (4,))) == ComplexF32
     @test size(opr32) == (192, 192)
     @test !isgpu(opr32)
     @test arrTyp(opr32) == Array{ComplexF32}
@@ -100,7 +103,7 @@ end
     @test AsyGlaOprVac{Float32}(prcVol2) isa AsyGlaOprVac{Float32}
     @test SymGlaOprVac{Float32}(prcVol2) isa SymGlaOprVac{Float32}
     @test prcCmp32 isa GlaCmpOprVac{Float32}
-    @test prcMul32 isa MulRegGlaOprVac{Float32}
+    @test prcGap32 isa GlaCmpOprVac{Float32}
 end
 
 @testset "Fourier coefficient rounding" begin
@@ -127,7 +130,7 @@ end
     prcChkDns(GlaOprVac(prcExtMem32), _gExt(), "external GlaOprVac")
     prcChkDns(AsyGlaOprVac(prcG032()), _asy(), "AsyGlaOprVac")
     prcChkDns(SymGlaOprVac(prcG032()), _sym(), "SymGlaOprVac")
-    prcChkDns(prcMul32, prcMul64, "MulRegGlaOprVac")
+    prcChkDns(prcGap32, prcGap64, "GlaCmpOprVac gapped")
     prcChkDns(prcCmp32, prcCmp64, "GlaCmpOprVac two regions")
     prcChkDns(prcXsc32, prcXsc64, "GlaCmpOprVac cross-scale")
     prcChkDns(InvSctOpr(prcG032(), prcSus32), InvSctOpr(_g0(), prcSus64), "InvSctOpr")
@@ -192,7 +195,7 @@ end
 
     # A converted composite is the composite that would have been built directly
     @test dnsMat(GlaCmpOprVac{Float32}(prcCmp64)) == prcCmpDns32
-    @test InvSctOpr{Float32}(InvSctOpr(_g0(), prcSus64)).sus == prcSus32
+    @test sus(InvSctOpr{Float32}(InvSctOpr(_g0(), prcSus64))).sus == repeat(vec(prcSus32), 3)
 end
 
 @testset "Mixed precision throws" begin
@@ -204,8 +207,8 @@ end
     fld64 = zerofield(Float64, prcVol)
     fld32 = zerofield(Float32, prcVol)
     #= Every one of these has to be an explicit throwing method: absent, the
-    generic AbstractMatrix fallback would densify by scalar getindex, which is
-    both silent and thousands of times slower, so the warning must not appear. =#
+    caller gets a method error rather than the conversion to make, and nothing
+    may reach the scalar getindex on the way there, so no warning may appear. =#
     @test_logs begin
         @test_throws ArgumentError opr32 * v64
         @test_throws ArgumentError opr64 * v32
@@ -259,10 +262,8 @@ end
     b32 ./= norm(b32)
     b64 = ComplexF64.(b32)
 
-    gmr, bcg = GMRESSolver(), BiCGStabSolver()
-    ini!(gmr, b32); ini!(bcg, b32)
-    @test gmr.relTol == sqrt(eps(Float32))
-    @test bcg.relTol == sqrt(eps(Float32))
+    @test slvPrm(GMRESSolver(), b32).relTol == sqrt(eps(Float32))
+    @test slvPrm(BiCGStabSolver(), b32).relTol == sqrt(eps(Float32))
 
     for slv in (GMRESSolver(), BiCGStabSolver())
         sol = solve(invSct32, copy(b32), slv)
@@ -371,7 +372,7 @@ end
     buf = IOBuffer()
     serialize(buf, prcSlfMem32)
     seekstart(buf)
-    memDes = deserialize(buf, GlaVacOprMem{Float32})
+    memDes = deserialize(buf)
     @test memDes isa GlaVacOprMem{Float32}
     @test memDes.cmpInf isa CPUKerOpt{Float32}
     for (furDes, fur32) in zip(memDes.egoFur, prcSlfMem32.egoFur)
@@ -382,7 +383,7 @@ end
     buf = IOBuffer()
     serialize(buf, gla32)
     seekstart(buf)
-    glaDes = deserialize(buf, typeof(gla32))
+    glaDes = deserialize(buf)
     @test glaDes isa GlaOpr{Float32}
     @test glaDes.sctOpr.invSctOpr.oprVac.mem.egoFur ==
         gla32.sctOpr.invSctOpr.oprVac.mem.egoFur

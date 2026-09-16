@@ -454,9 +454,7 @@ end
 # As with deepcopy above, serialization must regenerate the FFTW plans rather
 # than write out the raw C pointers, which are only meaningful inside the
 # process that created them. Only the Fourier data, volumes, and kernel options
-# are written, and glaOprPrp rebuilds the plans on load. These methods cover
-# mems reached through the generic serializer (struct fields, array elements);
-# the io::IO methods below are the top level format used for preload files.
+# are written, and glaOprPrp rebuilds the plans on load.
 function Serialization.serialize(s::AbstractSerializer, mem::GlaVacOprMem)
     # serialize_type needs the concrete GlaVacOprMem{T}, not the UnionAll
     Serialization.serialize_type(s, typeof(mem))
@@ -483,33 +481,4 @@ function Serialization.deserialize(s::AbstractSerializer, ::Type{<:GlaVacOprMem}
     # storage precision is recovered from the written Fourier data
     prc = real(eltype(first(egoFur)))
     return glaOprPrp(egoFur, trgVol, srcVol, mixInf, CPUKerOpt{prc}(frqPhz, genPrc, qssApx, adjMod, CPU()))
-end
-
-function Serialization.serialize(io::IO, mem::GlaVacOprMem)
-    wasGpu = false
-    if mem.cmpInf isa GPUKerOpt
-        wasGpu = true
-        useCpu!(mem) # Convert to CPU for serialization
-    end
-    serialize(io, mem.egoFur)
-    serialize(io, mem.cmpInf)
-    serialize(io, mem.trgVol)
-    serialize(io, mem.srcVol)
-    serialize(io, mem.mixInf)
-
-    if wasGpu
-        useGpu!(mem) # Convert back to GPU after serialization
-    end
-end
-
-function Serialization.deserialize(io::IO, ::Type{<:GlaVacOprMem})
-    egoFur = deserialize(io)
-    # egoFur is authoritative for the storage precision of the rebuilt operator
-    cmpInf = CPUKerOpt{real(eltype(first(egoFur)))}(deserialize(io, CPUKerOpt))
-    trgVol = deserialize(io)
-    srcVol = deserialize(io)
-    mixInf = deserialize(io)
-     
-    # Reconstruct the full operator
-    return glaOprPrp(egoFur, trgVol, srcVol, mixInf, cmpInf)
 end

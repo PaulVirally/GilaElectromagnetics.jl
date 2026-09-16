@@ -1,6 +1,5 @@
 using KernelAbstractions
 using CUDA
-using Serialization
 using ..GilaTypes
 
 """
@@ -34,14 +33,14 @@ The phase factor allows for complex frequencies, which is useful for modeling
 dispersive media or for numerical stability.
 
 # Fields
-- `frqPhz::Number`: Multiplicative scaling factor allowing for complex frequencies
+- `frqPhz::ComplexF64`: Multiplicative scaling factor allowing for complex frequencies
 - `genPrc::Type{<:AbstractFloat}`: Generation precision (default `Float64`; `Float32` throws, it would return NaN)
 - `qssApx::Bool`: Quasistatic approximation flag (true to generate the quasistatic kernel)
 - `adjMod::Bool`: Adjoint mode flag (true if adjoint mode is enabled)
 - `bckEnd::CPU`: Backend for CPU computation
 """
 mutable struct CPUKerOpt{T<:AbstractFloat} <: GlaKerOpt{T}
-    frqPhz::Number
+    frqPhz::ComplexF64
     genPrc::Type{<:AbstractFloat}
     qssApx::Bool
     adjMod::Bool
@@ -84,7 +83,7 @@ Re-type a CPUKerOpt to storage precision `T`, keeping all field values.
 CPUKerOpt{T}(opt::CPUKerOpt) where T<:AbstractFloat = CPUKerOpt{T}(opt.frqPhz, opt.genPrc, opt.qssApx, opt.adjMod, opt.bckEnd)
 
 """
-    frqPhz(opt::CPUKerOpt) -> Number
+    frqPhz(opt::CPUKerOpt) -> ComplexF64
 
 Get the multiplicative scaling factor allowing for complex frequencies.
 
@@ -92,7 +91,7 @@ Get the multiplicative scaling factor allowing for complex frequencies.
 - `opt::CPUKerOpt`: The CPU kernel options object
 
 # Returns
-- `Number`: The phase factor
+- `ComplexF64`: The phase factor
 """
 frqPhz(opt::CPUKerOpt) = opt.frqPhz
 
@@ -151,6 +150,8 @@ bckEnd(opt::CPUKerOpt) = opt.bckEnd
 """
     arrTyp(opt::CPUKerOpt{T})
 
+Internal, not exported.
+
 Get the array type from a CPU kernel options object.
 
 # Arguments
@@ -202,20 +203,20 @@ Options for GPU computation of the Green function operator.
 `GPUKerOpt` determines the parallelization strategy for GPU computation through its thread and block counts, and the precision of Green function generation through `genPrc`. The phase factor allows for complex frequencies, which is useful for modeling dispersive media or for numerical stability.
 
 # Fields
-- `frqPhz::Number`: Multiplicative scaling factor allowing for complex frequencies
+- `frqPhz::ComplexF64`: Multiplicative scaling factor allowing for complex frequencies
 - `genPrc::Type{<:AbstractFloat}`: Generation precision (default `Float64`; `Float32` throws, it would return NaN)
 - `qssApx::Bool`: Quasistatic approximation flag (true to generate the quasistatic kernel)
-- `numTrd::NTuple{3, Integer}`: Number of threads to use when running GPU kernels
-- `numBlk::NTuple{3, Integer}`: Number of thread blocks to use when running GPU kernels
+- `numTrd::NTuple{3, Int}`: Number of threads to use when running GPU kernels
+- `numBlk::NTuple{3, Int}`: Number of thread blocks to use when running GPU kernels
 - `adjMod::Bool`: Adjoint mode flag (true if adjoint mode is enabled)
 - `bckEnd::GPU`: Backend for GPU computation
 """
 mutable struct GPUKerOpt{T<:AbstractFloat} <: GlaKerOpt{T}
-    frqPhz::Number
+    frqPhz::ComplexF64
     genPrc::Type{<:AbstractFloat}
     qssApx::Bool
-    numTrd::NTuple{3, Integer}
-    numBlk::NTuple{3, Integer}
+    numTrd::NTuple{3, Int}
+    numBlk::NTuple{3, Int}
     adjMod::Bool
     bckEnd::GPU
     function GPUKerOpt{T}(frqPhz::Number, genPrc::Type{<:AbstractFloat}, qssApx::Bool, numTrd::NTuple{3,Integer}, numBlk::NTuple{3,Integer}, adjMod::Bool, bckEnd::GPU) where T<:AbstractFloat
@@ -269,7 +270,7 @@ Get the phase factor from a GPU kernel options object.
 - `opt::GPUKerOpt`: The GPU kernel options object
 
 # Returns
-- `Number`: The phase factor
+- `ComplexF64`: The phase factor
 """
 frqPhz(opt::GPUKerOpt) = opt.frqPhz
 
@@ -309,7 +310,7 @@ The thread count determines the parallelization strategy for GPU computation. Hi
 numTrd(opt::GPUKerOpt) = opt.numTrd
 
 """
-    numBlk(opt::GPUKerOpt) -> NTuple{3, Integer}
+    numBlk(opt::GPUKerOpt) -> NTuple{3, Int}
 
 Get the number of thread blocks to use when running GPU kernels.
 
@@ -343,6 +344,8 @@ bckEnd(opt::GPUKerOpt) = opt.bckEnd
 
 """
     arrTyp(opt::GPUKerOpt{T})
+
+Internal, not exported.
 
 Get the array type from a GPU kernel options object.
 
@@ -386,42 +389,3 @@ Does nothing. This function is a placeholder for consistency with the CPU versio
 - `GPUKerOpt`: The same GPU kernel options object
 """
 useGpu(opt::GPUKerOpt) = opt
-
-# Add serialization support for GlaKerOpt
-function Serialization.serialize(io::IO, opt::CPUKerOpt{T}) where T<:AbstractFloat
-    serialize(io, T)
-    serialize(io, opt.frqPhz)
-    serialize(io, opt.genPrc)
-    serialize(io, opt.qssApx)
-    serialize(io, opt.adjMod)
-end
-
-function Serialization.deserialize(io::IO, ::Type{<:CPUKerOpt})
-    prc = deserialize(io)
-    frqPhz = deserialize(io)
-    genPrc = deserialize(io)
-    qssApx = deserialize(io)
-    adjMod = deserialize(io)
-    return CPUKerOpt{prc}(frqPhz, genPrc, qssApx, adjMod, CPU())
-end
-
-function Serialization.serialize(io::IO, opt::GPUKerOpt{T}) where T<:AbstractFloat
-    serialize(io, T)
-    serialize(io, opt.frqPhz)
-    serialize(io, opt.genPrc)
-    serialize(io, opt.qssApx)
-    serialize(io, opt.numTrd)
-    serialize(io, opt.numBlk)
-    serialize(io, opt.adjMod)
-end
-
-function Serialization.deserialize(io::IO, ::Type{<:GPUKerOpt})
-    prc = deserialize(io)
-    frqPhz = deserialize(io)
-    genPrc = deserialize(io)
-    qssApx = deserialize(io)
-    numTrd = deserialize(io)
-    numBlk = deserialize(io)
-    adjMod = deserialize(io)
-    return GPUKerOpt{prc}(frqPhz, genPrc, qssApx, numTrd, numBlk, adjMod, CUDABackend())
-end

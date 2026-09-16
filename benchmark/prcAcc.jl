@@ -41,7 +41,7 @@ const mvcNum = 5 # Random vectors behind the matrix-free operator error
 
 #= Counts the matrix-vector products of the operator it wraps. The precision
 conversion carries a fresh counter, so a MixPrcRfn built on a wrapped operator
-leaves its own inner count in slv.oprLo. =#
+leaves its own inner count in the cached copy, last(slv.cch[]). =#
 struct CntOpr{T<:AbstractFloat} <: AbstractGlaOpr{T}
     opr::AbstractGlaOpr{T}
     cnt::Base.RefValue{Int}
@@ -121,7 +121,7 @@ function runCel(cel, sus, useGpu::Bool)
         string(sus), err, "fp64->fp64", 0.0, res64(solRef), "$(cntRef.cnt[]) mv")
     @printf("%-9s %-14s %9s  %-12s %9.2e %10.2e  %s\n", "", "", "", "fp64->fp32",
         vecErr(solIr, solRef), res64(solIr),
-        "$(cntIr.cnt[]) outer / $(rfn.oprLo.cnt[]) inner fp32 mv")
+        "$(cntIr.cnt[]) outer / $(last(rfn.cch[]).cnt[]) inner fp32 mv")
     @printf("%-9s %-14s %9s  %-12s %9.2e %10.2e  %s\n", "", "", "", "fp32->fp32",
         vecErr(sol32, solRef), res64(sol32), "$(cnt32.cnt[]) mv")
     return nothing
