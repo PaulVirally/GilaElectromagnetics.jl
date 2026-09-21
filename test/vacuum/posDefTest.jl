@@ -35,4 +35,18 @@ end
         @info "Asym(G0) slender f = 1 + 0.1i: lamMin = $lam"
         @test lam > 0
     end
+
+    #= pdAsyEig subtracts the operator from its own adjoint, at a cost of
+    eps * ‖Sym‖ / ‖Asym‖, which is why the bars above are loose. The operator
+    takes its part before the transform and holds machine precision however
+    fine the mesh. =#
+    @testset "fine mesh" begin
+        for den ∈ (512, 2048, 8192)
+            mat = dnsMat(AsyGlaOprVac{Float64}(GlaVol((4, 4, 4), (1//den, 1//den, 1//den), stdOrg)))
+            ev = eigvals(Hermitian((mat + mat') / 2))
+            rat = minimum(ev) / maximum(ev)
+            @info "Asym(G0) cell = λ/$den: lamMin / lamMax = $rat"
+            @test rat > -1e-14
+        end
+    end
 end

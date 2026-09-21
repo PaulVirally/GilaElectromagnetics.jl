@@ -390,7 +390,7 @@ This constructor creates an external Green function operator that describes elec
 """
 function GlaOprVac{T}(trgVol::GlaVol, srcVol::GlaVol;
     useGpu::Bool=false, prxWrn::Bool=true, frqPhz=1.0+0.0im, genPrc=Float64,
-    qssApx::Bool=false, shpCch::Bool=false) where T<:AbstractFloat
+    qssApx::Bool=false, shpCch::Bool=false, hrmPrt::Union{Nothing,Symbol}=nothing) where T<:AbstractFloat
     innMsk = ntuple(_ -> 0:0, 3)
     outMsk = ntuple(_ -> 0:0, 3)
     if trgVol != srcVol && ovrChk(trgVol, srcVol)
@@ -403,12 +403,12 @@ function GlaOprVac{T}(trgVol::GlaVol, srcVol::GlaVol;
 
     # Create the memory structure with appropriate GPU/CPU options
     opt = _kerOpt(T; useGpu, frqPhz, genPrc, qssApx)
-    mem = GlaVacOprMem(opt, trgVol, srcVol; shpCch, prxWrn)
+    mem = GlaVacOprMem(opt, trgVol, srcVol; shpCch, prxWrn, hrmPrt)
     return GlaOprVac{T}(mem, innMsk, outMsk)
 end
 GlaOprVac(trgVol::GlaVol, srcVol::GlaVol; useGpu::Bool=false, prxWrn::Bool=true, frqPhz=1.0+0.0im,
-    genPrc=Float64, qssApx::Bool=false, shpCch::Bool=false) =
-    GlaOprVac{dflPrc}(trgVol, srcVol; useGpu, prxWrn, frqPhz, genPrc, qssApx, shpCch)
+    genPrc=Float64, qssApx::Bool=false, shpCch::Bool=false, hrmPrt::Union{Nothing,Symbol}=nothing) =
+    GlaOprVac{dflPrc}(trgVol, srcVol; useGpu, prxWrn, frqPhz, genPrc, qssApx, shpCch, hrmPrt)
 
 """
     GlaOprVac(mem::GlaVacOprMem)
@@ -456,9 +456,11 @@ This constructor creates a self-interaction Green function operator where the so
 
 """
 GlaOprVac{T}(vol::GlaVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false,
-    shpCch::Bool=false) where T<:AbstractFloat = GlaOprVac{T}(vol, vol; useGpu, frqPhz, genPrc, qssApx, shpCch)
+    shpCch::Bool=false, hrmPrt::Union{Nothing,Symbol}=nothing) where T<:AbstractFloat =
+    GlaOprVac{T}(vol, vol; useGpu, frqPhz, genPrc, qssApx, shpCch, hrmPrt)
 GlaOprVac(vol::GlaVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false,
-    shpCch::Bool=false) = GlaOprVac{dflPrc}(vol, vol; useGpu, frqPhz, genPrc, qssApx, shpCch)
+    shpCch::Bool=false, hrmPrt::Union{Nothing,Symbol}=nothing) =
+    GlaOprVac{dflPrc}(vol, vol; useGpu, frqPhz, genPrc, qssApx, shpCch, hrmPrt)
 
 """
     GlaOprVac{T}(opr::GlaOprVac)
@@ -533,9 +535,7 @@ This constructor creates the anti-Hermitian part of the vacuum Green function op
 function AsyGlaOprVac{T}(vol::GlaVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64,
     qssApx::Bool=false, shpCch::Bool=false) where T<:AbstractFloat
     opt = _kerOpt(T; useGpu, frqPhz, genPrc, qssApx)
-    mem = GlaVacOprMem(opt, vol, vol; shpCch)
-    map!(fur -> complex.(imag.(fur)), mem.egoFur) # Take the imaginary part of the Fourier coefficients since Asym commutes with the FFT (to machine epsilon)
-    return AsyGlaOprVac{T}(mem)
+    return AsyGlaOprVac{T}(GlaVacOprMem(opt, vol, vol; shpCch, hrmPrt=:asy))
 end
 AsyGlaOprVac(vol::GlaVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false,
     shpCch::Bool=false) = AsyGlaOprVac{dflPrc}(vol; useGpu, frqPhz, genPrc, qssApx, shpCch)
@@ -553,6 +553,10 @@ AsyGlaOprVac{T}(opr::AsyGlaOprVac) where T<:AbstractFloat = AsyGlaOprVac{T}(GlaV
 
 Construct the anti-Hermitian part of the vacuum Green function operator from a vacuum Green function operator.
 
+This reuses the coefficients of `opr` rather than integrating again, so it
+recovers the imaginary part from a symbol the size of the real one and costs
+`eps * ‖real g‖ / ‖imag g‖`. Build from the volume when that matters.
+
 # Arguments
 - `opr::GlaOprVac`: The vacuum Green function operator to convert into its anti-Hermitian part
 
@@ -565,7 +569,7 @@ function AsyGlaOprVac(opr::GlaOprVac{T}) where T<:AbstractFloat
         throw(ArgumentError("AsyGlaOprVac can only be constructed from a GlaOprVac with identical source and target volumes"))
     end
     mem = deepcopy(opr.mem)
-    map!(fur -> complex.(imag.(fur)), mem.egoFur) # Take the imaginary part of the Fourier coefficients since Asym commutes with the FFT (to machine epsilon)
+    map!(fur -> complex.(imag.(fur)), mem.egoFur)
     return AsyGlaOprVac{T}(mem)
 end
 
@@ -591,9 +595,7 @@ This constructor creates the Hermitian part of the vacuum Green function operato
 function SymGlaOprVac{T}(vol::GlaVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64,
     qssApx::Bool=false, shpCch::Bool=false) where T<:AbstractFloat
     opt = _kerOpt(T; useGpu, frqPhz, genPrc, qssApx)
-    mem = GlaVacOprMem(opt, vol, vol; shpCch)
-    map!(fur -> complex.(real.(fur)), mem.egoFur) # Take the real part of the Fourier coefficients since Sym commutes with the FFT (to machine epsilon)
-    return SymGlaOprVac{T}(mem)
+    return SymGlaOprVac{T}(GlaVacOprMem(opt, vol, vol; shpCch, hrmPrt=:sym))
 end
 SymGlaOprVac(vol::GlaVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false,
     shpCch::Bool=false) = SymGlaOprVac{dflPrc}(vol; useGpu, frqPhz, genPrc, qssApx, shpCch)
@@ -623,7 +625,8 @@ function SymGlaOprVac(opr::GlaOprVac{T}) where T<:AbstractFloat
         throw(ArgumentError("SymGlaOprVac can only be constructed from a GlaOprVac with identical source and target volumes"))
     end
     mem = deepcopy(opr.mem)
-    map!(fur -> complex.(real.(fur)), mem.egoFur) # Take the real part of the Fourier coefficients since Asym commutes with the FFT (to machine epsilon)
+    # The Hermitian part is the large one, so reusing the symbol costs it nothing
+    map!(fur -> complex.(real.(fur)), mem.egoFur)
     return SymGlaOprVac{T}(mem)
 end
 
