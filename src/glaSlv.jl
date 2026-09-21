@@ -35,24 +35,27 @@ linear systems.
 - `maxItr::Union{Nothing, Int}`: Maximum number of iterations (default: max(5000, length(vec)))
 - `absTol::Union{Nothing, Real}`: Absolute tolerance for convergence (default: 0)
 - `relTol::Union{Nothing, Real}`: Relative tolerance for convergence (default: √ε)
+- `preCon`: Left preconditioner, anything with an `ldiv!` method (default: none)
 """
 struct GMRESSolver <: GlaSlv
     rstItr::Union{Nothing, Int} # Iterations until restart
     maxItr::Union{Nothing, Int} # Maximum number of iterations
     absTol::Union{Nothing, Real} # Absolute tolerance
     relTol::Union{Nothing, Real} # Relative tolerance
+    preCon::Any # Left preconditioner
 end
 
 """
-    GMRESSolver()
+    GMRESSolver(rstItr = nothing, maxItr = nothing, absTol = nothing, relTol = nothing; preCon = nothing)
 
-Create a GMRESSolver with default values. The actual values are resolved
-against the right hand side at solve time.
+Create a GMRESSolver. Unset values are resolved against the right hand side at
+solve time.
 
 # Returns
-- `GMRESSolver`: A new solver instance with uninitialized parameters
+- `GMRESSolver`: A new solver instance
 """
-GMRESSolver() = GMRESSolver(nothing, nothing, nothing, nothing)
+GMRESSolver(rstItr = nothing, maxItr = nothing, absTol = nothing, relTol = nothing; preCon = nothing) =
+    GMRESSolver(rstItr, maxItr, absTol, relTol, preCon)
 
 # Solver settings with the unset ones filled in from the right hand side
 slvPrm(slv::GMRESSolver, vec::AbstractArray) = (
@@ -72,23 +75,26 @@ linear systems and typically requires less memory than GMRES.
 - `maxItr::Union{Nothing, Int}`: Maximum number of iterations (default: length(vec))
 - `absTol::Union{Nothing, Real}`: Absolute tolerance for convergence (default: 0)
 - `relTol::Union{Nothing, Real}`: Relative tolerance for convergence (default: √ε)
+- `preCon`: Left preconditioner, anything with an `ldiv!` method (default: none)
 """
 struct BiCGStabSolver <: GlaSlv
     maxItr::Union{Nothing, Int} # Maximum number of iterations
     absTol::Union{Nothing, Real} # Absolute tolerance
     relTol::Union{Nothing, Real} # Relative tolerance
+    preCon::Any # Left preconditioner
 end
 
 """
-    BiCGStabSolver()
+    BiCGStabSolver(maxItr = nothing, absTol = nothing, relTol = nothing; preCon = nothing)
 
-Create a BiCGStabSolver with default values. The actual values are resolved
-against the right hand side at solve time.
+Create a BiCGStabSolver. Unset values are resolved against the right hand side
+at solve time.
 
 # Returns
-- `BiCGStabSolver`: A new solver instance with uninitialized parameters
+- `BiCGStabSolver`: A new solver instance
 """
-BiCGStabSolver() = BiCGStabSolver(nothing, nothing, nothing)
+BiCGStabSolver(maxItr = nothing, absTol = nothing, relTol = nothing; preCon = nothing) =
+    BiCGStabSolver(maxItr, absTol, relTol, preCon)
 
 # Solver settings with the unset ones filled in from the right hand side
 slvPrm(slv::BiCGStabSolver, vec::AbstractVector) = (
@@ -117,6 +123,7 @@ Solve the linear system `opr * out = inp` using the BiCGStab method.
 """
 function solve(opr::AbstractGlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver) where T
     (; maxItr, absTol, relTol) = slvPrm(slv, inp)
+    preCon = slv.preCon
     out = fill!(similar(inp), zero(T))
 
     ρPrv = zero(T)
@@ -131,6 +138,9 @@ function solve(opr::AbstractGlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver)
     resShd = copy(res) # Residual shadow
     p = copy(res)
     s = similar(res)
+    # ldiv! must not clobber p or s, both of which are read again below
+    p̂ = isnothing(preCon) ? p : similar(p)
+    ŝ = isnothing(preCon) ? s : similar(s)
 
     for numItr in 1:maxItr
         if norm(res) < absTol
@@ -142,8 +152,7 @@ function solve(opr::AbstractGlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver)
             β = (ρ / ρPrv) * (α / ω)
             p .= res .+ β .* (p .- ω .* v)
         end
-        # p̂ = preconditioner \ p # TODO: When we have a preconditioner
-        p̂ = p
+        isnothing(preCon) || ldiv!(p̂, preCon, p)
         mul!(v, opr, p̂)
         α = ρ / dot(resShd, v)
         res .-= α .* v
@@ -154,8 +163,7 @@ function solve(opr::AbstractGlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver)
             return out
         end
 
-        # ŝ = preconditioner \ s # TODO: When we have a preconditioner
-        ŝ = s
+        isnothing(preCon) || ldiv!(ŝ, preCon, s)
         mul!(t, opr, ŝ)
         ω = dot(t, s) / dot(t, t)
         # ω = dot(t, res) / dot(t, t)
@@ -192,6 +200,7 @@ function solve(opr::AbstractGlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) whe
     # Algorithm adapted from https://github.com/JuliaLinearAlgebra/IterativeSolvers.jl/blob/0b2f1c5d352069df1bc891750087deda2d14cc9d/src/gmres.jl
 
     (; rstItr, maxItr, absTol, relTol) = slvPrm(slv, inp)
+    preCon = slv.preCon
 
     basVec = similar(inp, size(opr, 1), 1 + rstItr) # Krylov basis vectors
     hss = zeros(eltype(inp), 1 + rstItr, rstItr) # Hessenberg matrix (always stored on the CPU)
@@ -202,7 +211,7 @@ function solve(opr::AbstractGlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) whe
     # The first basis vector is b (preconditioned)
     k = 1 # Which restart iteration we are on
     vk = @view basVec[:, k]
-    copyto!(vk, inp) # lmul!(vk, preconditioner, inp) # vk = preconditioner \ (b - op*x) with x = 0 # TODO: When we have a preconditioner
+    isnothing(preCon) ? copyto!(vk, inp) : ldiv!(vk, preCon, inp) # b - opr * x with x = 0
     β = norm(vk)
     rmul!(vk, inv(β)) # Normalize vk
 
@@ -220,7 +229,7 @@ function solve(opr::AbstractGlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) whe
         # vₖ₊₁ = precon \ (opr * vₖ)
         vkp1 = @view basVec[:, k + 1]
         mul!(vkp1, opr, vk)
-        # lmul!(vkp1, preconditioner, vkp1) # TODO: When we have a preconditioner
+        isnothing(preCon) || ldiv!(preCon, vkp1)
 
         # Orthogonalize vₖ₊₁ against previous basis vectors
         for j in 1:k
@@ -265,7 +274,8 @@ function solve(opr::AbstractGlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) whe
             if !don
                 vk = @view basVec[:, k]
                 mul!(buf, opr, out)
-                vk .= vec(inp) .- vec(buf) # lmul!(vk, preconditioner, inp - opr * out) # TODO: When we have a preconditioner
+                vk .= vec(inp) .- vec(buf)
+                isnothing(preCon) || ldiv!(preCon, vk)
                 β = norm(vk)
                 rmul!(vk, inv(β))
                 resAcc = one(real(T))
