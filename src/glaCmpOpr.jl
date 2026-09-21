@@ -70,6 +70,7 @@ pairing and the self operator is complex-symmetric.
 struct GlaCmpOprVac{T<:AbstractFloat} <: AbstractGlaVacOpr{T}
     trgCvl::GlaCmpVol
     srcCvl::GlaCmpVol
+    # Left abstract on purpose: a mix of GlaOprVac and GlaSndOprVac, one dispatch per FFT
     blkMat::Matrix{AbstractGlaOpr{T}}
 end
 
@@ -191,26 +192,28 @@ _cntChk(trgReg::GlaVol, srcReg::GlaVol) =
     all(max.(_lwrEdg(trgReg), _lwrEdg(srcReg)) .<= min.(_uprEdg(trgReg), _uprEdg(srcReg)))
 
 # The cross-scale contact block, computed on the finer of the two meshes
-function _sndBlk(::Type{T}, trgReg::GlaVol, srcReg::GlaVol, useGpu::Bool) where T<:AbstractFloat
+function _sndBlk(::Type{T}, trgReg::GlaVol, srcReg::GlaVol; useGpu::Bool, frqPhz, genPrc,
+    qssApx::Bool, shpCch::Bool, hrmPrt) where T<:AbstractFloat
     sclFin = min.(trgReg.scl, srcReg.scl)
     trgRat = ntuple(dir -> Int(trgReg.scl[dir] // sclFin[dir]), 3)
     srcRat = ntuple(dir -> Int(srcReg.scl[dir] // sclFin[dir]), 3)
     trgFin = GlaVol(Tuple(trgReg.cel .* trgRat), sclFin, trgReg.org)
     srcFin = GlaVol(Tuple(srcReg.cel .* srcRat), sclFin, srcReg.org)
-    innOpr = GlaOprVac{T}(trgFin, srcFin; useGpu=useGpu, prxWrn=false)
+    innOpr = GlaOprVac{T}(trgFin, srcFin; useGpu, frqPhz, genPrc, qssApx, shpCch, hrmPrt, prxWrn=false)
     return GlaSndOprVac{T}(innOpr, trgRat, srcRat,
         _nrmWgt(trgReg, srcReg) / prod(trgRat))
 end
 
 function _cmpBlk(::Type{T}, trgReg::GlaVol, srcReg::GlaVol, isSlf::Bool,
-    slfCmp::Bool, trgIdx::Integer, srcIdx::Integer, useGpu::Bool) where T<:AbstractFloat
-    isSlf && return GlaOprVac{T}(trgReg; useGpu=useGpu)
+    slfCmp::Bool, trgIdx::Integer, srcIdx::Integer; useGpu::Bool, frqPhz, genPrc,
+    qssApx::Bool, shpCch::Bool, hrmPrt) where T<:AbstractFloat
+    isSlf && return GlaOprVac{T}(trgReg; useGpu, frqPhz, genPrc, qssApx, shpCch, hrmPrt)
     if !slfCmp && _ovrLap(trgReg, srcReg)
         throw(ArgumentError("Target region $trgIdx spans $(_lwrEdg(trgReg)) to $(_uprEdg(trgReg)) and source region $srcIdx spans $(_lwrEdg(srcReg)) to $(_uprEdg(srcReg)), so the two overlap. A composite operator between two bodies needs the bodies to be disjoint."))
     end
     trgReg.scl != srcReg.scl && _cntChk(trgReg, srcReg) &&
-        return _sndBlk(T, trgReg, srcReg, useGpu)
-    opr = GlaOprVac{T}(trgReg, srcReg; useGpu=useGpu, prxWrn=false)
+        return _sndBlk(T, trgReg, srcReg; useGpu, frqPhz, genPrc, qssApx, shpCch, hrmPrt)
+    opr = GlaOprVac{T}(trgReg, srcReg; useGpu, frqPhz, genPrc, qssApx, shpCch, hrmPrt, prxWrn=false)
     nrm = _nrmWgt(trgReg, srcReg)
     # A real scalar on the Fourier coefficients survives adjoint! untouched
     nrm != 1 && map!(fur -> T(nrm) .* fur, opr.mem.egoFur)
@@ -226,8 +229,8 @@ function _prxCmpChk(trgRegs, srcRegs)
 end
 
 """
-    GlaCmpOprVac{T}(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false)
-    GlaCmpOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false)
+    GlaCmpOprVac{T}(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false, shpCch::Bool=false)
+    GlaCmpOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false, shpCch::Bool=false)
 
 Construct the vacuum Green function operator between two composite volumes.
 
@@ -248,6 +251,10 @@ be disjoint.
 - `trgCvl::GlaCmpVol`: The composite volume the fields land on
 - `srcCvl::GlaCmpVol`: The composite volume the currents live on
 - `useGpu::Bool=false`: Whether to build the blocks on the GPU
+- `frqPhz=1.0+0.0im`: Complex frequency phase factor, see `frqPhz(opt::CPUKerOpt)`
+- `genPrc=Float64`: Generation precision, see `genPrc(opt::CPUKerOpt)`
+- `qssApx::Bool=false`: Quasistatic approximation flag, see `qssApx(opt::CPUKerOpt)`
+- `shpCch::Bool=false`: Cache the far-field geometry table of each cell shape, see `GlaVacOprMem`
 
 # Returns
 - `GlaCmpOprVac`: The composite operator
@@ -256,39 +263,49 @@ be disjoint.
 - `ArgumentError`: If a region of one volume overlaps a region of the other
 """
 function GlaCmpOprVac{T}(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol;
-    useGpu::Bool=false) where T<:AbstractFloat
+    useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false,
+    shpCch::Bool=false, hrmPrt::Union{Nothing,Symbol}=nothing) where T<:AbstractFloat
     slfCmp = trgCvl === srcCvl || trgCvl == srcCvl
     trgRegs, srcRegs = regions(trgCvl), regions(srcCvl)
     slfCmp || _prxCmpChk(trgRegs, srcRegs)
     blkMat = Matrix{AbstractGlaOpr{T}}(undef, length(trgRegs), length(srcRegs))
     for trgIdx in eachindex(trgRegs), srcIdx in eachindex(srcRegs)
         blkMat[trgIdx, srcIdx] = _cmpBlk(T, trgRegs[trgIdx], srcRegs[srcIdx],
-            slfCmp && trgIdx == srcIdx, slfCmp, trgIdx, srcIdx, useGpu)
+            slfCmp && trgIdx == srcIdx, slfCmp, trgIdx, srcIdx; useGpu, frqPhz, genPrc, qssApx, shpCch, hrmPrt)
     end
     return GlaCmpOprVac{T}(trgCvl, srcCvl, blkMat)
 end
-GlaCmpOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false) =
-    GlaCmpOprVac{dflPrc}(trgCvl, srcCvl; useGpu=useGpu)
+GlaCmpOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im,
+    genPrc=Float64, qssApx::Bool=false, shpCch::Bool=false, hrmPrt::Union{Nothing,Symbol}=nothing) =
+    GlaCmpOprVac{dflPrc}(trgCvl, srcCvl; useGpu, frqPhz, genPrc, qssApx, shpCch, hrmPrt)
 
 """
-    GlaCmpOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false)
-    GlaCmpOprVac(cvol::GlaCmpVol; useGpu::Bool=false)
+    GlaCmpOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false, shpCch::Bool=false)
+    GlaCmpOprVac(cvol::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false, shpCch::Bool=false)
 
 Construct the self vacuum Green function operator of a composite volume.
 
 # Arguments
 - `cvol::GlaCmpVol`: The composite volume
 - `useGpu::Bool=false`: Whether to build the blocks on the GPU
+- `frqPhz=1.0+0.0im`: Complex frequency phase factor, see `frqPhz(opt::CPUKerOpt)`
+- `genPrc=Float64`: Generation precision, see `genPrc(opt::CPUKerOpt)`
+- `qssApx::Bool=false`: Quasistatic approximation flag, see `qssApx(opt::CPUKerOpt)`
+- `shpCch::Bool=false`: Cache the far-field geometry table of each cell shape, see `GlaVacOprMem`
 
 # Returns
 - `GlaCmpOprVac`: The composite operator
 """
-GlaCmpOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false) where T<:AbstractFloat = GlaCmpOprVac{T}(cvol, cvol; useGpu=useGpu)
-GlaCmpOprVac(cvol::GlaCmpVol; useGpu::Bool=false) = GlaCmpOprVac{dflPrc}(cvol, cvol; useGpu=useGpu)
+GlaCmpOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64,
+    qssApx::Bool=false, shpCch::Bool=false, hrmPrt::Union{Nothing,Symbol}=nothing) where T<:AbstractFloat =
+    GlaCmpOprVac{T}(cvol, cvol; useGpu, frqPhz, genPrc, qssApx, shpCch, hrmPrt)
+GlaCmpOprVac(cvol::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false,
+    shpCch::Bool=false, hrmPrt::Union{Nothing,Symbol}=nothing) =
+    GlaCmpOprVac{dflPrc}(cvol, cvol; useGpu, frqPhz, genPrc, qssApx, shpCch, hrmPrt)
 
 """
-    GlaOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false)
-    GlaOprVac(cvol::GlaCmpVol; useGpu::Bool=false)
+    GlaOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false, shpCch::Bool=false)
+    GlaOprVac(cvol::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false, shpCch::Bool=false)
 
 Construct the self vacuum Green function operator of a composite volume.
 
@@ -298,16 +315,20 @@ is a `GlaCmpOprVac` and not a `GlaOprVac`. Both are `AbstractGlaVacOpr`.
 # Arguments
 - `cvol::GlaCmpVol`: The composite volume
 - `useGpu::Bool=false`: Whether to build the blocks on the GPU
+- `frqPhz`, `genPrc`, `qssApx`, `shpCch`: See `GlaCmpOprVac`
 
 # Returns
 - `GlaCmpOprVac`: The composite operator
 """
-GlaOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false) where T<:AbstractFloat = GlaCmpOprVac{T}(cvol; useGpu=useGpu)
-GlaOprVac(cvol::GlaCmpVol; useGpu::Bool=false) = GlaCmpOprVac{dflPrc}(cvol; useGpu=useGpu)
+GlaOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false,
+    shpCch::Bool=false) where T<:AbstractFloat =
+    GlaCmpOprVac{T}(cvol; useGpu, frqPhz, genPrc, qssApx, shpCch)
+GlaOprVac(cvol::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false,
+    shpCch::Bool=false) = GlaCmpOprVac{dflPrc}(cvol; useGpu, frqPhz, genPrc, qssApx, shpCch)
 
 """
-    GlaOprVac{T}(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false)
-    GlaOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false)
+    GlaOprVac{T}(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false, shpCch::Bool=false)
+    GlaOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false, shpCch::Bool=false)
 
 Construct the vacuum Green function operator between two composite volumes.
 
@@ -317,15 +338,18 @@ The result is a `GlaCmpOprVac`, for the reason given in the single volume method
 - `trgCvl::GlaCmpVol`: The composite volume the fields land on
 - `srcCvl::GlaCmpVol`: The composite volume the currents live on
 - `useGpu::Bool=false`: Whether to build the blocks on the GPU
+- `frqPhz`, `genPrc`, `qssApx`, `shpCch`: See `GlaCmpOprVac`
 
 # Returns
 - `GlaCmpOprVac`: The composite operator
 """
 GlaOprVac{T}(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol;
-    useGpu::Bool=false) where T<:AbstractFloat =
-    GlaCmpOprVac{T}(trgCvl, srcCvl; useGpu=useGpu)
-GlaOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false) =
-    GlaCmpOprVac{dflPrc}(trgCvl, srcCvl; useGpu=useGpu)
+    useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64, qssApx::Bool=false,
+    shpCch::Bool=false) where T<:AbstractFloat =
+    GlaCmpOprVac{T}(trgCvl, srcCvl; useGpu, frqPhz, genPrc, qssApx, shpCch)
+GlaOprVac(trgCvl::GlaCmpVol, srcCvl::GlaCmpVol; useGpu::Bool=false, frqPhz=1.0+0.0im, genPrc=Float64,
+    qssApx::Bool=false, shpCch::Bool=false) =
+    GlaCmpOprVac{dflPrc}(trgCvl, srcCvl; useGpu, frqPhz, genPrc, qssApx, shpCch)
 
 #= Sign picked up by each stored tensor component when the real space kernel is
 reflected in the directions flagged in dirRfl. Storage order is xx, yy, zz, xy,
@@ -341,7 +365,9 @@ whose coefficients are (fur[m] ± conj(fur[-m])) / 2 (with an extra 1/i for the
 imaginary part). Negating the circulant index reverses a direction held in full,
 and is the reflection sign of the component in a direction stored only up to that
 reflection. A branch is even or odd in each direction, which shifts the even
-reversal by one, and never mixes with the other branches. =#
+reversal by one, and never mixes with the other branches. The subtraction is
+the one a `hrmPrt` build avoids, and loses the same digits of the imaginary
+part as `AsyGlaOprVac(opr::GlaOprVac)`. =#
 function _hrmFur!(mem::GlaVacOprMem{T}, isAsy::Bool) where T<:AbstractFloat
     brnSze = div.(mem.mixInf.trgCel .+ mem.mixInf.srcCel, 2)
     for bId in 0:7
@@ -405,8 +431,9 @@ composite volume.
 # Returns
 - `AsyGlaCmpOprVac`: The anti-Hermitian part of the composite operator
 """
+# Val(:raw) because every block already holds the part, taken before its transform
 AsyGlaCmpOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false) where T<:AbstractFloat =
-    AsyGlaCmpOprVac{T}(GlaCmpOprVac{T}(cvol; useGpu=useGpu))
+    AsyGlaCmpOprVac{T}(GlaCmpOprVac{T}(cvol; useGpu=useGpu, hrmPrt=:asy), Val(:raw))
 AsyGlaCmpOprVac(cvol::GlaCmpVol; useGpu::Bool=false) =
     AsyGlaCmpOprVac{dflPrc}(cvol; useGpu=useGpu)
 
@@ -425,7 +452,7 @@ composite volume.
 - `SymGlaCmpOprVac`: The Hermitian part of the composite operator
 """
 SymGlaCmpOprVac{T}(cvol::GlaCmpVol; useGpu::Bool=false) where T<:AbstractFloat =
-    SymGlaCmpOprVac{T}(GlaCmpOprVac{T}(cvol; useGpu=useGpu))
+    SymGlaCmpOprVac{T}(GlaCmpOprVac{T}(cvol; useGpu=useGpu, hrmPrt=:sym), Val(:raw))
 SymGlaCmpOprVac(cvol::GlaCmpVol; useGpu::Bool=false) =
     SymGlaCmpOprVac{dflPrc}(cvol; useGpu=useGpu)
 
@@ -623,6 +650,42 @@ _strKnd(opr::GlaCmpOprVac) = "composite G₀"
 _strKnd(opr::AsyGlaCmpOprVac) = "composite Asym(G₀)"
 _strKnd(opr::SymGlaCmpOprVac) = "composite Sym(G₀)"
 
+#= A scattering operator built over a composite volume gets the same "composite"
+marker its vacuum operator does, dispatched rather than branched (Phase 3). =#
+_strKnd(::InvSctOpr{T, <:GlaCmpOprVac}) where T<:AbstractFloat = "composite (I - XG₀)"
+_strKnd(::SctOpr{T, <:InvSctOpr{T, <:GlaCmpOprVac}}) where T<:AbstractFloat = "composite (I - XG₀)⁻¹"
+_strKnd(::GlaOpr{T, <:SctOpr{T, <:InvSctOpr{T, <:GlaCmpOprVac}}}) where T<:AbstractFloat = "composite G₀(I - XG₀)⁻¹"
+
+_szBytes(opr::GlaSndOprVac) = _szBytes(opr.opr)
+_szBytes(opr::GlaCmpOprVac) = sum(_szBytes, opr.blkMat)
+_szBytes(opr::Union{AsyGlaCmpOprVac, SymGlaCmpOprVac}) = _szBytes(opr.opr)
+
+function _dimStr(opr::GlaCmpOprVac)
+    numTrg, numSrc = size(opr.blkMat)
+    return isselfoperator(opr) ? "$numSrc region$(numSrc == 1 ? "" : "s")" : "$numTrg × $numSrc regions"
+end
+_dimStr(opr::Union{AsyGlaCmpOprVac, SymGlaCmpOprVac}) =
+    "$(nregions(opr.opr.srcCvl)) region$(nregions(opr.opr.srcCvl) == 1 ? "" : "s")"
+
+# The regions row replaces the bespoke composite show with a short table
+function _oprRow(opr::GlaCmpOprVac)
+    numTrg, numSrc = size(opr.blkMat)
+    numSnd = count(blk -> blk isa GlaSndOprVac, opr.blkMat)
+    rows = [("regions", "$numTrg target × $numSrc source, $numSnd fine mesh block$(numSnd == 1 ? "" : "s")"),
+        ("targets", sprint(show, opr.trgCvl))]
+    isselfoperator(opr) || push!(rows, ("sources", sprint(show, opr.srcCvl)))
+    push!(rows, ("storage", _stoRow(opr)))
+    return rows
+end
+
+function _oprRow(opr::Union{AsyGlaCmpOprVac, SymGlaCmpOprVac})
+    numReg = nregions(opr.opr.srcCvl)
+    numSnd = count(blk -> blk isa GlaSndOprVac, opr.opr.blkMat)
+    return [("regions", "$numReg region$(numReg == 1 ? "" : "s"), $numSnd fine mesh block$(numSnd == 1 ? "" : "s")"),
+        ("volume", sprint(show, opr.opr.srcCvl)),
+        ("storage", _stoRow(opr))]
+end
+
 function Base.show(io::IO, opr::GlaSndOprVac)
     isadjoint(opr) && print(io, "Adjoint ")
     print(io, isgpu(opr) ? "GPU " : "CPU ")
@@ -633,66 +696,7 @@ function Base.show(io::IO, opr::GlaSndOprVac)
 end
 Base.show(io::IO, ::MIME"text/plain", opr::GlaSndOprVac) = show(io, opr)
 
-#= The susceptibility of one cell, repeated over the three vector components of
-that cell. A region block of the flat layout is the vec of a (cel..., 3) array,
-so the three copies of a block sit one after the other. =#
-function _expSus(cvol::GlaCmpVol, susCel::Vector{Complex{T}}) where T<:AbstractFloat
-    susDof = Vector{Complex{T}}(undef, 3 * length(susCel))
-    celOff, dofOff = 0, 0
-    for reg in regions(cvol)
-        celNum = prod(reg.cel)
-        blk = view(susCel, (celOff + 1):(celOff + celNum))
-        for dir in 1:3
-            copyto!(view(susDof, (dofOff + (dir - 1) * celNum + 1):(dofOff + dir * celNum)), blk)
-        end
-        celOff += celNum
-        dofOff += 3 * celNum
-    end
-    return susDof
-end
-
-# Per-region susceptibility tensors, checked against the cell counts of the tiling
-function _tenSus(::Type{T}, cvol::GlaCmpVol, sus::AbstractVector) where T<:AbstractFloat
-    regs = regions(cvol)
-    if length(sus) != length(regs)
-        throw(ArgumentError("Got $(length(sus)) susceptibility tensors for a composite volume of $(length(regs)) regions."))
-    end
-    susCel = Vector{Complex{T}}(undef, sum(prod(reg.cel) for reg in regs))
-    celOff = 0
-    for (idx, reg) in enumerate(regs)
-        ten = sus[idx]
-        if size(ten) != Tuple(reg.cel)
-            throw(ArgumentError("The susceptibility tensor of region $idx has size $(size(ten)), but region $idx has $(join(reg.cel, "×")) cells."))
-        end
-        celNum = prod(reg.cel)
-        copyto!(view(susCel, (celOff + 1):(celOff + celNum)), vec(Array{Complex{T}}(ten)))
-        celOff += celNum
-    end
-    return susCel
-end
-
-# Any accepted susceptibility, read into the flat degree of freedom layout
-function _cmpSus(::Type{T}, cvol::GlaCmpVol, sus, useGpu::Bool=false) where T<:AbstractFloat
-    celNum = sum(prod(reg.cel) for reg in regions(cvol))
-    susDof = if sus isa Number
-        _expSus(cvol, fill(Complex{T}(sus), celNum))
-    elseif sus isa AbstractVector{<:Number}
-        length(sus) in (celNum, 3 * celNum) || throw(ArgumentError("A susceptibility vector of length $(length(sus)) fits neither the $(3 * celNum) degrees of freedom nor the $celNum cells of this composite volume."))
-        length(sus) == 3 * celNum ? Vector{Complex{T}}(Array(sus)) :
-            _expSus(cvol, Vector{Complex{T}}(Array(sus)))
-    elseif sus isa AbstractArray{<:Number, 3}
-        if nregions(cvol) != 1
-            throw(ArgumentError("A single susceptibility tensor only fits a composite volume of one region, and this one has $(nregions(cvol)). Pass one tensor per region as a vector."))
-        end
-        _expSus(cvol, _tenSus(T, cvol, [sus]))
-    elseif sus isa AbstractVector
-        _expSus(cvol, _tenSus(T, cvol, sus))
-    else
-        # Anything else is a function of the cell center
-        _expSus(cvol, [Complex{T}(sus(pos)) for (pos, _, _) in coordinates(cvol)])
-    end
-    return useGpu ? CuArray(susDof) : susDof
-end
+_srcCvl(opr::GlaCmpOprVac) = opr.srcCvl
 
 """
     InvSctOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false)
@@ -705,11 +709,11 @@ the flat degree of freedom layout of `GlaFld`. Since the susceptibility and the
 √ΔV normalization are both diagonal, they commute, and the operator in the
 normalized basis is the same expression as on a uniform mesh.
 
-The susceptibility is one scalar per cell, and it can be given as a number for a
-uniform medium, a function of the cell center returning that scalar, a vector of
-one 3-tensor per region, a vector of one value per cell in layout order, or a
-vector already in the degree of freedom layout. Every other composite scattering
-constructor takes the same forms.
+The susceptibility can be given in any of the forms `SusOpr` takes, from a number
+for a uniform medium to one 3×3 tensor per cell for an anisotropic one. Every
+other composite scattering constructor takes the same forms.
+
+Also takes the `frqPhz`, `genPrc`, `qssApx` and `shpCch` keywords of `GlaCmpOprVac`, forwarded blindly.
 
 # Arguments
 - `cvol::GlaCmpVol`: The composite volume
@@ -722,16 +726,18 @@ constructor takes the same forms.
 # Throws
 - `ArgumentError`: If the shape of `sus` does not fit the tiling
 """
-InvSctOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false) where T<:AbstractFloat =
-    InvSctOpr{T}(GlaCmpOprVac{T}(cvol; useGpu=useGpu), sus)
-InvSctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false) =
-    InvSctOpr{dflPrc}(cvol, sus; useGpu=useGpu)
+InvSctOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, kwargs...) where T<:AbstractFloat =
+    InvSctOpr{T}(GlaCmpOprVac{T}(cvol; useGpu, kwargs...), sus)
+InvSctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, kwargs...) =
+    InvSctOpr{dflPrc}(cvol, sus; useGpu, kwargs...)
 
 """
     SctOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
     SctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
 
 Construct the scattering operator `(I - XG₀)⁻¹` over a composite volume.
+
+Also takes the `frqPhz`, `genPrc`, `qssApx` and `shpCch` keywords of `GlaCmpOprVac`, forwarded blindly.
 
 # Arguments
 - `cvol::GlaCmpVol`: The composite volume
@@ -742,10 +748,10 @@ Construct the scattering operator `(I - XG₀)⁻¹` over a composite volume.
 # Returns
 - `SctOpr`: The scattering operator
 """
-SctOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat =
-    SctOpr{T}(InvSctOpr{T}(cvol, sus; useGpu=useGpu), slv)
-SctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver()) =
-    SctOpr{dflPrc}(cvol, sus; useGpu=useGpu, slv=slv)
+SctOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver(), kwargs...) where T<:AbstractFloat =
+    SctOpr{T}(InvSctOpr{T}(cvol, sus; useGpu, kwargs...), slv)
+SctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver(), kwargs...) =
+    SctOpr{dflPrc}(cvol, sus; useGpu, slv, kwargs...)
 
 """
     SctOpr(opr::GlaCmpOprVac, sus; slv::GlaSlv=BiCGStabSolver())
@@ -769,6 +775,8 @@ SctOpr(opr::GlaCmpOprVac{T}, sus; slv::GlaSlv=BiCGStabSolver()) where T<:Abstrac
 
 Construct the full Green function operator `G₀(I - XG₀)⁻¹` over a composite volume.
 
+Also takes the `frqPhz`, `genPrc`, `qssApx` and `shpCch` keywords of `GlaCmpOprVac`, forwarded blindly.
+
 # Arguments
 - `cvol::GlaCmpVol`: The composite volume
 - `sus`: The susceptibility, in any of the forms `InvSctOpr(::GlaCmpVol, sus)` takes
@@ -778,10 +786,10 @@ Construct the full Green function operator `G₀(I - XG₀)⁻¹` over a composi
 # Returns
 - `GlaOpr`: The full Green function operator
 """
-GlaOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat =
-    GlaOpr{T}(SctOpr{T}(cvol, sus; useGpu=useGpu, slv=slv))
-GlaOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver()) =
-    GlaOpr{dflPrc}(cvol, sus; useGpu=useGpu, slv=slv)
+GlaOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver(), kwargs...) where T<:AbstractFloat =
+    GlaOpr{T}(SctOpr{T}(cvol, sus; useGpu, slv, kwargs...))
+GlaOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver(), kwargs...) =
+    GlaOpr{dflPrc}(cvol, sus; useGpu, slv, kwargs...)
 
 """
     GlaOpr(opr::GlaCmpOprVac, sus; slv::GlaSlv=BiCGStabSolver())
@@ -802,18 +810,34 @@ GlaOpr(opr::GlaCmpOprVac{T}, sus; slv::GlaSlv=BiCGStabSolver()) where T<:Abstrac
 #= The tiling a scattering operator reads its input on, checked against the
 field. A plain vacuum operator carries a single volume, which is a tiling of one
 region. =#
+function _chkSctFld(oprVac::GlaCmpOprVac, fld::GlaFld)
+    fld.cvol === oprVac.srcCvl || fld.cvol == oprVac.srcCvl || throw(ArgumentError("The field lives on a different composite volume than the operator. An operator only applies to fields on the tiling it was built for."))
+    return oprVac.srcCvl
+end
+
 function _chkSctFld(oprVac::AbstractGlaVacOpr, fld::GlaFld)
-    if oprVac isa GlaCmpOprVac
-        if !(fld.cvol === oprVac.srcCvl || fld.cvol == oprVac.srcCvl)
-            throw(ArgumentError("The field lives on a different composite volume than the operator. An operator only applies to fields on the tiling it was built for."))
-        end
-        return oprVac.srcCvl
-    end
     srcVol = oprVac.mem.srcVol
     if nregions(fld.cvol) != 1 || regions(fld.cvol)[1] != srcVol
         throw(ArgumentError("The field does not live on the source volume of the operator, which is a ($(join(srcVol.cel, "×"))) cell volume of ($(join(srcVol.scl, "×")))λ³ cells."))
     end
     return fld.cvol
+end
+
+#= A susceptibility carries no normalization factor of its own: it is
+dimensionless and diagonal in position, so it commutes with the √ΔV of GlaFld. =#
+function _chkSusFld(opr::SusOpr, fld::GlaFld)
+    if !_eqvCvl(fld.cvol, opr.cvol)
+        throw(ArgumentError("The field lives on a different composite volume than the susceptibility. A susceptibility only applies to fields on the tiling it was built for."))
+    end
+    return opr.cvol
+end
+function Base.:*(opr::SusOpr{T}, fld::GlaFld{T}) where T<:AbstractFloat
+    cvol = _chkSusFld(opr, fld)
+    return GlaFld(opr * fld.dat, cvol)
+end
+function Base.:\(opr::SusOpr{T}, fld::GlaFld{T}) where T<:AbstractFloat
+    cvol = _chkSusFld(opr, fld)
+    return GlaFld(opr \ fld.dat, cvol)
 end
 
 """
@@ -831,6 +855,7 @@ Apply an inverse scattering operator to a field.
 # Throws
 - `ArgumentError`: If the field lives on a different tiling
 """
+
 function Base.:*(opr::InvSctOpr{T}, fld::GlaFld{T}) where T<:AbstractFloat
     cvol = _chkSctFld(opr.oprVac, fld)
     return GlaFld(opr * fld.dat, cvol)
@@ -863,30 +888,30 @@ Base.:*(opr::GlaOpr{T}, fld::GlaFld{T}) where T<:AbstractFloat = isadjoint(opr) 
     opr.sctOpr * (opr.sctOpr.invSctOpr.oprVac * fld) :
     opr.sctOpr.invSctOpr.oprVac * (opr.sctOpr * fld)
 
-function Base.show(io::IO, opr::GlaCmpOprVac)
-    numTrg, numSrc = size(opr.blkMat)
-    isadjoint(opr) && print(io, "Adjoint ")
-    print(io, isgpu(opr) ? "GPU " : "CPU ")
-    print(io, isselfoperator(opr) ? "self " : "external ")
-    print(io, "composite G₀ ($numTrg target region", numTrg == 1 ? "" : "s",
-        " × $numSrc source region", numSrc == 1 ? "" : "s", ")")
-    numSnd = count(blk -> blk isa GlaSndOprVac, opr.blkMat)
-    print(io, "\n  $(size(opr, 1)) × $(size(opr, 2)) degrees of freedom, ",
-        "$numSnd fine mesh block", numSnd == 1 ? "" : "s")
-    print(io, "\n  targets: ", opr.trgCvl)
-    isselfoperator(opr) || print(io, "\n  sources: ", opr.srcCvl)
-end
-Base.show(io::IO, ::MIME"text/plain", opr::GlaCmpOprVac) = show(io, opr)
+"""
+    \\(opr::AbstractGlaOpr, fld::GlaFld)
+    ldiv!(out::GlaFld, opr::AbstractGlaOpr, inp::GlaFld)
 
-function Base.show(io::IO, opr::Union{AsyGlaCmpOprVac, SymGlaCmpOprVac})
-    numReg = nregions(opr.opr.srcCvl)
-    print(io, isgpu(opr) ? "GPU " : "CPU ")
-    print(io, "self ", _strKnd(opr), " ($numReg region",
-        numReg == 1 ? "" : "s", ")")
-    numSnd = count(blk -> blk isa GlaSndOprVac, opr.opr.blkMat)
-    print(io, "\n  $(size(opr, 1)) × $(size(opr, 2)) degrees of freedom, ",
-        "$numSnd fine mesh block", numSnd == 1 ? "" : "s")
-    print(io, "\n  ", opr.opr.srcCvl)
+Solve `opr * out = fld` on the tiling the field lives on.
+
+As for a vector, the solve is iterative and uses the operator's own solver
+(`slv(opr)`). It runs on the flat buffer and rewraps: a solver allocates its
+Krylov basis with a matrix shaped `similar`, which a `GlaFld` cannot answer with
+a field, so the tiling has to ride along outside the solve.
+
+# Returns
+- `GlaFld`: The solution, on the tiling of `fld`
+
+# Throws
+- `ArgumentError`: If the field lives on a different tiling than the operator
+"""
+function Base.:\(opr::AbstractGlaOpr{T}, fld::GlaFld{T}) where T<:AbstractFloat
+    cvol = _chkSctFld(GlaOprVac(opr), fld)
+    return GlaFld(opr \ fld.dat, cvol)
 end
-Base.show(io::IO, ::MIME"text/plain",
-    opr::Union{AsyGlaCmpOprVac, SymGlaCmpOprVac}) = show(io, opr)
+function LinearAlgebra.ldiv!(out::GlaFld{T}, opr::AbstractGlaOpr{T}, inp::GlaFld{T}) where T<:AbstractFloat
+    _chkSctFld(GlaOprVac(opr), inp)
+    ldiv!(out.dat, opr, inp.dat)
+    return out
+end
+

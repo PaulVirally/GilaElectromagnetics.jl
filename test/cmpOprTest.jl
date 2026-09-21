@@ -5,6 +5,7 @@
 # the fine cells it covers, and the √ΔV basis puts sqrt(ΔVᵢ/ΔVⱼ) on block (i, j).
 import GilaElectromagnetics.GilaVolumes: _lwrEdg
 import GilaElectromagnetics.GilaVacuum: arrTyp
+import GilaElectromagnetics.GilaOperators: _nrmWgt
 
 # The smallest tiling this file uses: one region of 2×2×2 cells of 1/16 λ
 const smlVol = GlaVol((2, 2, 2), scl16, stdOrg)
@@ -178,6 +179,8 @@ the same block matrix, so a matvec costs one application of G₀. =#
     @test useCpu!(asyOpr) === asyOpr
     @test occursin("composite Asym(G₀)", sprint(show, asyOpr))
     @test occursin("composite Sym(G₀)", sprint(show, symOpr))
+    @test !occursin("\n", sprint(show, asyOpr))
+    @test sprint(show, MIME"text/plain"(), asyOpr) != sprint(show, asyOpr)
 
     asyDns, symDns = dnsMat(asyOpr), dnsMat(symOpr)
     @test all(isfinite, asyDns)
@@ -259,6 +262,31 @@ end
     @test prxBld(() -> GlaOprVac{Float64}(mnyCvl, srcCvl)) isa GlaCmpOprVac
 end
 
+@testset "Composite operator gapped tiling" begin
+    # One tiling holding two separated regions of different cell size
+    gapCvl = GlaCmpVol([smlVol, GlaVol((4, 4, 4), stdScl, (1//2, 0//1, 0//1))])
+    opr = GlaCmpOprVac{Float64}(gapCvl)
+    @test isselfoperator(opr)
+    @test isselfoperator(opr.blkMat[1, 1])
+    @test isselfoperator(opr.blkMat[2, 2])
+    @test isexternaloperator(opr.blkMat[1, 2])
+    @test isexternaloperator(opr.blkMat[2, 1])
+    # Apart, so every block is a plain operator rather than a fine mesh one
+    @test cmpBlkCnt(opr) == (2, 2, 0, 0)
+    #= The dense form assembles from the blocks each region pair would build on
+    its own, scaled by the √ΔV weight of the pair. =#
+    regs = regions(gapCvl)
+    off = cumsum([0; [3 * prod(reg.cel) for reg in regs]])
+    ref = zeros(ComplexF64, off[end], off[end])
+    for trgIdx in 1:2, srcIdx in 1:2
+        blk = trgIdx == srcIdx ? GlaOprVac{Float64}(regs[trgIdx]) :
+            GlaOprVac{Float64}(regs[trgIdx], regs[srcIdx]; prxWrn=false)
+        ref[(off[trgIdx] + 1):off[trgIdx + 1], (off[srcIdx] + 1):off[srcIdx + 1]] .=
+            _nrmWgt(regs[trgIdx], regs[srcIdx]) .* dnsMat(blk)
+    end
+    @test frbErr(dnsMat(opr), ref) < 1e-14
+end
+
 @testset "Composite operator cross-scale near pair" begin
     # A coarse volume and a fine one, one coarse cell apart in x
     trgCvl = GlaCmpVol(GlaVol((4, 4, 4), stdScl, (3//16, 0//1, 0//1)))
@@ -327,6 +355,8 @@ end
     @test arrTyp(opr) <: Array
     @test useCpu!(opr) === opr
     @test occursin("composite G₀", sprint(show, opr))
+    @test !occursin("\n", sprint(show, opr))
+    @test sprint(show, MIME"text/plain"(), opr) != sprint(show, opr)
 end
 
 @testset "Plain against composite on a field" begin

@@ -1,4 +1,5 @@
 # GilaSolvers tests
+import GilaElectromagnetics.GilaSolvers: slvPrm
 
 @testset "Solver constructors" begin
     gmr = GMRESSolver()
@@ -15,7 +16,7 @@
     rfn = MixPrcRfn(Float32)
     @test rfn isa MixPrcRfn{Float32}
     @test rfn.innSlv isa GMRESSolver
-    @test isnothing(rfn.oprLo)
+    @test rfn.cch[] == (nothing, nothing)
     @test isnothing(rfn.maxItr)
     @test isnothing(rfn.absTol)
     @test isnothing(rfn.relTol)
@@ -23,58 +24,54 @@
     @test MixPrcRfn(Float32; innSlv=BiCGStabSolver()).innSlv isa BiCGStabSolver
 end
 
-@testset "ini! defaults" begin
+@testset "slvPrm defaults" begin
     n = 100
     v = zeros(ComplexF64, n)
 
-    gmr = GMRESSolver()
-    ini!(gmr, v)
-    @test gmr.rstItr == min(20, n)
-    @test gmr.maxItr == max(5000, n)
-    @test gmr.absTol == zero(Float64)
-    @test gmr.relTol == sqrt(eps(Float64))
+    @test slvPrm(GMRESSolver(), v) == (rstItr=min(20, n), maxItr=max(5000, n),
+        absTol=zero(Float64), relTol=sqrt(eps(Float64)))
+    @test slvPrm(BiCGStabSolver(), v) ==
+        (maxItr=n, absTol=zero(Float64), relTol=sqrt(eps(Float64)))
+    @test slvPrm(MixPrcRfn(Float32), v) ==
+        (maxItr=20, absTol=zero(Float64), relTol=sqrt(eps(Float64)))
 
-    # Pre-set fields are not overwritten
-    gmr2 = GMRESSolver(5, 1000, 1e-10, 1e-8)
-    ini!(gmr2, v)
-    @test gmr2.rstItr == 5
-    @test gmr2.maxItr == 1000
-    @test gmr2.absTol == 1e-10
-    @test gmr2.relTol == 1e-8
+    # Set fields are passed through
+    @test slvPrm(GMRESSolver(5, 1000, 1e-10, 1e-8), v) ==
+        (rstItr=5, maxItr=1000, absTol=1e-10, relTol=1e-8)
+    @test slvPrm(BiCGStabSolver(500, 1e-9, 1e-7), v) ==
+        (maxItr=500, absTol=1e-9, relTol=1e-7)
+    @test slvPrm(MixPrcRfn(Float32; maxItr=7, absTol=1e-9, relTol=1e-10), v) ==
+        (maxItr=7, absTol=1e-9, relTol=1e-10)
+end
 
-    bcg = BiCGStabSolver()
-    ini!(bcg, v)
-    @test bcg.maxItr == n
-    @test bcg.absTol == zero(Float64)
-    @test bcg.relTol == sqrt(eps(Float64))
+#= A solver instance carries no problem: the settings used to be written back
+into the struct, and MixPrcRfn's low precision copy used to be kept across a
+change of operator, so a reused solver answered the second problem with the
+first one's tolerances or the first one's Green function. =#
+@testset "solver reuse" begin
+    opr32 = InvSctOpr(GlaOprVac{Float32}(_g0s()), ComplexF32.(_sus2s))
+    opr64 = _invSct()
+    rhs32 = normalize(ones(ComplexF32, size(opr32, 1)))
+    rhs64 = normalize(ones(ComplexF64, size(opr64, 1)))
+    for mkSlv in (BiCGStabSolver, GMRESSolver)
+        slv = mkSlv()
+        solve(opr32, copy(rhs32), slv)
+        @test solve(opr64, copy(rhs64), slv) ≈ solve(opr64, copy(rhs64), mkSlv()) rtol=1e-12
+    end
 
-    # Pre-set fields are not overwritten
-    bcg2 = BiCGStabSolver(500, 1e-9, 1e-7)
-    ini!(bcg2, v)
-    @test bcg2.maxItr == 500
-    @test bcg2.absTol == 1e-9
-    @test bcg2.relTol == 1e-7
-
+    oprAsy = InvSctOpr(_asy(), _sus4) # Same size and precision, different kernel
     rfn = MixPrcRfn(Float32)
-    ini!(rfn, v)
-    @test rfn.maxItr == 20
-    @test rfn.absTol == zero(Float64)
-    @test rfn.relTol == sqrt(eps(Float64))
-
-    # Pre-set fields are not overwritten
-    rfn2 = MixPrcRfn(Float32; maxItr=7, absTol=1e-9, relTol=1e-10)
-    ini!(rfn2, v)
-    @test rfn2.maxItr == 7
-    @test rfn2.absTol == 1e-9
-    @test rfn2.relTol == 1e-10
+    solve(opr64, copy(rhs64), rfn)
+    @test solve(oprAsy, copy(rhs64), rfn) ≈
+        solve(oprAsy, copy(rhs64), MixPrcRfn(Float32)) rtol=1e-12
 end
 
 @testset "MixPrcRfn precision guards" begin
     opr32 = GlaOprVac{Float32}(_g0s()) # Converted, so no integration cost
     n = size(opr32, 2)
-    # Refining fp32 with fp32, and any operator/right hand side mismatch, throw
+    # Refining fp32 with fp32 throws; an operator/right hand side mismatch has no method
     @test_throws ArgumentError solve(opr32, zeros(ComplexF32, n), MixPrcRfn(Float32))
-    @test_throws ArgumentError solve(opr32, zeros(ComplexF64, n), MixPrcRfn(Float32))
+    @test_throws MethodError solve(opr32, zeros(ComplexF64, n), MixPrcRfn(Float32))
 end
 
 # G₀ is indefinite where (I - XG₀) is not, so both are worth a residual

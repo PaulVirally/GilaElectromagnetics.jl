@@ -64,8 +64,8 @@ end
     uprEdg2 = last.(v2.grd) .+ (v2.scl .// 2)
     lwrEdgU = first.(uni.grd) .- (uni.scl .// 2)
     uprEdgU = last.(uni.grd) .+ (uni.scl .// 2)
-    @test Tuple(lwrEdgU) == Tuple(min.(lwrEdg1, first.(v2.grd) .- v2.scl .// 2))
-    @test Tuple(uprEdgU) == Tuple(uprEdg2)
+    @test lwrEdgU == min.(lwrEdg1, first.(v2.grd) .- v2.scl .// 2)
+    @test uprEdgU == uprEdg2
     @test uni.scl == min.(v1.scl, v2.scl)
     @test all(isinteger.(uni.cel))
     # Base.union agrees
@@ -172,4 +172,13 @@ end
     # Negative separation wraps with +2*cel+1 per dim: -2 + 2*4 + 1 == 7
     @test crcIndClc(cntVol, CartesianIndex(1,1,1), CartesianIndex(3,3,3)) ==
         CartesianIndex(7, 7, 7)
+end
+
+@testset "GlaVol show" begin
+    vol = mkVol((4,4,4))
+    str = sprint(show, vol)
+    @test occursin("4×4×4", str) && occursin("1//32", str)
+    @test !occursin("grid", str) # grdScl == celScl by default, so no grid row
+    volGap = GlaVol((4,4,4), stdScl, stdOrg, scl16)
+    @test occursin("grid", sprint(show, volGap))
 end

@@ -48,8 +48,8 @@ const sctOne = GlaCmpVol(GlaVol((2, 2, 2), scl16, stdOrg))
     @test size(sctInv) == (216, 216)
     @test size(sctInv, 1) == 216 && size(sctInv, 2) == 216
     @test eltype(sctInv) == ComplexF64
-    @test length(sctInv.sus) == 216
-    @test sctInv.sus isa Vector{ComplexF64}
+    @test length(sus(sctInv).sus) == 216
+    @test sus(sctInv).sus isa Vector{ComplexF64}
     @test isselfoperator(sctInv)
     @test !isexternaloperator(sctInv)
     @test !isadjoint(sctInv)
@@ -64,6 +64,9 @@ const sctOne = GlaCmpVol(GlaVol((2, 2, 2), scl16, stdOrg))
     @test slv(sct) isa BiCGStabSolver
     @test occursin("composite", sprint(show, sctInv))
     @test occursin("composite", sprint(show, gla))
+    @test !occursin("\n", sprint(show, sctInv)) && !occursin("\n", sprint(show, gla))
+    @test sprint(show, MIME"text/plain"(), sctInv) != sprint(show, sctInv)
+    @test sprint(show, MIME"text/plain"(), gla) != sprint(show, gla)
     # The composite volume takes the place of the volume in every constructor
     @test InvSctOpr{Float64}(sctOne, 0.5 + 0.1im) isa InvSctOpr
     @test SctOpr{Float64}(sctOne, 0.5 + 0.1im; slv=GMRESSolver()) isa SctOpr
@@ -77,12 +80,12 @@ end
 
 @testset "Composite scattering dense identity" begin
     vacMat = dnsMat(sctVac)
-    ref = Matrix{ComplexF64}(I, 216, 216) - Diagonal(sctInv.sus) * vacMat
+    ref = Matrix{ComplexF64}(I, 216, 216) - Diagonal(sus(sctInv).sus) * vacMat
     @test frbErr(sctMat, ref) < 1e-13
     # The susceptibility is one value per cell, repeated over the components
     susCel = [ComplexF64(sctChi(pos)) for (pos, _, _) in coordinates(sctCvl)]
-    @test sctInv.sus[1:64] ≈ susCel[1:64]
-    @test sctInv.sus[65:128] ≈ susCel[1:64]
+    @test sus(sctInv).sus[1:64] ≈ susCel[1:64]
+    @test sus(sctInv).sus[65:128] ≈ susCel[1:64]
 end
 
 @testset "Composite scattering adjoint" begin
@@ -133,19 +136,19 @@ end
 @testset "Composite scattering susceptibility forms" begin
     susFun = sctSusRef(sctCvl, sctChi)
     # A number fills every cell
-    @test InvSctOpr(sctVac, 0.5 + 0.1im).sus == fill(ComplexF64(0.5, 0.1), 216)
+    @test sus(InvSctOpr(sctVac, 0.5 + 0.1im)).sus == fill(ComplexF64(0.5, 0.1), 216)
     # A function of position is sampled at the cell centers
-    @test InvSctOpr(sctVac, sctChi).sus ≈ susFun
+    @test sus(InvSctOpr(sctVac, sctChi)).sus ≈ susFun
     # One value per cell, and one value per degree of freedom
     susCel = [ComplexF64(sctChi(pos)) for (pos, _, _) in coordinates(sctCvl)]
     @test length(susCel) == 72
-    @test InvSctOpr(sctVac, susCel).sus ≈ susFun
-    @test InvSctOpr(sctVac, susFun).sus == susFun
+    @test sus(InvSctOpr(sctVac, susCel)).sus ≈ susFun
+    @test sus(InvSctOpr(sctVac, susFun)).sus == susFun
     # One tensor per region
     tenSus = [reshape(susCel[1:64], (4, 4, 4)), reshape(susCel[65:72], (2, 2, 2))]
-    @test InvSctOpr(sctVac, tenSus).sus ≈ susFun
+    @test sus(InvSctOpr(sctVac, tenSus)).sus ≈ susFun
     # A bare tensor only fits a tiling of one region
-    @test InvSctOpr{Float64}(sctOne, fill(ComplexF64(0.3), 2, 2, 2)).sus == fill(ComplexF64(0.3), 24)
+    @test sus(InvSctOpr{Float64}(sctOne, fill(ComplexF64(0.3), 2, 2, 2))).sus == fill(ComplexF64(0.3), 24)
     @test_throws ArgumentError InvSctOpr(sctVac, fill(ComplexF64(0.3), 4, 4, 4))
     # Sizes that do not fit the tiling
     @test_throws ArgumentError InvSctOpr(sctVac, [fill(ComplexF64(0.3), 4, 4, 4), fill(ComplexF64(0.3), 3, 3, 3)])
@@ -156,22 +159,22 @@ end
 
 @testset "Composite scattering setSus!" begin
     opr = InvSctOpr(sctVac, 0.2 + 0.0im)
-    @test opr.sus == fill(ComplexF64(0.2), 216)
+    @test sus(opr).sus == fill(ComplexF64(0.2), 216)
     susFun = sctSusRef(sctCvl, sctChi)
     setSus!(opr, sctChi)
-    @test opr.sus ≈ susFun
+    @test sus(opr).sus ≈ susFun
     setSus!(opr, 0.2 + 0.0im)
-    @test opr.sus == fill(ComplexF64(0.2), 216)
+    @test sus(opr).sus == fill(ComplexF64(0.2), 216)
     setSus!(opr, susFun)
-    @test opr.sus == susFun
+    @test sus(opr).sus == susFun
     @test_throws ArgumentError setSus!(opr, randn(ComplexF64, 100))
     # The setter reaches through the wrappers
     sct = SctOpr(sctVac, 0.2 + 0.0im)
     setSus!(sct, sctChi)
-    @test sct.invSctOpr.sus ≈ susFun
+    @test sus(sct).sus ≈ susFun
     gla = GlaOpr(sctVac, 0.2 + 0.0im)
     setSus!(gla, sctChi)
-    @test gla.sctOpr.invSctOpr.sus ≈ susFun
+    @test sus(gla).sus ≈ susFun
 end
 
 @testset "Composite scattering on a uniform mesh" begin
@@ -220,7 +223,7 @@ end
     if CUDA.functional()
         oprGpu = InvSctOpr{Float64}(sctCvl, sctChi; useGpu=true)
         @test isgpu(oprGpu)
-        @test oprGpu.sus isa CuVector{ComplexF64}
+        @test sus(oprGpu).sus isa CuVector{ComplexF64}
         fldGpu = discretize!(zerofield(Float64, sctCvl; useGpu=true), sctCur)
         outGpu = oprGpu * fldGpu
         @test outGpu isa GlaFld

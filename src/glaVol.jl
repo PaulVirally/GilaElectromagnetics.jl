@@ -1,4 +1,5 @@
 module GilaVolumes
+import ..GilaTypes: _shwRow
 """
     GilaVolumes
 
@@ -27,16 +28,16 @@ export GlaCmpVol, CompositeVolume, refine, regions, nregions, coordinates, cellv
 Basic spatial memory structure for a rectangular prism volume.
 
 # Fields
-- `cel::NTuple{3,Integer}`: Number of cells in each dimension of the volume
-- `scl::NTuple{3,Rational}`: Relative side length of a cuboid voxel (cell) compared to the wavelength
-- `org::NTuple{3,Rational}`: Center position of the domain
-- `grd::Array{<:StepRange,1}`: Spatial location of the center of each cell contained in the volume
+- `cel::NTuple{3,Int}`: Number of cells in each dimension of the volume
+- `scl::NTuple{3,Rational{Int}}`: Relative side length of a cuboid voxel (cell) compared to the wavelength
+- `org::NTuple{3,Rational{Int}}`: Center position of the domain
+- `grd::NTuple{3,StepRange{Rational{Int},Rational{Int}}}`: Spatial location of the center of each cell contained in the volume
 """
 struct GlaVol
-    cel::NTuple{3,Integer}
-    scl::NTuple{3,Rational}
-    org::NTuple{3,Rational}
-    grd::Array{<:StepRange,1}
+    cel::NTuple{3,Int}
+    scl::NTuple{3,Rational{Int}}
+    org::NTuple{3,Rational{Int}}
+    grd::NTuple{3,StepRange{Rational{Int},Rational{Int}}}
     # boundary conditions here?
 end
 
@@ -65,13 +66,35 @@ function GlaVol(cel::Union{Array{<:Integer,1},NTuple{3,Integer}},
         error("The cell scale must be smaller than the grid scale to avoid 
         partially overlapping basis elements.")
     end 
+    cel = Tuple(cel) # a Vector cel would broadcast the grid into a Vector
     brd = grdScl .* (Rational.(floor.(cel ./ 2)) .- (iseven.(cel) .// 2))
     grd = map(StepRange, org .- brd, grdScl, org .+ brd)
-    return GlaVol(Tuple(cel), celScl, org, [grd...])
+    return GlaVol(cel, celScl, org, grd)
 end
 
 function Base.:(==)(a::GlaVol, b::GlaVol)
     return a.cel == b.cel && a.scl == b.scl && a.org == b.org && a.grd == b.grd
+end
+
+# A cell scale, as one rational times λ when isotropic, else one per dimension
+_sclStr(scl::NTuple{3,Rational}) = allequal(scl) ? "$(first(scl)) λ" : join(scl, "×") * " λ"
+
+# A rational shown as a plain integer when it has no fractional part
+_ratStr(r::Rational) = isinteger(r) ? string(numerator(r)) : string(r)
+
+#= A volume's cell grid and physical extent, joined by sep. Shared with the
+"volume" row of an operator's show in GilaOperators. =#
+_volDesc(vol::GlaVol, sep::AbstractString) = string(join(vol.cel, "×"), " cells of ",
+    _sclStr(vol.scl), sep, join(vol.scl .* vol.cel, " × "), " λ³ at (",
+    join(_ratStr.(vol.org), ", "), ")")
+
+#= The grid step only differs from the cell scale for a lattice with gaps
+between cells (grdScl > celScl in the constructor), which is otherwise
+invisible — so the row only appears then. =#
+function Base.show(io::IO, vol::GlaVol)
+    print(io, "GlaVol: ", _volDesc(vol, " — "))
+    grdScl = step.(vol.grd)
+    grdScl == vol.scl || _shwRow(io, "grid", "step $(_sclStr(grdScl))")
 end
 
 # Create the union volume of two overlapping volumes
@@ -92,8 +115,8 @@ function uniVol(vol1::GlaVol, vol2::GlaVol)
 
     cel = (maxEdg .- minEdg) .// scl
     @assert all(isinteger.(cel)) "Computed union volume cell counts must be integers"
-    cel = Tuple(numerator.(cel))
-    org = Tuple(minEdg .+ (cel .* scl .// 2))
+    cel = numerator.(cel)
+    org = minEdg .+ (cel .* scl .// 2)
     return GlaVol(cel, scl, org)
 end
 
@@ -135,7 +158,7 @@ function genVolEve(glaVol::GlaVol)
         newGrdScl = map(//, numerator.(oldGrdScl) .* glaVol.cel, 
             denominator.(oldGrdScl) .* newCelNum)
         # regenerate volume
-        return GlaVol(Tuple(newCelNum), newCelScl, glaVol.org, Tuple(newGrdScl))
+        return GlaVol(Tuple(newCelNum), newCelScl, glaVol.org, newGrdScl)
     # otherwise, everything is fine
     else
         return glaVol
@@ -322,12 +345,8 @@ function sepGrd(trgVol::GlaVol, srcVol::GlaVol,
                 getproperty.(srcVol.grd, :start)
     end 
     # match step to separation orientation
-    for dir ∈ 1:3
-        if stp[dir] < str[dir]
-            sep[dir] *= -1
-        end
-    end
-    return map(StepRange, str, sep, stp) 
+    sep = ntuple(dir -> stp[dir] < str[dir] ? -sep[dir] : sep[dir], 3)
+    return collect(map(StepRange, str, sep, stp))
 end
 
 """

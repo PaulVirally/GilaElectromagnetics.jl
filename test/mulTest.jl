@@ -5,11 +5,12 @@ const mulExt = GlaOprVac{Float64}(GlaVol((2,2,2), stdScl, (4//32, 0//1, 0//1)), 
 const mulCvl = GlaCmpVol([GlaVol((2,2,2), scl16, stdOrg),
     GlaVol((2,2,2), scl16, (1//8, 0//1, 0//1))])
 const mulCmp = GlaCmpOprVac{Float64}(mulCvl)
-const mulMlr = MulRegGlaOprVac(reshape(
-    [GlaOprVac(deepcopy(_selfMem4)), GlaOprVac(deepcopy(_extMem4))], 2, 1))
+# Two regions a wavelength apart, so the tiling has a gap
+const mulGap = GlaCmpOprVac{Float64}(GlaCmpVol([_vol2s,
+    GlaVol((2,2,2), stdScl, extOrg)]))
 
 const mulOprs = (_g0s(), _asys(), SymGlaOprVac(_g0s()), mulExt, _invScts(),
-    _scts(), _glas(), mulCmp, mulMlr)
+    _scts(), _glas(), mulCmp, mulGap)
 
 const mulNaN = ComplexF64(NaN, NaN)
 const mulScls = (0.0, 1.0, 2.0 + 1.0im)
@@ -146,7 +147,7 @@ end
 end
 
 # Counts the matvecs a solve takes, so the allocation cap can be read in matvecs
-mutable struct MulCntOpr{OT}
+mutable struct MulCntOpr{OT} <: AbstractGlaOpr{Float64}
     opr::OT
     cnt::Int
 end
@@ -155,7 +156,7 @@ LinearAlgebra.mul!(out::AbstractVector{ComplexF64}, opr::MulCntOpr,
 Base.size(opr::MulCntOpr, dim::Int) = size(opr.opr, dim)
 
 # A matvec that allocates nothing, so a solve's own allocation is all that is left
-struct MulDiaOpr
+struct MulDiaOpr <: AbstractGlaOpr{Float64}
     dia::Vector{ComplexF64}
 end
 LinearAlgebra.mul!(out::AbstractVector{ComplexF64}, opr::MulDiaOpr,
