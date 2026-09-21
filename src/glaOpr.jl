@@ -33,6 +33,7 @@ import ..GilaTypes: isgpu, isadjoint, _shwRow
 import ..GilaVacuum: useCpu!, useGpu!, egoCmpPos
 import ..GilaVolumes: _lwrEdg, _uprEdg, _ovrLap, _volDesc, _sclStr, _ratStr
 import ..GilaFields: _eqvCvl
+import ..GilaSolvers: isvarying
 
 export GlaOprVac, AsyGlaOprVac, SymGlaOprVac, GlaCmpOprVac, AsyGlaCmpOprVac, SymGlaCmpOprVac, InvSctOpr, SctOpr, GlaOpr, SusOpr
 export VacuumGreenOperator, AsymVacuumGreenOperator, SymVacuumGreenOperator, CompositeVacuumGreenOperator, AsymCompositeVacuumGreenOperator, SymCompositeVacuumGreenOperator, InverseScatteringOperator, ScatteringOperator, GreenOperator, SusceptibilityOperator
