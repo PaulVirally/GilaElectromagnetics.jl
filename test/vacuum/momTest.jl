@@ -4,7 +4,7 @@ than in src: parMom never needs a sub-geometry name, only these tests do. =#
 using Test, GilaElectromagnetics, DoubleFloats
 const GVM = GilaElectromagnetics.GilaVacuum
 
-# the 15 canonical touching sub-geometries of notes/moments/moments.pdf
+# the 15 canonical ways two axis-aligned rectangular panels can touch
 function canPnl(cod::AbstractString, a::T, b::T, c::T) where {T}
     z = zero(T)
     A = ((z, a), (z, b), (z, z))

@@ -1,5 +1,5 @@
 # I_m = int_A int_B |x - y|^m dS' dS for the canonical touching sub-geometries,
-# curated from notes/moments/refcache.txt (220-bit reference, notes/gen/ref/mom.jl).
+# evaluated at 220 bits.
 # Columns: sub-code, edge lengths a b c, m, I_m.  The panel pair is canonPanels.
 # Read only by tests, never by a build.
 S 1.00000000000000000000000000000000000000000000000000000000000e+00 1.00000000000000000000000000000000000000000000000000000000000e+00 1.00000000000000000000000000000000000000000000000000000000000e+00 -1 2.97320959824737870252818566763957179801974547921061087877759e+00

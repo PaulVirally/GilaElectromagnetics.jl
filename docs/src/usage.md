@@ -87,7 +87,7 @@ by it.
 
 Every operator and field carries a real type parameter `T<:AbstractFloat`
 (`Float32` or `Float64`); the underlying data is `Complex{T}`. Unparameterized
-constructors default to `T = dfltPrc`, which is `Float32`:
+constructors default to `T = dflPrc`, which is `Float32`:
 
 ```julia
 CPUKerOpt()             # CPUKerOpt{Float32}

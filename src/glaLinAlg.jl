@@ -16,7 +16,12 @@ function glaSze(opr::GlaOprVac)
     return ((opr.mem.trgVol.cel..., 3), (opr.mem.srcVol.cel..., 3))
 end
 glaSze(opr::Union{AsyGlaOprVac, SymGlaOprVac}) = ((opr.mem.trgVol.cel..., 3), (opr.mem.srcVol.cel..., 3))
-glaSze(opr::MulRegGlaOprVac) = glaSze.(opr.oprMat)
+#= As for GlaCmpOprVac: a tiling of one region has the tensor shape of that
+region, a tiling of several has one shape per region and no tensor form. =#
+function glaSze(opr::SusOpr)
+    sze = map(reg -> (reg.cel..., 3), regions(opr.cvol))
+    return length(sze) == 1 ? (sze[1], sze[1]) : (sze, sze)
+end
 glaSze(opr::InvSctOpr) = glaSze(opr.oprVac)
 glaSze(opr::SctOpr) = glaSze(opr.invSctOpr)
 glaSze(opr::GlaOpr) = glaSze(opr.sctOpr)
@@ -31,7 +36,6 @@ Returns the size of the input/output arrays for an `AbstractGlaOpr` in tensor fo
 - `dim::Int`: The index of the dimension to check.
 """
 glaSze(opr::AbstractGlaOpr, dim::Int) = glaSze(opr)[dim]
-glaSze(opr::MulRegGlaOprVac, dim::Int) = map(x -> x[dim], glaSze(opr))
 glaSze(opr::InvSctOpr, dim::Int) = glaSze(opr.oprVac, dim)
 glaSze(opr::SctOpr, dim::Int) = glaSze(opr.invSctOpr, dim)
 glaSze(opr::GlaOpr, dim::Int) = glaSze(opr.sctOpr, dim)
@@ -40,47 +44,32 @@ glaSze(opr::GlaOpr, dim::Int) = glaSze(opr.sctOpr, dim)
 Base.eltype(::AbstractGlaOpr{T}) where T<:AbstractFloat = Complex{T}
 Base.eltype(::Type{<:AbstractGlaOpr{T}}) where T<:AbstractFloat = Complex{T}
 Base.size(opr::AbstractGlaOpr) = prod.(glaSze(opr))
-function Base.size(opr::MulRegGlaOprVac)
-    rowSzs = [size(opr.oprMat[i, 1], 1) for i in axes(opr.oprMat, 1)]
-    colSzs = [size(opr.oprMat[1, j], 2) for j in axes(opr.oprMat, 2)]
-    return (sum(rowSzs), sum(colSzs))
-end
 Base.size(opr::AbstractGlaOpr, i::Int) = prod(glaSze(opr, i))
-Base.size(opr::MulRegGlaOprVac, i::Int) = size(opr)[i]
+function Base.size(opr::SusOpr)
+    dofNum = sum(3 * prod(reg.cel) for reg in regions(opr.cvol))
+    return (dofNum, dofNum)
+end
+Base.size(opr::SusOpr, i::Int) = size(opr)[i]
 Base.size(opr::InvSctOpr) = size(opr.oprVac)
 Base.size(opr::SctOpr) = size(opr.invSctOpr)
 Base.size(opr::GlaOpr) = size(opr.sctOpr)
 Base.size(opr::Union{InvSctOpr, SctOpr, GlaOpr}, i::Int) = size(opr)[i]
 
-# Array type definition
-Base.similar(opr::AbstractGlaOpr) = arrTyp(opr)(undef, size(opr, 1), size(opr, 2))
-function Base.similar(opr::AbstractGlaOpr, ::Type{T}) where T
-    AT = arrTyp(opr)
-    if AT <: CuArray
-        return CuArray{T}(undef, size(opr, 1), size(opr, 2))
-    else
-        return Array{T}(undef, size(opr, 1), size(opr, 2))
-    end
-end
-function Base.similar(opr::AbstractGlaOpr, dims::Tuple{Vararg{Int}})
-    AT = arrTyp(opr)
-    if AT <: CuArray
-        return CuArray{eltype(opr)}(undef, dims...)
-    else
-        return Array{eltype(opr)}(undef, dims...)
-    end
-end
+# A work array of the requested shape on the device the operator computes with
 function Base.similar(opr::AbstractGlaOpr, ::Type{T}, dims::Tuple{Vararg{Int}}) where T
-    AT = arrTyp(opr)
-    if AT <: CuArray
-        return CuArray{T}(undef, dims...)
-    else
-        return Array{T}(undef, dims...)
-    end
+    arrTyp(opr) <: CuArray && return CuArray{T}(undef, dims...)
+    return Array{T}(undef, dims...)
 end
+Base.similar(opr::AbstractGlaOpr, dims::Tuple{Vararg{Int}}) = similar(opr, eltype(opr), dims)
+
+#= The shape methods an AbstractArray would have supplied. Densification is asked
+for by name through Matrix, never as a side effect of a fallback. =#
+Base.axes(opr::AbstractGlaOpr) = map(Base.OneTo, size(opr))
+Base.axes(opr::AbstractGlaOpr, dim::Int) = axes(opr)[dim]
+Base.CartesianIndices(opr::AbstractGlaOpr) = CartesianIndices(axes(opr))
+Base.Matrix(opr::AbstractGlaOpr) = opr[:, :]
 
 # Indexing functions
-Base.IndexStyle(::Type{<:AbstractGlaOpr}) = IndexCartesian()
 Base.getindex(opr::AbstractGlaOpr, i::Integer) = getindex(opr, CartesianIndices(opr)[i])
 Base.getindex(opr::AbstractGlaOpr, i::CartesianIndex) = getindex(opr, i.I...)
 const GlaIdx = Union{Integer, AbstractUnitRange{<:Integer}, AbstractVector{<:Integer}, Colon}
@@ -134,6 +123,9 @@ Base.setindex!(::AbstractGlaOpr, _, __...) = throw(ArgumentError("setindex! is n
 """
     mulAct!(opr::AbstractGlaOpr{T}, act::AbstractVector{Complex{T}})
 
+Internal. Not exported: `*` and `mul!` cover the same ground for a caller, and
+`mulAct!` consumes its argument.
+
 Apply an operator to a vector. May (will) mutate `act`.
 
 `act` holds source as a flat vector on the same device (CPU/GPU) the operator
@@ -154,39 +146,37 @@ function mulAct!(opr::Union{GlaOprVac{T}, AsyGlaOprVac{T}, SymGlaOprVac{T}}, act
     return vec(egoOpr!(opr.mem, reshape(act, glaSze(opr, 2))))
 end
 
-# Block row sums over the flat layout, one region block at a time
-function mulAct!(opr::MulRegGlaOprVac{T}, act::AbstractVector{Complex{T}}) where T<:AbstractFloat
-    rowSzs = [size(opr.oprMat[i, 1], 1) for i in axes(opr.oprMat, 1)]
-    colSzs = [size(opr.oprMat[1, j], 2) for j in axes(opr.oprMat, 2)]
-    rowOff = cumsum([0; rowSzs]); colOff = cumsum([0; colSzs])
-    outVec = fill!(similar(act, sum(rowSzs)), zero(eltype(act)))
-    for i in axes(opr.oprMat, 1), j in axes(opr.oprMat, 2)
-        # A block eats its buffer, so every block gets its own copy of the slice
-        innBlk = copy(view(act, (colOff[j] + 1):colOff[j + 1]))
-        view(outVec, (rowOff[i] + 1):rowOff[i + 1]) .+= mulAct!(opr.oprMat[i, j], innBlk)
+# The diagonal shape, entry by entry on the flat layout
+mulAct!(opr::SusOpr{T, <:AbstractVector{Complex{T}}}, act::AbstractVector{Complex{T}}) where T<:AbstractFloat =
+    act .*= opr.sus
+
+#= The tensor shape, one region block at a time. A component occupies a
+contiguous run of celNum entries inside a block, so the block reshapes to
+(celNum, 3) and each row of the cell tensor is one broadcast of three terms. The
+block is read before it is written, which is the copy a full tensor costs. =#
+function mulAct!(opr::SusOpr{T, <:AbstractArray{Complex{T}, 3}}, act::AbstractVector{Complex{T}}) where T<:AbstractFloat
+    celOff, dofOff = 0, 0
+    for reg in regions(opr.cvol)
+        celNum = prod(reg.cel)
+        actBlk = reshape(view(act, (dofOff + 1):(dofOff + 3 * celNum)), celNum, 3)
+        innBlk = copy(actBlk)
+        susBlk = view(opr.sus, (celOff + 1):(celOff + celNum), :, :)
+        for dir in 1:3
+            @views actBlk[:, dir] .= susBlk[:, dir, 1] .* innBlk[:, 1] .+
+                susBlk[:, dir, 2] .* innBlk[:, 2] .+ susBlk[:, dir, 3] .* innBlk[:, 3]
+        end
+        celOff += celNum
+        dofOff += 3 * celNum
     end
-    return outVec
+    return act
 end
 
 #= (I - XG₀), in place on the input. In adjoint mode the vacuum operator is
-already the adjoint and the susceptibility already conjugated, which leaves
-I - G₀' X̄. A composite susceptibility is stored in the flat layout, a single
-volume one as a cell tensor that broadcasts over the three components. =#
+already the adjoint and the susceptibility already the conjugate transpose,
+which leaves I - G₀' X'. =#
 function mulAct!(opr::InvSctOpr{T}, act::AbstractVector{Complex{T}}) where T<:AbstractFloat
-    if opr.oprVac isa GlaCmpOprVac
-        if length(act) != size(opr.oprVac, 2)
-            throw(ArgumentError("An input of length $(length(act)) does not fit this operator, which has $(size(opr.oprVac, 2)) degrees of freedom."))
-        end
-        isadjoint(opr) && return act .-= mulAct!(opr.oprVac, opr.sus .* act)
-        return act .-= opr.sus .* mulAct!(opr.oprVac, copy(act))
-    end
-    actTen = reshape(act, glaSze(opr, 2))
-    if isadjoint(opr)
-        actTen .-= reshape(mulAct!(opr.oprVac, vec(opr.sus .* actTen)), glaSze(opr, 1))
-        return act
-    end
-    actTen .-= opr.sus .* reshape(mulAct!(opr.oprVac, copy(act)), glaSze(opr, 1))
-    return act
+    isadjoint(opr) && return act .-= mulAct!(opr.oprVac, mulAct!(opr.sus, copy(act)))
+    return act .-= mulAct!(opr.sus, mulAct!(opr.oprVac, copy(act)))
 end
 
 mulAct!(opr::SctOpr{T}, act::AbstractVector{Complex{T}}) where T<:AbstractFloat = solve(opr.invSctOpr, act, opr.slv)
@@ -304,16 +294,6 @@ function LinearAlgebra.mul!(out::GlaFld{T}, opr::AbstractGlaOpr{T}, inp::GlaFld{
     return out
 end
 
-function Base.:*(opr::MulRegGlaOprVac{T}, innVec::Vector{<:AbstractArray{Complex{T}, 4}}) where T<:AbstractFloat
-    m, n = size(opr.oprMat)
-    @assert length(innVec) == n "expected $n source blocks, got $(length(innVec))"
-    outVec = [opr.oprMat[i, 1] * innVec[1] for i in 1:m] # j = 1
-    for i in 1:m, j in 2:n
-        outVec[i] .+= opr.oprMat[i, j] * innVec[j]
-    end
-    return outVec
-end
-
 """
     *(opr::GlaOprVac, fld::GlaFld)
 
@@ -390,19 +370,20 @@ function adjoint!(opr::GlaOprVac)
     return GlaOprVac(opr.mem, opr.trgMsk, opr.srcMsk)
 end
 adjoint!(opr::Union{AsyGlaOprVac, SymGlaOprVac}) = opr # These operators are Hermitian (self-adjoint)
-function adjoint!(opr::MulRegGlaOprVac)
-    adjMat = similar(opr.oprMat, reverse(size(opr.oprMat))) # New operator matrix with adjoint size
-    for i in axes(opr.oprMat, 1)
-        for j in axes(opr.oprMat, 2)
-            adjMat[j, i] = adjoint!(opr.oprMat[i, j])
-        end
-    end
-    # note that now, opr's entries are all adjoint's or the original entries
-    return MulRegGlaOprVac(adjMat)
+function adjoint!(opr::SusOpr{T, <:AbstractVector{Complex{T}}}) where T<:AbstractFloat
+    opr.adjMod = !opr.adjMod
+    opr.sus .= conj.(opr.sus)
+    return opr
+end
+# The adjoint of a tensor susceptibility transposes each cell as well
+function adjoint!(opr::SusOpr{T, <:AbstractArray{Complex{T}, 3}}) where T<:AbstractFloat
+    opr.adjMod = !opr.adjMod
+    opr.sus .= conj.(permutedims(opr.sus, (1, 3, 2)))
+    return opr
 end
 function adjoint!(opr::InvSctOpr)
     opr.oprVac = adjoint!(opr.oprVac)
-    opr.sus = conj(opr.sus)  # Conjugate the susceptibility
+    adjoint!(opr.sus)
     return opr
 end
 function adjoint!(opr::SctOpr)
@@ -424,9 +405,47 @@ function invMul!(w, opr::SctOpr, v, α, β)
     iszero(β) && return w .= α .* (opr.invSctOpr * v)
     return axpby!(α, opr.invSctOpr * v, β, w)
 end
+#= The inverse of G₀(I - XG₀)⁻¹ is (I - XG₀)G₀⁻¹, so only the vacuum half is
+solved for. The two halves swap in adjoint mode, as they do in mulAct!. =#
 function invMul!(w, opr::GlaOpr, v, α, β)
-    actG0Inv = solve(opr.sctOpr.invSctOpr.oprVac, v, slv(opr.sctOpr.invSctOpr))
-    out = opr.sctOpr.invSctOpr.oprVac * actG0Inv
+    invSct = opr.sctOpr.invSctOpr
+    out = isadjoint(opr) ? solve(invSct.oprVac, invSct * v, slv(invSct)) :
+        invSct * solve(invSct.oprVac, v, slv(invSct))
+    iszero(β) && return w .= α .* out
+    return axpby!(α, out, β, w)
+end
+
+#= The pointwise inverse of a diagonal susceptibility, which exists only where
+the susceptibility does. =#
+function _invSus(opr::SusOpr{T, <:AbstractVector{Complex{T}}}) where T<:AbstractFloat
+    if any(iszero, opr.sus)
+        throw(ArgumentError("The susceptibility vanishes in $(count(iszero, opr.sus)) of the $(length(opr.sus)) degrees of freedom of this volume, and a vacuum cell has no inverse. Divide by a susceptibility with no zero entries, or solve with the scattering operator instead."))
+    end
+    return SusOpr(inv.(opr.sus), opr.cvol, opr.adjMod)
+end
+
+# The cofactor inverse of every cell tensor, all cells of a component at once
+function _invSus(opr::SusOpr{T, <:AbstractArray{Complex{T}, 3}}) where T<:AbstractFloat
+    susAdj = similar(opr.sus)
+    for row in 1:3, col in 1:3
+        rowNxt, rowPrv = mod1(row + 1, 3), mod1(row + 2, 3)
+        colNxt, colPrv = mod1(col + 1, 3), mod1(col + 2, 3)
+        @views susAdj[:, row, col] .=
+            opr.sus[:, colNxt, rowNxt] .* opr.sus[:, colPrv, rowPrv] .-
+            opr.sus[:, colNxt, rowPrv] .* opr.sus[:, colPrv, rowNxt]
+    end
+    susDet = @views opr.sus[:, 1, 1] .* susAdj[:, 1, 1] .+
+        opr.sus[:, 1, 2] .* susAdj[:, 2, 1] .+ opr.sus[:, 1, 3] .* susAdj[:, 3, 1]
+    if any(iszero, susDet)
+        throw(ArgumentError("The susceptibility tensor is singular in $(count(iszero, susDet)) of the $(length(susDet)) cells of this volume, and a singular cell has no inverse. Divide by a susceptibility that is invertible in every cell, or solve with the scattering operator instead."))
+    end
+    return SusOpr(susAdj ./ susDet, opr.cvol, opr.adjMod)
+end
+
+#= The one operator whose inverse is not a solve: a susceptibility is diagonal
+in position, so the inverse action is the pointwise one. =#
+function invMul!(w, opr::SusOpr, v, α, β)
+    out = mulAct!(_invSus(opr), _devCpy(opr, v))
     iszero(β) && return w .= α .* out
     return axpby!(α, out, β, w)
 end
@@ -437,19 +456,19 @@ function invMulAdj!(w, opr::AbstractGlaOpr, v, α, β)
     adjoint!(opr) # Restore the original operator
     return out
 end
-function invMulAdj!(w, opr::SctOpr, v, α, β)
-    adjOpr = adjoint!(opr.invSctOpr) # Compute with the adjoint operator
-    out = invMul!(w, adjOpr, v, α, β)
-    adjoint!(opr.invSctOpr) # Restore the original operator
-    return out
-end
-function invMulAdj!(w, opr::GlaOpr, v, α, β)
-    adjOpr = adjoint!(opr.sctOpr.invSctOpr) # Compute with the adjoint operator
-    actWInvDag = adjOpr * v
-    adjoint!(opr.sctOpr.invSctOpr) # Restore the original operator
 
-    adjOpr = adjoint!(opr.sctOpr.invSctOpr.oprVac) # Compute with the adjoint operator
-    out = axpby!(α, adjOpr * actWInvDag, β, w)
-    adjoint!(opr.sctOpr.invSctOpr.oprVac) # Restore the original operator
-    return out
-end
+"""
+    \\(opr::AbstractGlaOpr, inp::AbstractVector)
+    ldiv!(out, opr::AbstractGlaOpr, inp)
+
+Solve `opr * out = inp` iteratively, with the operator's own solver (`slv(opr)`).
+
+This is an iterative solve and not the cheap inverse it looks like: `oprVac \\ inp`
+on a vacuum operator solves G₀ itself, which is indefinite and slow to converge.
+A `SusOpr` is the one exception: being diagonal, it divides pointwise instead.
+
+# Returns
+- The solution, in the form of `inp`
+"""
+LinearAlgebra.ldiv!(out, opr::AbstractGlaOpr, inp) = invMul!(out, opr, inp, one(eltype(opr)), zero(eltype(opr)))
+Base.:\(opr::AbstractGlaOpr, inp::AbstractVector) = ldiv!(similar(inp, size(opr, 2)), opr, inp)

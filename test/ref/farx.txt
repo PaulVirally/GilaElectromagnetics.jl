@@ -1,5 +1,4 @@
-# Cross-scale separated-pair tensors T_ab of the vacuum Green operator, curated from
-# notes/farfield/refcache/reftensors_x.txt (220-bit references, notes/farfield/ref.jl).
+# Cross-scale separated-pair tensors T_ab of the vacuum Green operator, evaluated at 220 bits.
 # Columns: target cell, source cell, Re f, Im f, offset R of the target centre (source at
 # 0), then T11 T21 T31 T12 ... T33 as re;im.  Offsets taking the k-series route are left
 # out: 25 s apiece, and no generation path reaches it.  Read only by tests, never by a build.

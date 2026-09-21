@@ -1,5 +1,5 @@
 # GilaOperators tests
-import GilaElectromagnetics.GilaOperators: ovrChk, mskRng, rszSus, setSus!
+import GilaElectromagnetics.GilaOperators: ovrChk, mskRng, setSus!
 
 const oprOvrOrg = ntuple(i -> Rational(4) * stdScl[i] // 2, 3)
 const oprVolOvr = GlaVol((4,4,4), stdScl, oprOvrOrg)
@@ -187,84 +187,59 @@ end
     @test_throws ArgumentError oprMsk * zerofield(Float64, oprBox)
 end
 
-@testset "rszSus" begin
-    cel   = (4,4,4)
-    sus3d = rand(ComplexF64, cel...)
-    # 3D passthrough, 1D reshape
-    @test rszSus(sus3d, cel) === sus3d
-    @test rszSus(vec(sus3d), cel) == sus3d
-    # Wrong length, and a rank the reshape does not cover
-    @test_throws ArgumentError rszSus(zeros(ComplexF64, 5), cel)
-    @test_throws ArgumentError rszSus(rand(ComplexF64, 4, 16), cel)
-end
-
 @testset "setSus!" begin
     newSus = mkSus((4,4,4); val=1.0+0.1im)
+    newDof = repeat(vec(newSus), 3)
     invSct = _invSct()
     setSus!(invSct, newSus)
-    @test invSct.sus == newSus
+    @test sus(invSct).sus == newDof
     # Wrong size throws
     @test_throws ArgumentError setSus!(invSct, mkSus((2,2,2)))
     # Propagates through SctOpr and GlaOpr
     sct = _sct()
     setSus!(sct, newSus)
-    @test sct.invSctOpr.sus == newSus
+    @test sus(sct).sus == newDof
     gla = _gla()
     setSus!(gla, newSus)
-    @test gla.sctOpr.invSctOpr.sus == newSus
+    @test sus(gla).sus == newDof
 end
 
-@testset "MulRegGlaOprVac" begin
-    vols = [_vol4, _trgV4]
-    op   = MulRegGlaOprVac{Float64}(vols, vols)
-    n    = prod((4,4,4)) * 3
-
-    # The diagonal is self, the off-diagonal external
-    @test size(op.oprMat) == (2, 2)
-    @test isselfoperator(op.oprMat[1,1])
-    @test isselfoperator(op.oprMat[2,2])
-    @test isexternaloperator(op.oprMat[1,2])
-    @test isexternaloperator(op.oprMat[2,1])
-
-    @test size(op) == (2n, 2n)
-    @test size(op, 1) == 2n
-    @test size(op, 2) == 2n
-
-    x  = rand(ComplexF64, 2n)
-    y  = op * x
-    x1 = x[1:n]; x2 = x[n+1:2n]
-    @test y ≈ vcat(op.oprMat[1,1] * x1 + op.oprMat[1,2] * x2,
-                   op.oprMat[2,1] * x1 + op.oprMat[2,2] * x2)
-
-    # Block-vector form
-    yBlk = op * [reshape(x1, (4,4,4,3)), reshape(x2, (4,4,4,3))]
-    @test vec(yBlk[1]) ≈ op.oprMat[1,1] * x1 + op.oprMat[1,2] * x2
-    @test vec(yBlk[2]) ≈ op.oprMat[2,1] * x1 + op.oprMat[2,2] * x2
-
-    D = dnsMat(op)
-    @test D * x ≈ y
-    @test dnsMat(adjoint(op)) ≈ D'
-    @test size(adjoint(op)) == size(op)
-
-    str = sprint(show, op)
-    @test occursin("multi-region", str)
-    @test occursin("2", str)
+@testset "kernel option keywords, no hand-built GlaKerOpt" begin
+    dflt = GlaOprVac{Float64}(_vol4)
+    qss  = GlaOprVac{Float64}(_vol4; qssApx=true)
+    frq  = GlaOprVac{Float64}(_vol4; frqPhz=2.0+0.5im)
+    @test qss.mem.cmpInf.qssApx && !dflt.mem.cmpInf.qssApx
+    @test frq.mem.cmpInf.frqPhz == 2.0+0.5im
+    @test qss.mem.egoFur != dflt.mem.egoFur
+    @test frq.mem.egoFur != dflt.mem.egoFur
+    # shpCch only caches the far-field geometry table to disk; the operator itself is unchanged
+    cch = GlaOprVac{Float64}(_vol4; shpCch=true)
+    @test cch.mem.egoFur == dflt.mem.egoFur
 end
 
 @testset "show" begin
-    for (opr, keys) in ((_g0(),     ["Self",     "CPU", "G₀"]),
-                        (_gExt(),   ["External", "CPU", "G₀"]),
-                        (_asy(),    ["Self",     "CPU", "Asym(G₀)"]),
-                        (_sym(),    ["Self",     "CPU", "Sym(G₀)"]),
-                        (_invSct(), ["Self",     "CPU", "(I - XG₀)"]),
-                        (_sct(),    ["Self",     "CPU", "(I - XG₀)⁻¹"]),
-                        (_gla(),    ["Self",     "CPU", "G₀(I - XG₀)⁻¹"]))
+    for (opr, keys) in ((_g0(),     ["self",     "CPU", "G₀"]),
+                        (_gExt(),   ["external", "CPU", "G₀"]),
+                        (_asy(),    ["self",     "CPU", "Asym(G₀)"]),
+                        (_sym(),    ["self",     "CPU", "Sym(G₀)"]),
+                        (_invSct(), ["self",     "CPU", "(I - XG₀)"]),
+                        (_sct(),    ["self",     "CPU", "(I - XG₀)⁻¹"]),
+                        (_gla(),    ["self",     "CPU", "G₀(I - XG₀)⁻¹"]))
         str = sprint(show, opr)
         for key in keys
             @test occursin(key, str)
         end
+        # Compact is always one line, and strictly less than the block form
+        @test !occursin("\n", str)
+        @test sprint(show, MIME"text/plain"(), opr) != str
     end
     @test occursin("Adjoint", sprint(show, adjoint(_g0())))
+    # A quasistatic operator and a full one print differently, built through the keywords alone
+    @test sprint(show, MIME"text/plain"(), GlaOprVac{Float64}(_vol4; qssApx=true)) !=
+        sprint(show, MIME"text/plain"(), _g0())
+    # Two operators at different complex frequencies print differently, likewise
+    @test sprint(show, MIME"text/plain"(), GlaOprVac{Float64}(_vol4; frqPhz=2.0+0.5im)) !=
+        sprint(show, MIME"text/plain"(), _g0())
 end
 
 @testset "Operator CPU/GPU parity" begin
@@ -295,5 +270,15 @@ end
             useCpu!(cOpr)  # after useGpu!
             useGpu!(gOpr)
         end
+    end
+end
+
+@testset "export list" begin
+    nms = names(GilaElectromagnetics)
+    for pub in (:setSus!, :sym, :sus, :SusOpr)
+        @test pub in nms
+    end
+    for gone in (:ini!, :egoOpr!, :dflPrc)
+        @test !(gone in nms)
     end
 end

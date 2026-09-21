@@ -12,7 +12,6 @@ It includes implementations of GMRES and BiCGStab methods, with support for both
 
 # Functions
 - `solve`: Solve a linear system using the specified solver
-- `ini!`: Initialize solver parameters based on input vector
 """
 module GilaSolvers
 
@@ -21,10 +20,7 @@ using CUDA
 using ..GilaTypes
 using ..GilaTypes: isgpu, isadjoint
 
-# Forward declare GlaOpr to break circular dependency
-const GlaOpr = Any
-
-export GMRESSolver, BiCGStabSolver, MixPrcRfn, solve, ini!
+export GMRESSolver, BiCGStabSolver, MixPrcRfn, solve
 export MixedPrecisionRefinement
 
 """
@@ -36,61 +32,37 @@ linear systems.
 
 # Fields
 - `rstItr::Union{Nothing, Int}`: Number of iterations until restart (default: min(20, length(vec)))
-- `maxItr::Union{Nothing, Int}`: Maximum number of iterations (default: length(vec))
+- `maxItr::Union{Nothing, Int}`: Maximum number of iterations (default: max(5000, length(vec)))
 - `absTol::Union{Nothing, Real}`: Absolute tolerance for convergence (default: 0)
 - `relTol::Union{Nothing, Real}`: Relative tolerance for convergence (default: √ε)
+- `preCon`: Left preconditioner, anything with an `ldiv!` method (default: none)
 """
-mutable struct GMRESSolver <: GlaSlv
+struct GMRESSolver <: GlaSlv
     rstItr::Union{Nothing, Int} # Iterations until restart
     maxItr::Union{Nothing, Int} # Maximum number of iterations
     absTol::Union{Nothing, Real} # Absolute tolerance
     relTol::Union{Nothing, Real} # Relative tolerance
+    preCon::Any # Left preconditioner
 end
 
 """
-    GMRESSolver()
+    GMRESSolver(rstItr = nothing, maxItr = nothing, absTol = nothing, relTol = nothing; preCon = nothing)
 
-Create a GMRESSolver with default values. The actual values will be set when
-the solver is initialized with a vector.
-
-# Returns
-- `GMRESSolver`: A new solver instance with uninitialized parameters
-"""
-GMRESSolver() = GMRESSolver(nothing, nothing, nothing, nothing)
-
-"""
-    ini!(slv::GMRESSolver, vec::AbstractVector)
-
-Initialize the GMRES solver parameters based on the input vector.
-
-# Arguments
-- `slv::GMRESSolver`: The solver to initialize
-- `vec::AbstractVector`: A vector to use for determining the default values
+Create a GMRESSolver. Unset values are resolved against the right hand side at
+solve time.
 
 # Returns
-- `slv::GMRESSolver`: The initialized solver
-
-# Notes
-- `rstItr` is set to min(20, length(vec))
-- `maxItr` is set to length(vec)
-- `absTol` is set to zero(real(eltype(vec)))
-- `relTol` is set to √ε where ε is the machine epsilon for the vector's element type
+- `GMRESSolver`: A new solver instance
 """
-function ini!(slv::GMRESSolver, vec::AbstractVector)
-    if isnothing(slv.rstItr)
-        slv.rstItr = min(20, length(vec))
-    end
-    if isnothing(slv.maxItr)
-        slv.maxItr = max(5000, length(vec))
-    end
-    if isnothing(slv.absTol)
-        slv.absTol = zero(real(eltype(vec)))
-    end
-    if isnothing(slv.relTol)
-        slv.relTol = sqrt(eps(real(eltype(vec))))
-    end
-    return slv
-end
+GMRESSolver(rstItr = nothing, maxItr = nothing, absTol = nothing, relTol = nothing; preCon = nothing) =
+    GMRESSolver(rstItr, maxItr, absTol, relTol, preCon)
+
+# Solver settings with the unset ones filled in from the right hand side
+slvPrm(slv::GMRESSolver, vec::AbstractArray) = (
+    rstItr = @something(slv.rstItr, min(20, length(vec))),
+    maxItr = @something(slv.maxItr, max(5000, length(vec))),
+    absTol = @something(slv.absTol, zero(real(eltype(vec)))),
+    relTol = @something(slv.relTol, sqrt(eps(real(eltype(vec))))))
 
 """
     BiCGStabSolver
@@ -103,61 +75,40 @@ linear systems and typically requires less memory than GMRES.
 - `maxItr::Union{Nothing, Int}`: Maximum number of iterations (default: length(vec))
 - `absTol::Union{Nothing, Real}`: Absolute tolerance for convergence (default: 0)
 - `relTol::Union{Nothing, Real}`: Relative tolerance for convergence (default: √ε)
+- `preCon`: Left preconditioner, anything with an `ldiv!` method (default: none)
 """
-mutable struct BiCGStabSolver <: GlaSlv
+struct BiCGStabSolver <: GlaSlv
     maxItr::Union{Nothing, Int} # Maximum number of iterations
     absTol::Union{Nothing, Real} # Absolute tolerance
     relTol::Union{Nothing, Real} # Relative tolerance
+    preCon::Any # Left preconditioner
 end
 
 """
-    BiCGStabSolver()
+    BiCGStabSolver(maxItr = nothing, absTol = nothing, relTol = nothing; preCon = nothing)
 
-Create a BiCGStabSolver with default values. The actual values will be set when
-the solver is initialized with a vector.
-
-# Returns
-- `BiCGStabSolver`: A new solver instance with uninitialized parameters
-"""
-BiCGStabSolver() = BiCGStabSolver(nothing, nothing, nothing)
-
-"""
-    ini!(slv::BiCGStabSolver, vec::AbstractVector)
-
-Initialize the BiCGStab solver parameters based on the input vector.
-
-# Arguments
-- `slv::BiCGStabSolver`: The solver to initialize
-- `vec::AbstractVector`: A vector to use for determining the default values
+Create a BiCGStabSolver. Unset values are resolved against the right hand side
+at solve time.
 
 # Returns
-- `slv::BiCGStabSolver`: The initialized solver
-
-# Notes
-- `maxItr` is set to length(vec)
-- `absTol` is set to zero(real(eltype(vec)))
-- `relTol` is set to √ε where ε is the machine epsilon for the vector's element type
+- `BiCGStabSolver`: A new solver instance
 """
-function ini!(slv::BiCGStabSolver, vec::AbstractVector)
-    if isnothing(slv.maxItr)
-        slv.maxItr = length(vec)
-    end
-    if isnothing(slv.absTol)
-        slv.absTol = zero(real(eltype(vec)))
-    end
-    if isnothing(slv.relTol)
-        slv.relTol = sqrt(eps(real(eltype(vec))))
-    end
-    return slv
-end
+BiCGStabSolver(maxItr = nothing, absTol = nothing, relTol = nothing; preCon = nothing) =
+    BiCGStabSolver(maxItr, absTol, relTol, preCon)
+
+# Solver settings with the unset ones filled in from the right hand side
+slvPrm(slv::BiCGStabSolver, vec::AbstractVector) = (
+    maxItr = @something(slv.maxItr, length(vec)),
+    absTol = @something(slv.absTol, zero(real(eltype(vec)))),
+    relTol = @something(slv.relTol, sqrt(eps(real(eltype(vec))))))
 
 """
-    solve(opr::GlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver) where T
+    solve(opr::AbstractGlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver) where T
 
 Solve the linear system `opr * out = inp` using the BiCGStab method.
 
 # Arguments
-- `opr::GlaOpr`: The operator in the linear system
+- `opr::AbstractGlaOpr`: The operator in the linear system
 - `inp::AbstractVector{T}`: The right-hand side vector
 - `slv::BiCGStabSolver`: The solver parameters
 
@@ -170,8 +121,9 @@ Solve the linear system `opr * out = inp` using the BiCGStab method.
 - Convergence is determined by the absolute and relative tolerances specified
   in the solver parameters
 """
-function solve(opr::GlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver) where T
-    ini!(slv, inp)
+function solve(opr::AbstractGlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver) where T
+    (; maxItr, absTol, relTol) = slvPrm(slv, inp)
+    preCon = slv.preCon
     out = fill!(similar(inp), zero(T))
 
     ρPrv = zero(T)
@@ -181,13 +133,16 @@ function solve(opr::GlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver) where T
     v = fill!(similar(inp), zero(T))
     t = fill!(similar(inp), zero(T))
     res = copyto!(similar(inp), inp) # Residual
-    absTol = max(slv.absTol, slv.relTol * norm(res))
+    absTol = max(absTol, relTol * norm(res))
 
     resShd = copy(res) # Residual shadow
     p = copy(res)
     s = similar(res)
+    # ldiv! must not clobber p or s, both of which are read again below
+    p̂ = isnothing(preCon) ? p : similar(p)
+    ŝ = isnothing(preCon) ? s : similar(s)
 
-    for numItr in 1:slv.maxItr
+    for numItr in 1:maxItr
         if norm(res) < absTol
             return out
         end
@@ -197,8 +152,7 @@ function solve(opr::GlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver) where T
             β = (ρ / ρPrv) * (α / ω)
             p .= res .+ β .* (p .- ω .* v)
         end
-        # p̂ = preconditioner \ p # TODO: When we have a preconditioner
-        p̂ = p
+        isnothing(preCon) || ldiv!(p̂, preCon, p)
         mul!(v, opr, p̂)
         α = ρ / dot(resShd, v)
         res .-= α .* v
@@ -209,8 +163,7 @@ function solve(opr::GlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver) where T
             return out
         end
 
-        # ŝ = preconditioner \ s # TODO: When we have a preconditioner
-        ŝ = s
+        isnothing(preCon) || ldiv!(ŝ, preCon, s)
         mul!(t, opr, ŝ)
         ω = dot(t, s) / dot(t, t)
         # ω = dot(t, res) / dot(t, t)
@@ -218,17 +171,17 @@ function solve(opr::GlaOpr, inp::AbstractVector{T}, slv::BiCGStabSolver) where T
         res .-= ω .* t
         ρPrv = ρ
     end
-    @warn "BiCGStab did not converge after $(slv.maxItr) iterations."
+    @warn "BiCGStab did not converge after $maxItr iterations."
     return out
 end
 
 """
-    solve(opr::GlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) where T
+    solve(opr::AbstractGlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) where T
 
 Solve the linear system `opr * out = inp` using the GMRES method.
 
 # Arguments
-- `opr::GlaOpr`: The operator in the linear system
+- `opr::AbstractGlaOpr`: The operator in the linear system
 - `inp::AbstractArray{T}`: The right-hand side vector
 - `slv::GMRESSolver`: The solver parameters
 
@@ -243,21 +196,22 @@ Solve the linear system `opr * out = inp` using the GMRES method.
 - The solver uses restarts to manage memory usage, with the restart frequency
   specified in the solver parameters
 """
-function solve(opr::GlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) where T
+function solve(opr::AbstractGlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) where T
     # Algorithm adapted from https://github.com/JuliaLinearAlgebra/IterativeSolvers.jl/blob/0b2f1c5d352069df1bc891750087deda2d14cc9d/src/gmres.jl
 
-    ini!(slv, inp)
+    (; rstItr, maxItr, absTol, relTol) = slvPrm(slv, inp)
+    preCon = slv.preCon
 
-    basVec = similar(inp, size(opr, 1), 1 + slv.rstItr) # Krylov basis vectors
-    hss = zeros(eltype(inp), 1 + slv.rstItr, slv.rstItr) # Hessenberg matrix (always stored on the CPU)
-    nllSpc = ones(eltype(inp), 1 + slv.rstItr) # Vector in the nullspace of the Hessenberg matrix (always stored on the CPU)
+    basVec = similar(inp, size(opr, 1), 1 + rstItr) # Krylov basis vectors
+    hss = zeros(eltype(inp), 1 + rstItr, rstItr) # Hessenberg matrix (always stored on the CPU)
+    nllSpc = ones(eltype(inp), 1 + rstItr) # Vector in the nullspace of the Hessenberg matrix (always stored on the CPU)
     out = fill!(similar(inp), zero(T)) # Solution vector
     buf = fill!(similar(out), zero(T)) # Work buffer for the restart residual
 
     # The first basis vector is b (preconditioned)
     k = 1 # Which restart iteration we are on
     vk = @view basVec[:, k]
-    copyto!(vk, inp) # lmul!(vk, preconditioner, inp) # vk = preconditioner \ (b - op*x) with x = 0 # TODO: When we have a preconditioner
+    isnothing(preCon) ? copyto!(vk, inp) : ldiv!(vk, preCon, inp) # b - opr * x with x = 0
     β = norm(vk)
     rmul!(vk, inv(β)) # Normalize vk
 
@@ -265,9 +219,9 @@ function solve(opr::GlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) where T
     res = β # Residual
     resAcc = one(real(T)) # Residual accumulator
 
-    absTol = max(slv.absTol, slv.relTol * res)
+    absTol = max(absTol, relTol * res)
 
-    for itr in 1:slv.maxItr
+    for itr in 1:maxItr
         if res <= absTol
             break
         end
@@ -275,7 +229,7 @@ function solve(opr::GlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) where T
         # vₖ₊₁ = precon \ (opr * vₖ)
         vkp1 = @view basVec[:, k + 1]
         mul!(vkp1, opr, vk)
-        # lmul!(vkp1, preconditioner, vkp1) # TODO: When we have a preconditioner
+        isnothing(preCon) || ldiv!(preCon, vkp1)
 
         # Orthogonalize vₖ₊₁ against previous basis vectors
         for j in 1:k
@@ -301,8 +255,8 @@ function solve(opr::GlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) where T
         vk = vkp1
 
         # At the end of restarts (and/or when we have converged/maxed out the iterations), update our solution vector
-        don = (res <= absTol || itr == slv.maxItr) # done or not
-        if don || k == 1 + slv.rstItr
+        don = (res <= absTol || itr == maxItr) # done or not
+        if don || k == 1 + rstItr
             # Solve the least squares problem: Hy = βe₁
             y = fill!(similar(hss, (k,)), zero(T))
             y[1] = β
@@ -320,14 +274,15 @@ function solve(opr::GlaOpr, inp::AbstractArray{T}, slv::GMRESSolver) where T
             if !don
                 vk = @view basVec[:, k]
                 mul!(buf, opr, out)
-                vk .= vec(inp) .- vec(buf) # lmul!(vk, preconditioner, inp - opr * out) # TODO: When we have a preconditioner
+                vk .= vec(inp) .- vec(buf)
+                isnothing(preCon) || ldiv!(preCon, vk)
                 β = norm(vk)
                 rmul!(vk, inv(β))
                 resAcc = one(real(T))
             end
         end
-        if itr == slv.maxItr
-            @warn "GMRES failed to converge after $(slv.maxItr) iterations"
+        if itr == maxItr
+            @warn "GMRES failed to converge after $maxItr iterations"
         end
     end
     return out
@@ -349,14 +304,14 @@ Typical usage: `GlaOpr{Float64}(vol, vol, sus; slv=MixPrcRfn(Float32))`
 
 # Fields
 - `innSlv::GlaSlv`: The solver used for the low precision corrections
-- `oprLo::Union{Nothing, AbstractGlaOpr}`: The `Tlo` copy of the operator, built on the first solve
+- `cch::Base.RefValue{Any}`: The `(opr, oprLo)` pair of the last solve, rebuilt when the operator changes
 - `maxItr::Union{Nothing, Int}`: Maximum number of outer refinement steps (default: 20)
 - `absTol::Union{Nothing, Real}`: Absolute tolerance for convergence (default: 0)
 - `relTol::Union{Nothing, Real}`: Relative tolerance for convergence (default: √ε)
 """
-mutable struct MixPrcRfn{Tlo<:AbstractFloat} <: GlaSlv
+struct MixPrcRfn{Tlo<:AbstractFloat} <: GlaSlv
     innSlv::GlaSlv # Inner solver for the low precision corrections
-    oprLo::Union{Nothing, AbstractGlaOpr} # Tlo copy of the operator
+    cch::Base.RefValue{Any} # (opr, Tlo copy of opr) of the last solve
     maxItr::Union{Nothing, Int} # Maximum number of outer refinement steps
     absTol::Union{Nothing, Real} # Absolute tolerance
     relTol::Union{Nothing, Real} # Relative tolerance
@@ -367,59 +322,35 @@ const MixedPrecisionRefinement = MixPrcRfn
 """
     MixPrcRfn(::Type{Tlo}; innSlv::GlaSlv=GMRESSolver(), maxItr=nothing, absTol=nothing, relTol=nothing)
 
-Create a `MixPrcRfn` refining in the precision `Tlo`. Unset tolerances are filled
-in when the solver is initialized with a vector.
+Create a `MixPrcRfn` refining in the precision `Tlo`. Unset tolerances are
+resolved against the right hand side at solve time.
 
 # Arguments
 - `Tlo::Type{<:AbstractFloat}`: The precision of the correction solves
 - `innSlv::GlaSlv=GMRESSolver()`: The solver for the correction solves
-- `maxItr`, `absTol`, `relTol`: Outer loop settings, defaulted by `ini!`
+- `maxItr`, `absTol`, `relTol`: Outer loop settings, resolved at solve time when left unset
 
 # Returns
 - `MixPrcRfn{Tlo}`: A new solver instance holding no operator copy yet
 """
 MixPrcRfn(::Type{Tlo}; innSlv::GlaSlv=GMRESSolver(), maxItr=nothing, absTol=nothing,
     relTol=nothing) where Tlo<:AbstractFloat =
-    MixPrcRfn{Tlo}(innSlv, nothing, maxItr, absTol, relTol)
+    MixPrcRfn{Tlo}(innSlv, Ref{Any}((nothing, nothing)), maxItr, absTol, relTol)
+
+# Solver settings with the unset ones filled in from the right hand side
+slvPrm(slv::MixPrcRfn, vec::AbstractVector) = (
+    maxItr = @something(slv.maxItr, 20),
+    absTol = @something(slv.absTol, zero(real(eltype(vec)))),
+    relTol = @something(slv.relTol, sqrt(eps(real(eltype(vec))))))
 
 """
-    ini!(slv::MixPrcRfn, vec::AbstractVector)
-
-Initialize the refinement parameters based on the input vector.
-
-# Arguments
-- `slv::MixPrcRfn`: The solver to initialize
-- `vec::AbstractVector`: A vector to use for determining the default values
-
-# Returns
-- `slv::MixPrcRfn`: The initialized solver
-
-# Notes
-- `maxItr` is set to 20, which is far more outer steps than a converging refinement needs
-- `absTol` is set to zero(real(eltype(vec)))
-- `relTol` is set to √ε (where ε is the machine epsilon for the vector's eltype)
-"""
-function ini!(slv::MixPrcRfn, vec::AbstractVector)
-    if isnothing(slv.maxItr)
-        slv.maxItr = 20
-    end
-    if isnothing(slv.absTol)
-        slv.absTol = zero(real(eltype(vec)))
-    end
-    if isnothing(slv.relTol)
-        slv.relTol = sqrt(eps(real(eltype(vec))))
-    end
-    return slv
-end
-
-"""
-    solve(opr::GlaOpr, inp::AbstractVector{Complex{Thi}}, slv::MixPrcRfn{Tlo}) where {Thi, Tlo}
+    solve(opr::AbstractGlaOpr{Thi}, inp::AbstractVector{Complex{Thi}}, slv::MixPrcRfn{Tlo}) where {Thi, Tlo}
 
 Solve the linear system `opr * out = inp` by iterative refinement, with
 corrections computed in the precision `Tlo`.
 
 # Arguments
-- `opr::GlaOpr`: The operator in the linear system, of precision `Thi`
+- `opr::AbstractGlaOpr{Thi}`: The operator in the linear system, of precision `Thi`
 - `inp::AbstractVector{Complex{Thi}}`: The right hand side vector
 - `slv::MixPrcRfn{Tlo}`: The solver parameters
 
@@ -427,48 +358,45 @@ corrections computed in the precision `Tlo`.
 - `out::AbstractVector{Complex{Thi}}`: The solution vector
 
 # Notes
-- The `Tlo` copy of the operator is built on the first solve and reused, so a
-  refinement solver belongs to the operator it was first used with
+- The `Tlo` copy of the operator is cached and reused across solves with the
+  same operator, and rebuilt as soon as a different operator is passed
 - Refinement in the precision of the operator is pointless, and throws
 """
-function solve(opr::GlaOpr, inp::AbstractVector{Complex{Thi}},
+function solve(opr::AbstractGlaOpr{Thi}, inp::AbstractVector{Complex{Thi}},
     slv::MixPrcRfn{Tlo}) where {Thi<:AbstractFloat, Tlo<:AbstractFloat}
     if Tlo == Thi
         throw(ArgumentError("Iterative refinement in the precision it refines from does nothing: both the correction solves and the right hand side are $Thi. Either drop MixPrcRfn or raise the precision of the operator and the right hand side."))
     end
-    if real(eltype(opr)) != Thi
-        throw(ArgumentError("The operator is $(eltype(opr)) and the right hand side is Complex{$Thi}. Iterative refinement runs its outer loop in the precision of the operator, so the two must agree."))
+    (; maxItr, absTol, relTol) = slvPrm(slv, inp)
+    if first(slv.cch[]) !== opr || isgpu(last(slv.cch[])) != isgpu(opr)
+        slv.cch[] = (opr, Base.typename(typeof(opr)).wrapper{Tlo}(opr))
     end
-    ini!(slv, inp)
-    if isnothing(slv.oprLo) || isgpu(slv.oprLo) != isgpu(opr)
-        slv.oprLo = Base.typename(typeof(opr)).wrapper{Tlo}(opr)
-    end
+    oprLo = last(slv.cch[])
     #= The cached copy has to track every in place change to the operator it was
     built from: adjoint! flips the adjoint mode, setSus! replaces the
     susceptibility, and both leave the copy behind. =#
-    if isadjoint(slv.oprLo) != isadjoint(opr)
-        slv.oprLo = adjoint!(slv.oprLo)
-    end
-    hasproperty(opr, :sus) && (slv.oprLo.sus .= opr.sus)
+    isadjoint(oprLo) != isadjoint(opr) && (oprLo = adjoint!(oprLo))
+    hasproperty(opr, :sus) && (oprLo.sus = Base.typename(typeof(opr.sus)).wrapper{Tlo}(opr.sus))
+    slv.cch[] = (opr, oprLo)
 
     out = zero(inp) # Solution vector
     res = copy(inp) # Residual
     buf = similar(inp) # Work buffer for the high precision matrix-vector product
-    absTol = max(slv.absTol, slv.relTol * norm(inp))
+    absTol = max(absTol, relTol * norm(inp))
 
-    for _ in 1:slv.maxItr
+    for _ in 1:maxItr
         nrmRes = norm(res)
         if nrmRes <= absTol
             return out
         end
         # Normalized before narrowing, so the inner right hand side is O(1)
-        dirLo = solve(slv.oprLo, Complex{Tlo}.(res ./ nrmRes), slv.innSlv)
+        dirLo = solve(oprLo, Complex{Tlo}.(res ./ nrmRes), slv.innSlv)
         out .+= nrmRes .* dirLo
         mul!(buf, opr, out)
         res .= inp .- buf
     end
     if norm(res) > absTol
-        @warn "Iterative refinement did not converge after $(slv.maxItr) iterations."
+        @warn "Iterative refinement did not converge after $maxItr iterations."
     end
     return out
 end

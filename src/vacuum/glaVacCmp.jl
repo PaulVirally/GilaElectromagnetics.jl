@@ -1,6 +1,5 @@
 using KernelAbstractions
 using CUDA
-using Serialization
 using ..GilaTypes
 
 """
@@ -34,19 +33,21 @@ The phase factor allows for complex frequencies, which is useful for modeling
 dispersive media or for numerical stability.
 
 # Fields
-- `frqPhz::Number`: Multiplicative scaling factor allowing for complex frequencies
+- `frqPhz::ComplexF64`: Multiplicative scaling factor allowing for complex frequencies
 - `genPrc::Type{<:AbstractFloat}`: Generation precision (default `Float64`; `Float32` throws, it would return NaN)
+- `qssApx::Bool`: Quasistatic approximation flag (true to generate the quasistatic kernel)
 - `adjMod::Bool`: Adjoint mode flag (true if adjoint mode is enabled)
 - `bckEnd::CPU`: Backend for CPU computation
 """
 mutable struct CPUKerOpt{T<:AbstractFloat} <: GlaKerOpt{T}
-    frqPhz::Number
+    frqPhz::ComplexF64
     genPrc::Type{<:AbstractFloat}
+    qssApx::Bool
     adjMod::Bool
     bckEnd::CPU
-    function CPUKerOpt{T}(frqPhz::Number, genPrc::Type{<:AbstractFloat}, adjMod::Bool, bckEnd::CPU) where T<:AbstractFloat
+    function CPUKerOpt{T}(frqPhz::Number, genPrc::Type{<:AbstractFloat}, qssApx::Bool, adjMod::Bool, bckEnd::CPU) where T<:AbstractFloat
         chkGenPrc(genPrc)
-        return new{T}(frqPhz, genPrc, adjMod, bckEnd)
+        return new{T}(frqPhz, genPrc, qssApx, adjMod, bckEnd)
     end
 end
 
@@ -59,29 +60,30 @@ Construct a CPUKerOpt of storage precision `T` with default values.
 - `CPUKerOpt{T}`: A new CPU kernel options object with:
   - Phase factor of 1.0 + 0.0im
   - Generation precision of `Float64`
+  - Quasistatic approximation disabled
   - Adjoint mode disabled
   - Default CPU backend
 """
-CPUKerOpt{T}() where T<:AbstractFloat = CPUKerOpt{T}(1.0+0.0im, Float64, false, CPU())
+CPUKerOpt{T}() where T<:AbstractFloat = CPUKerOpt{T}(1.0+0.0im, Float64, false, false, CPU())
 
 """
-    CPUKerOpt(frqPhz, genPrc, adjMod, bckEnd)
+    CPUKerOpt(frqPhz, genPrc, qssApx, adjMod, bckEnd)
     CPUKerOpt()
 
-Construct a CPUKerOpt of the default storage precision `dfltPrc`.
+Construct a CPUKerOpt of the default storage precision `dflPrc`.
 """
-CPUKerOpt(frqPhz::Number, genPrc::Type{<:AbstractFloat}, adjMod::Bool, bckEnd::CPU) = CPUKerOpt{dfltPrc}(frqPhz, genPrc, adjMod, bckEnd)
-CPUKerOpt() = CPUKerOpt{dfltPrc}()
+CPUKerOpt(frqPhz::Number, genPrc::Type{<:AbstractFloat}, qssApx::Bool, adjMod::Bool, bckEnd::CPU) = CPUKerOpt{dflPrc}(frqPhz, genPrc, qssApx, adjMod, bckEnd)
+CPUKerOpt() = CPUKerOpt{dflPrc}()
 
 """
     CPUKerOpt{T}(opt::CPUKerOpt)
 
 Re-type a CPUKerOpt to storage precision `T`, keeping all field values.
 """
-CPUKerOpt{T}(opt::CPUKerOpt) where T<:AbstractFloat = CPUKerOpt{T}(opt.frqPhz, opt.genPrc, opt.adjMod, opt.bckEnd)
+CPUKerOpt{T}(opt::CPUKerOpt) where T<:AbstractFloat = CPUKerOpt{T}(opt.frqPhz, opt.genPrc, opt.qssApx, opt.adjMod, opt.bckEnd)
 
 """
-    frqPhz(opt::CPUKerOpt) -> Number
+    frqPhz(opt::CPUKerOpt) -> ComplexF64
 
 Get the multiplicative scaling factor allowing for complex frequencies.
 
@@ -89,7 +91,7 @@ Get the multiplicative scaling factor allowing for complex frequencies.
 - `opt::CPUKerOpt`: The CPU kernel options object
 
 # Returns
-- `Number`: The phase factor
+- `ComplexF64`: The phase factor
 """
 frqPhz(opt::CPUKerOpt) = opt.frqPhz
 
@@ -105,6 +107,19 @@ Get the generation precision from a CPU kernel options object.
 - `Type{<:AbstractFloat}`: The generation precision
 """
 genPrc(opt::CPUKerOpt) = opt.genPrc
+
+"""
+    qssApx(opt::CPUKerOpt)
+
+Get the quasistatic approximation flag from a CPU kernel options object.
+
+# Arguments
+- `opt::CPUKerOpt`: The CPU kernel options object
+
+# Returns
+- `Bool`: True if the quasistatic kernel is generated, false otherwise
+"""
+qssApx(opt::CPUKerOpt) = opt.qssApx
 
 """
     adjMod(opt::CPUKerOpt)
@@ -134,6 +149,8 @@ bckEnd(opt::CPUKerOpt) = opt.bckEnd
 
 """
     arrTyp(opt::CPUKerOpt{T})
+
+Internal, not exported.
 
 Get the array type from a CPU kernel options object.
 
@@ -176,7 +193,7 @@ Creates a new `GPUKerOpt` object with the same phase factor and generation preci
   - Adjoint mode flag from `opt`
   - Default CUDA backend
 """
-useGpu(opt::CPUKerOpt{T}) where T<:AbstractFloat = GPUKerOpt{T}(opt.frqPhz, opt.genPrc, (128, 2, 1), (1, 128, 256), opt.adjMod, CUDABackend())
+useGpu(opt::CPUKerOpt{T}) where T<:AbstractFloat = GPUKerOpt{T}(opt.frqPhz, opt.genPrc, opt.qssApx, (128, 2, 1), (1, 128, 256), opt.adjMod, CUDABackend())
 
 """
     GPUKerOpt{T} <: GlaKerOpt{T}
@@ -186,23 +203,25 @@ Options for GPU computation of the Green function operator.
 `GPUKerOpt` determines the parallelization strategy for GPU computation through its thread and block counts, and the precision of Green function generation through `genPrc`. The phase factor allows for complex frequencies, which is useful for modeling dispersive media or for numerical stability.
 
 # Fields
-- `frqPhz::Number`: Multiplicative scaling factor allowing for complex frequencies
+- `frqPhz::ComplexF64`: Multiplicative scaling factor allowing for complex frequencies
 - `genPrc::Type{<:AbstractFloat}`: Generation precision (default `Float64`; `Float32` throws, it would return NaN)
-- `numTrd::NTuple{3, Integer}`: Number of threads to use when running GPU kernels
-- `numBlk::NTuple{3, Integer}`: Number of thread blocks to use when running GPU kernels
+- `qssApx::Bool`: Quasistatic approximation flag (true to generate the quasistatic kernel)
+- `numTrd::NTuple{3, Int}`: Number of threads to use when running GPU kernels
+- `numBlk::NTuple{3, Int}`: Number of thread blocks to use when running GPU kernels
 - `adjMod::Bool`: Adjoint mode flag (true if adjoint mode is enabled)
 - `bckEnd::GPU`: Backend for GPU computation
 """
 mutable struct GPUKerOpt{T<:AbstractFloat} <: GlaKerOpt{T}
-    frqPhz::Number
+    frqPhz::ComplexF64
     genPrc::Type{<:AbstractFloat}
-    numTrd::NTuple{3, Integer}
-    numBlk::NTuple{3, Integer}
+    qssApx::Bool
+    numTrd::NTuple{3, Int}
+    numBlk::NTuple{3, Int}
     adjMod::Bool
     bckEnd::GPU
-    function GPUKerOpt{T}(frqPhz::Number, genPrc::Type{<:AbstractFloat}, numTrd::NTuple{3,Integer}, numBlk::NTuple{3,Integer}, adjMod::Bool, bckEnd::GPU) where T<:AbstractFloat
+    function GPUKerOpt{T}(frqPhz::Number, genPrc::Type{<:AbstractFloat}, qssApx::Bool, numTrd::NTuple{3,Integer}, numBlk::NTuple{3,Integer}, adjMod::Bool, bckEnd::GPU) where T<:AbstractFloat
         chkGenPrc(genPrc)
-        return new{T}(frqPhz, genPrc, numTrd, numBlk, adjMod, bckEnd)
+        return new{T}(frqPhz, genPrc, qssApx, numTrd, numBlk, adjMod, bckEnd)
     end
 end
 
@@ -218,28 +237,29 @@ most NVIDIA GPUs.
 - `GPUKerOpt{T}`: A new GPU kernel options object with:
   - Phase factor of 1.0 + 0.0im
   - Generation precision of `Float64`
+  - Quasistatic approximation disabled
   - 128 threads per block
   - 256 blocks
   - Adjoint mode disabled
   - Default CUDA backend
 """
-GPUKerOpt{T}() where T<:AbstractFloat = GPUKerOpt{T}(1.0+0.0im, Float64, (128, 2, 1), (1, 128, 256), false, CUDABackend())
+GPUKerOpt{T}() where T<:AbstractFloat = GPUKerOpt{T}(1.0+0.0im, Float64, false, (128, 2, 1), (1, 128, 256), false, CUDABackend())
 
 """
-    GPUKerOpt(frqPhz, genPrc, numTrd, numBlk, adjMod, bckEnd)
+    GPUKerOpt(frqPhz, genPrc, qssApx, numTrd, numBlk, adjMod, bckEnd)
     GPUKerOpt()
 
-Construct a GPUKerOpt of the default storage precision `dfltPrc`.
+Construct a GPUKerOpt of the default storage precision `dflPrc`.
 """
-GPUKerOpt(frqPhz::Number, genPrc::Type{<:AbstractFloat}, numTrd::NTuple{3,Integer}, numBlk::NTuple{3,Integer}, adjMod::Bool, bckEnd::GPU) = GPUKerOpt{dfltPrc}(frqPhz, genPrc, numTrd, numBlk, adjMod, bckEnd)
-GPUKerOpt() = GPUKerOpt{dfltPrc}()
+GPUKerOpt(frqPhz::Number, genPrc::Type{<:AbstractFloat}, qssApx::Bool, numTrd::NTuple{3,Integer}, numBlk::NTuple{3,Integer}, adjMod::Bool, bckEnd::GPU) = GPUKerOpt{dflPrc}(frqPhz, genPrc, qssApx, numTrd, numBlk, adjMod, bckEnd)
+GPUKerOpt() = GPUKerOpt{dflPrc}()
 
 """
     GPUKerOpt{T}(opt::GPUKerOpt)
 
 Re-type a GPUKerOpt to storage precision `T`, keeping all field values.
 """
-GPUKerOpt{T}(opt::GPUKerOpt) where T<:AbstractFloat = GPUKerOpt{T}(opt.frqPhz, opt.genPrc, opt.numTrd, opt.numBlk, opt.adjMod, opt.bckEnd)
+GPUKerOpt{T}(opt::GPUKerOpt) where T<:AbstractFloat = GPUKerOpt{T}(opt.frqPhz, opt.genPrc, opt.qssApx, opt.numTrd, opt.numBlk, opt.adjMod, opt.bckEnd)
 
 """
     frqPhz(opt::GPUKerOpt)
@@ -250,7 +270,7 @@ Get the phase factor from a GPU kernel options object.
 - `opt::GPUKerOpt`: The GPU kernel options object
 
 # Returns
-- `Number`: The phase factor
+- `ComplexF64`: The phase factor
 """
 frqPhz(opt::GPUKerOpt) = opt.frqPhz
 
@@ -268,6 +288,19 @@ Get the generation precision from a GPU kernel options object.
 genPrc(opt::GPUKerOpt) = opt.genPrc
 
 """
+    qssApx(opt::GPUKerOpt)
+
+Get the quasistatic approximation flag from a GPU kernel options object.
+
+# Arguments
+- `opt::GPUKerOpt`: The GPU kernel options object
+
+# Returns
+- `Bool`: True if the quasistatic kernel is generated, false otherwise
+"""
+qssApx(opt::GPUKerOpt) = opt.qssApx
+
+"""
     adjMod(opt::GPUKerOpt)
 
 Get the number of threads to use when running GPU kernels.
@@ -277,7 +310,7 @@ The thread count determines the parallelization strategy for GPU computation. Hi
 numTrd(opt::GPUKerOpt) = opt.numTrd
 
 """
-    numBlk(opt::GPUKerOpt) -> NTuple{3, Integer}
+    numBlk(opt::GPUKerOpt) -> NTuple{3, Int}
 
 Get the number of thread blocks to use when running GPU kernels.
 
@@ -312,6 +345,8 @@ bckEnd(opt::GPUKerOpt) = opt.bckEnd
 """
     arrTyp(opt::GPUKerOpt{T})
 
+Internal, not exported.
+
 Get the array type from a GPU kernel options object.
 
 # Arguments
@@ -340,7 +375,7 @@ Creates a new `CPUKerOpt` object with the same phase factor and generation preci
   - Adjoint mode flag from `opt`
   - Default CPU backend
 """
-useCpu(opt::GPUKerOpt{T}) where T<:AbstractFloat = CPUKerOpt{T}(opt.frqPhz, opt.genPrc, opt.adjMod, CPU())
+useCpu(opt::GPUKerOpt{T}) where T<:AbstractFloat = CPUKerOpt{T}(opt.frqPhz, opt.genPrc, opt.qssApx, opt.adjMod, CPU())
 
 """
     useGpu(opt::GPUKerOpt)
@@ -354,38 +389,3 @@ Does nothing. This function is a placeholder for consistency with the CPU versio
 - `GPUKerOpt`: The same GPU kernel options object
 """
 useGpu(opt::GPUKerOpt) = opt
-
-# Add serialization support for GlaKerOpt
-function Serialization.serialize(io::IO, opt::CPUKerOpt{T}) where T<:AbstractFloat
-    serialize(io, T)
-    serialize(io, opt.frqPhz)
-    serialize(io, opt.genPrc)
-    serialize(io, opt.adjMod)
-end
-
-function Serialization.deserialize(io::IO, ::Type{<:CPUKerOpt})
-    prc = deserialize(io)
-    frqPhz = deserialize(io)
-    genPrc = deserialize(io)
-    adjMod = deserialize(io)
-    return CPUKerOpt{prc}(frqPhz, genPrc, adjMod, CPU())
-end
-
-function Serialization.serialize(io::IO, opt::GPUKerOpt{T}) where T<:AbstractFloat
-    serialize(io, T)
-    serialize(io, opt.frqPhz)
-    serialize(io, opt.genPrc)
-    serialize(io, opt.numTrd)
-    serialize(io, opt.numBlk)
-    serialize(io, opt.adjMod)
-end
-
-function Serialization.deserialize(io::IO, ::Type{<:GPUKerOpt})
-    prc = deserialize(io)
-    frqPhz = deserialize(io)
-    genPrc = deserialize(io)
-    numTrd = deserialize(io)
-    numBlk = deserialize(io)
-    adjMod = deserialize(io)
-    return GPUKerOpt{prc}(frqPhz, genPrc, numTrd, numBlk, adjMod, CUDABackend())
-end

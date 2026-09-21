@@ -1230,3 +1230,27 @@ function cntBlk!(egoToe::AbstractArray{<:Complex,5}, vol::GlaVol,
     end
     return nothing
 end
+
+# The quasistatic block at the cell offsets Ds: the n = 0 term of momSer's series,
+# I_{-1} / (4 pi f^2), less the 1/f^2 that genEgoSlf! applies once at the end.  What lands in
+# egoToe is therefore S itself, which carries no frequency.  genEgoSlf! calls this for the contact
+# offsets, then again for the near band farBlkQss! refuses.  The signed 36-pair assembly runs at
+# Double64 whatever genPrc is; its amplification alone overruns Float64.
+function momBlkQss!(egoToe::AbstractArray{<:Complex,5}, vol::GlaVol, Ds::Vector{NTuple{3,Int}})
+
+    stp = ntuple(dir -> Int(step(vol.grd[dir]) // vol.scl[dir]), 3)
+    sclDbl = Double64.(vol.scl)
+    celInv = inv(prod(sclDbl) * 4 * Double64(pi))
+    srfMat = Matrix{ComplexDF64}(undef, 36, length(Ds))
+    @threads for lin ∈ 1:(36 * length(Ds))
+        off, fp = fldmod1(lin, 36)
+        srfMat[fp, off] = celInv * only(parMom(parFac(Ds[off], facPar[1, fp],
+            facPar[2, fp], sclDbl)..., -1))
+    end
+    egoCel = zeros(MMatrix{3,3,ComplexDF64})
+    for off ∈ eachindex(Ds)
+        srfSum!(egoCel, view(srfMat, :, off))
+        view(egoToe, :, :, CartesianIndex(div.(Ds[off], stp) .+ 1)) .= egoCel
+    end
+    return nothing
+end

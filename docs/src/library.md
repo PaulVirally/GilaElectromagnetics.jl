@@ -13,7 +13,7 @@ Order   = [:constant, :type, :function, :macro]
 !!! note "Storage precision"
     Operators and fields carry a real type parameter `T<:AbstractFloat` (`Float32`
     or `Float64`); the data itself is `Complex{T}`. Unparameterized constructors
-    default to `T = dfltPrc` (`Float32`); request another precision with the type
+    default to `T = dflPrc` (`Float32`); request another precision with the type
     parameter, e.g. `GlaOprVac{Float64}(vol)`. See [Precision](usage.md#precision)
     for details.
 

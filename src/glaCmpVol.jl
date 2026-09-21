@@ -1,8 +1,8 @@
 """
     GlaCmpVol
 
-A set of disjoint `GlaVol` regions (potentially with different scales) tiling
-one rectangular domain but made to "feel" like single volume.
+A set of disjoint `GlaVol` regions (potentially with different scales, and
+potentially separated) made to "feel" like a single volume.
 
 # Fields
 - `regions::Vector{GlaVol}`: The regions of the tiling, in the order that fixes
@@ -27,8 +27,9 @@ lines up with the degrees of freedom entry by entry.
 
 The regions must be nonempty, have even cell counts, have pairwise commensurate
 scales, sit on a common grid, have disjoint interiors (face, edge, and corner
-contact is fine and expected), exactly tile the bounding box of their union, and
-satisfy the per-partition parity condition of `chkParExtInf` for every pair.
+contact is fine and expected), and satisfy the per-partition parity condition of
+`chkParExtInf` for every pair. Gaps between regions are allowed: a tiling may
+hold several separated bodies.
 """
 struct GlaCmpVol
     regions::Vector{GlaVol}
@@ -56,8 +57,8 @@ GlaCmpVol(vol::GlaVol) = GlaCmpVol([vol])
 
 #= Lower and upper corner of the cuboid occupied by a volume. Written in terms
 of the grid and the cell scale, the same way ovrChk measures edges. =#
-_lwrEdg(vol::GlaVol) = Tuple(first.(vol.grd) .- (vol.scl .// 2))
-_uprEdg(vol::GlaVol) = Tuple(last.(vol.grd) .+ (vol.scl .// 2))
+_lwrEdg(vol::GlaVol) = first.(vol.grd) .- (vol.scl .// 2)
+_uprEdg(vol::GlaVol) = last.(vol.grd) .+ (vol.scl .// 2)
 
 #= Interiors share volume. Contact along a face, an edge, or a corner returns
 false, since the external construction has contact corrections for it. =#
@@ -131,7 +132,7 @@ function chkCmpVol(regs::Vector{GlaVol})
             throw(ArgumentError("Region $idx is empty: cell counts $(reg.cel). Every region must have at least one cell in every dimension."))
         end
         if any(Rational.(step.(reg.grd)) .!= reg.scl)
-            throw(ArgumentError("Region $idx has grid step $(Tuple(Rational.(step.(reg.grd)))) but cell scale $(reg.scl). A composite volume region must be a solid cuboid, so the grid pitch has to equal the cell size."))
+            throw(ArgumentError("Region $idx has grid step $(Rational.(step.(reg.grd))) but cell scale $(reg.scl). A composite volume region must be a solid cuboid, so the grid pitch has to equal the cell size."))
         end
         if any(isodd.(reg.cel))
             badDir = findall(isodd.(reg.cel))
@@ -151,7 +152,6 @@ function chkCmpVol(regs::Vector{GlaVol})
         end
         chkParCmpVol(regA, regB, idxA, idxB)
     end
-    chkTilCmpVol(regs)
     return nothing
 end
 
@@ -184,19 +184,6 @@ function chkParCmpVol(regA::GlaVol, regB::GlaVol, idxA::Integer, idxB::Integer)
     if any(isodd.(celSum))
         badDir = findall(isodd.(celSum))
         throw(ArgumentError("Regions $idxA and $idxB violate the partition parity condition in dimension(s) $(badDir): $(celParA) cells per partition in region $idxA plus $(celParB) in region $idxB gives $(celSum). Move the refinement box or change the refinement factor so that every dimension sums to an even number."))
-    end
-    return nothing
-end
-
-#= Disjoint regions whose volumes add up to the volume of their bounding box
-tile that box exactly. =#
-function chkTilCmpVol(regs::Vector{GlaVol})
-    minEdg = reduce((edgA, edgB) -> min.(edgA, edgB), _lwrEdg.(regs))
-    maxEdg = reduce((edgA, edgB) -> max.(edgA, edgB), _uprEdg.(regs))
-    bndVol = prod(maxEdg .- minEdg)
-    regVol = sum(prod(reg.cel .* reg.scl) for reg in regs)
-    if regVol != bndVol
-        throw(ArgumentError("The regions do not tile their bounding box: they fill $(regVol) λ³ of a box of $(bndVol) λ³ spanning $(Tuple(minEdg)) to $(Tuple(maxEdg)). A composite volume is one solid cuboid, so gaps are not allowed. Use one composite volume per body."))
     end
     return nothing
 end

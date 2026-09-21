@@ -218,7 +218,7 @@ end
     zerofield(::Type{T}, cvol::GlaCmpVol; useGpu::Bool=false)
     zerofield(cvol::GlaCmpVol; useGpu::Bool=false)
 
-Allocate a zero field of storage precision `T` (`dfltPrc` when unrequested) over a composite volume.
+Allocate a zero field of storage precision `T` (`dflPrc` when unrequested) over a composite volume.
 
 # Arguments
 - `cvol::GlaCmpVol`: The composite volume
@@ -232,13 +232,13 @@ function zerofield(::Type{T}, cvol::GlaCmpVol; useGpu::Bool=false) where T<:Abst
     dat = useGpu ? CUDA.zeros(Complex{T}, len) : zeros(Complex{T}, len)
     return GlaFld(dat, cvol)
 end
-zerofield(cvol::GlaCmpVol; useGpu::Bool=false) = zerofield(dfltPrc, cvol; useGpu=useGpu)
+zerofield(cvol::GlaCmpVol; useGpu::Bool=false) = zerofield(dflPrc, cvol; useGpu=useGpu)
 
 """
     zerofield(::Type{T}, vol::GlaVol; useGpu::Bool=false)
     zerofield(vol::GlaVol; useGpu::Bool=false)
 
-Allocate a zero field of storage precision `T` (`dfltPrc` when unrequested) over a plain volume.
+Allocate a zero field of storage precision `T` (`dflPrc` when unrequested) over a plain volume.
 
 The volume is taken as a tiling of one region, so the result is an ordinary
 `GlaFld` and every operation defined on fields applies to it.
@@ -251,7 +251,7 @@ The volume is taken as a tiling of one region, so the result is an ordinary
 - `GlaFld`: A field of zeros with one entry per degree of freedom
 """
 zerofield(::Type{T}, vol::GlaVol; useGpu::Bool=false) where T<:AbstractFloat = zerofield(T, GlaCmpVol(vol); useGpu=useGpu)
-zerofield(vol::GlaVol; useGpu::Bool=false) = zerofield(dfltPrc, GlaCmpVol(vol); useGpu=useGpu)
+zerofield(vol::GlaVol; useGpu::Bool=false) = zerofield(dflPrc, GlaCmpVol(vol); useGpu=useGpu)
 
 """
     regionview(fld::GlaFld, idx::Integer)

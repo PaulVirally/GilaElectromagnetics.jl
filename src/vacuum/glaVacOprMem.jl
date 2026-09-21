@@ -85,13 +85,14 @@ Prepare memory for Green function operator. Automatically computes the Fourier t
 - `trgVol::GlaVol`: Target volume or self volume definition.
 - `srcVol::Union{Nothing,GlaVol}=nothing`: Source volume for external construction. Nothing will generate the self construction.
 - `shpCch::Bool=false`: Cache the far-field geometry table of each cell shape in a scratch space. A table is 16-19 MB and 12-16 s to build against 0.6-0.7 s to read, so this trades disk for the first build of a shape in a session.
+- `hrmPrt::Union{Nothing,Symbol}=nothing`: Keep only the entry by entry real (`:sym`) or imaginary (`:asy`) part of the kernel. This is how `SymGlaOprVac` and `AsyGlaOprVac` are built.
 
 # Returns
 - `GlaVacOprMem{T}`: The memory structure for the Green function operator.
 """
 #= Closer than a third of a wavelength a separated pair's discretisation error
 is several times its wide separation value. The bound is a distance, not a cell
-count, and loss makes it worse; measured in notes/prx/RESULTS.md. =#
+count, and loss makes it worse. =#
 const prxSepMin = 1 / 3
 
 # Face to face distance between two volumes, or nothing when they meet
@@ -116,7 +117,8 @@ end
 prxChk(cmpInf::GlaKerOpt, trgVol::GlaVol, srcVol::GlaVol) =
     prxChk(frqPhz(cmpInf), trgVol, srcVol)
 
-function GlaVacOprMem(cmpInf::GlaKerOpt{T}, trgVol::GlaVol, srcVol::GlaVol=trgVol; shpCch::Bool = false, prxWrn::Bool = true) where T<:AbstractFloat
+function GlaVacOprMem(cmpInf::GlaKerOpt{T}, trgVol::GlaVol, srcVol::GlaVol=trgVol; shpCch::Bool = false, prxWrn::Bool = true, hrmPrt::Union{Nothing,Symbol} = nothing) where T<:AbstractFloat
+    hrmPrt ∈ (nothing, :sym, :asy) || throw(ArgumentError("hrmPrt is :sym, :asy or nothing, got $(repr(hrmPrt))."))
     prxWrn && prxChk(cmpInf, trgVol, srcVol)
     mixInf = genEveExtInf(trgVol, srcVol)
 
@@ -141,6 +143,12 @@ function GlaVacOprMem(cmpInf::GlaKerOpt{T}, trgVol::GlaVol, srcVol::GlaVol=trgVo
     # partition pair
     egoCrcCmp = Array{genCpx}(undef, totCelCrc..., 6, totParSrc, totParTrg)
     gthEgoCmp!(egoCrcCmp, egoCrc)
+    #= The Hermitian and anti-Hermitian parts are the entry by entry real and
+    imaginary parts of the kernel, taken before the transform rather than after:
+    imag(fft(g)) leaves ‖imag g‖ behind a subtraction of two terms the size of
+    ‖real g‖, which costs eps * ‖real g‖ / ‖imag g‖ and grows as (k cell)^-3. =#
+    hrmPrt === :sym && (egoCrcCmp .= complex.(real.(egoCrcCmp)))
+    hrmPrt === :asy && (egoCrcCmp .= complex.(imag.(egoCrcCmp)))
     # allow the 9-component fill array to be reclaimed before the transform
     egoCrc = nothing
     # number of unique elements in each cartesian index for a branch
@@ -454,9 +462,7 @@ end
 # As with deepcopy above, serialization must regenerate the FFTW plans rather
 # than write out the raw C pointers, which are only meaningful inside the
 # process that created them. Only the Fourier data, volumes, and kernel options
-# are written, and glaOprPrp rebuilds the plans on load. These methods cover
-# mems reached through the generic serializer (struct fields, array elements);
-# the io::IO methods below are the top level format used for preload files.
+# are written, and glaOprPrp rebuilds the plans on load.
 function Serialization.serialize(s::AbstractSerializer, mem::GlaVacOprMem)
     # serialize_type needs the concrete GlaVacOprMem{T}, not the UnionAll
     Serialization.serialize_type(s, typeof(mem))
@@ -464,6 +470,7 @@ function Serialization.serialize(s::AbstractSerializer, mem::GlaVacOprMem)
     cmpInf = useCpu(mem.cmpInf)
     serialize(s, cmpInf.frqPhz)
     serialize(s, cmpInf.genPrc)
+    serialize(s, cmpInf.qssApx)
     serialize(s, cmpInf.adjMod)
     serialize(s, mem.trgVol)
     serialize(s, mem.srcVol)
@@ -474,40 +481,12 @@ function Serialization.deserialize(s::AbstractSerializer, ::Type{<:GlaVacOprMem}
     egoFur = deserialize(s)
     frqPhz = deserialize(s)
     genPrc = deserialize(s)
+    qssApx = deserialize(s)
     adjMod = deserialize(s)
     trgVol = deserialize(s)
     srcVol = deserialize(s)
     mixInf = deserialize(s)
     # storage precision is recovered from the written Fourier data
     prc = real(eltype(first(egoFur)))
-    return glaOprPrp(egoFur, trgVol, srcVol, mixInf, CPUKerOpt{prc}(frqPhz, genPrc, adjMod, CPU()))
-end
-
-function Serialization.serialize(io::IO, mem::GlaVacOprMem)
-    wasGpu = false
-    if mem.cmpInf isa GPUKerOpt
-        wasGpu = true
-        useCpu!(mem) # Convert to CPU for serialization
-    end
-    serialize(io, mem.egoFur)
-    serialize(io, mem.cmpInf)
-    serialize(io, mem.trgVol)
-    serialize(io, mem.srcVol)
-    serialize(io, mem.mixInf)
-
-    if wasGpu
-        useGpu!(mem) # Convert back to GPU after serialization
-    end
-end
-
-function Serialization.deserialize(io::IO, ::Type{<:GlaVacOprMem})
-    egoFur = deserialize(io)
-    # egoFur is authoritative for the storage precision of the rebuilt operator
-    cmpInf = CPUKerOpt{real(eltype(first(egoFur)))}(deserialize(io, CPUKerOpt))
-    trgVol = deserialize(io)
-    srcVol = deserialize(io)
-    mixInf = deserialize(io)
-     
-    # Reconstruct the full operator
-    return glaOprPrp(egoFur, trgVol, srcVol, mixInf, cmpInf)
+    return glaOprPrp(egoFur, trgVol, srcVol, mixInf, CPUKerOpt{prc}(frqPhz, genPrc, qssApx, adjMod, CPU()))
 end

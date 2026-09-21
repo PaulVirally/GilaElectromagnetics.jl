@@ -98,7 +98,7 @@ function serRnd(opr)
     buf = IOBuffer()
     serialize(buf, opr)
     seekstart(buf)
-    return deserialize(buf, typeof(opr))
+    return deserialize(buf)
 end
 
 # round trip an operator and compare it entrywise, not just through one matvec

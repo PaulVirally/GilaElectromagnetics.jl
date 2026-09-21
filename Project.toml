@@ -15,12 +15,14 @@ Serialization = "9e88b42a-f829-5b0c-bbe9-9e923198166b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 
 [weakdeps]
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 LinearMaps = "7a12625a-238d-50fd-b39a-03d52299707e"
 LinearOperators = "5c8ed15e-5a4c-59e4-a42b-c7e8811fb125"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 SciMLOperators = "c0aeaf25-5076-4817-a8d5-81caf7dfa961"
 
 [extensions]
+GilaJLD2Ext = "JLD2"
 GilaLinearMapsExt = "LinearMaps"
 GilaLinearOperatorsExt = "LinearOperators"
 GilaSciMLOperatorsExt = "SciMLOperators"
@@ -30,6 +32,7 @@ AbstractFFTs = "1.3.0, v1.5.0"
 CUDA = "v5.0.0, v5.4.2"
 DoubleFloats = "1.11.2"
 FFTW = "v1.8.0, v1.8.0"
+JLD2 = "0.6.6"
 KernelAbstractions = "0.9.34"
 LaTeXStrings = "1.4.0"
 LinearMaps = "3.11.4"
@@ -57,4 +60,4 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
 bench = ["BenchmarkTools", "JLD2", "Plots", "Statistics", "LaTeXStrings"]
-test = ["Test", "Random", "Scratch", "CUDA", "LinearAlgebra", "LinearMaps", "LinearOperators", "Logging", "SciMLOperators", "Serialization"]
+test = ["Test", "Random", "Scratch", "CUDA", "LinearAlgebra", "LinearMaps", "LinearOperators", "Logging", "SciMLOperators", "Serialization", "JLD2"]

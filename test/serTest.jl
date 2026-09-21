@@ -16,12 +16,13 @@ const serFarVol = GlaVol((2, 2, 2), scl16, (1//1, 0//1, 0//1))
 the masks become the only record of the sub-volumes. =#
 const serOvrA = GlaVol((2, 2, 2), scl16, stdOrg)
 const serOvrB = GlaVol((2, 2, 2), scl16, (1//16, 1//16, 1//16))
+# A gapped tiling: two regions a wavelength apart in one composite volume
+const serGapCvl = GlaCmpVol([GlaVol((2, 2, 2), scl16, stdOrg),
+    GlaVol((2, 2, 2), scl16, extOrg)])
 serFld() = discretize!(zerofield(Float64, serCvl), tstDns)
 
 @testset "Vacuum operator serialization" begin
-    # The block matrix reaches the generic serializer, the rest are tagged kinds
-    for opr in (_g0s(), _gExt(), _asys(), SymGlaOprVac(_g0s()),
-        MulRegGlaOprVac(reshape([_g0(), GlaOprVac{Float64}(_vol4, _trgV4)], 1, 2)))
+    for opr in (_g0s(), _gExt(), _asys(), SymGlaOprVac(_g0s()))
         serChk(opr)
     end
     # An operator nested in a container takes the same route
@@ -57,6 +58,16 @@ end
     @test (desOpr * serFld()).dat == (serOpr * serFld()).dat
     # Two bodies, so the block matrix is not square
     serChk(GlaCmpOprVac{Float64}(serCvl, GlaCmpVol(serFarVol)))
+    # One tiling holding two separated regions
+    serChk(GlaCmpOprVac{Float64}(serGapCvl))
+    # No raw FFTW plan pointers reach the written composite operator either
+    tmpFil = tempname()
+    try
+        open(tmpFil, "w") do io; serialize(io, serOpr); end
+        @test isnothing(findfirst(codeunits("FFTW"), read(tmpFil)))
+    finally
+        rm(tmpFil; force=true)
+    end
 end
 
 #= The parts hold the transformed Fourier coefficients of their blocks, so the
@@ -78,7 +89,7 @@ end
         InvSctOpr(serOpr, serSus))
         desInv = serChk(invSct)
         @test desInv.oprVac isa typeof(invSct.oprVac)
-        @test desInv.sus == invSct.sus
+        @test sus(desInv).sus == sus(invSct).sus
     end
 end
 
@@ -93,4 +104,35 @@ end
     @test (desInv * serFld()).dat == (invSct * serFld()).dat
     fldDat = collect(serFld().dat)
     @test desInv * fldDat == invSct * fldDat
+    # No raw FFTW plan pointers reach the written scattering operator either
+    tmpFil = tempname()
+    try
+        open(tmpFil, "w") do io; serialize(io, SctOpr(invSct, BiCGStabSolver())); end
+        @test isnothing(findfirst(codeunits("FFTW"), read(tmpFil)))
+    finally
+        rm(tmpFil; force=true)
+    end
+end
+
+@testset "Susceptibility operator serialization" begin
+    isoOpr = SusOpr{Float64}(_vol2s, _sus2s)
+    tenSus = zeros(ComplexF64, 2, 2, 2, 3, 3)
+    for dir in 1:3
+        tenSus[:, :, :, dir, dir] .= _sus2s
+    end
+    aniOpr = SusOpr{Float64}(_vol2s, tenSus)
+    @test isoOpr.sus isa Vector
+    @test aniOpr.sus isa Array{ComplexF64, 3}
+    serChk(isoOpr)
+    serChk(aniOpr)
+    # Nested in a container takes the same route as the top level
+    tmpFil = tempname()
+    try
+        open(tmpFil, "w") do io; serialize(io, [isoOpr, aniOpr]); end
+        desIso, desAni = open(deserialize, tmpFil)
+        @test desIso isa typeof(isoOpr) && desIso.sus == isoOpr.sus
+        @test desAni isa typeof(aniOpr) && desAni.sus == aniOpr.sus
+    finally
+        rm(tmpFil; force=true)
+    end
 end
