@@ -405,6 +405,8 @@ function invMul!(w, opr::SctOpr, v, α, β)
     iszero(β) && return w .= α .* (opr.invSctOpr * v)
     return axpby!(α, opr.invSctOpr * v, β, w)
 end
+# Both inverse actions below are matvecs, so both are admissible preconditioners
+isvarying(::SctOpr) = false
 #= The inverse of G₀(I - XG₀)⁻¹ is (I - XG₀)G₀⁻¹, so only the vacuum half is
 solved for. The two halves swap in adjoint mode, as they do in mulAct!. =#
 function invMul!(w, opr::GlaOpr, v, α, β)
@@ -449,6 +451,7 @@ function invMul!(w, opr::SusOpr, v, α, β)
     iszero(β) && return w .= α .* out
     return axpby!(α, out, β, w)
 end
+isvarying(::SusOpr) = false
 
 function invMulAdj!(w, opr::AbstractGlaOpr, v, α, β)
     adjOpr = adjoint!(opr) # Compute with the adjoint operator
