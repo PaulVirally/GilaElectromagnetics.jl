@@ -308,6 +308,12 @@ end
     @test all(i -> !iszero(hss[i + 1, i]), 1:n-1) # a Givens pass zeroes the subdiagonal
     ritz = eigvals(hss[1:n, 1:n])
     @test sort(ritz; by=reim) ≈ sort(eigvals(Matrix(mat)); by=reim) rtol=1e-6
+
+    # Every cycle's matrix, not only the first, is the Hessenberg it is read as
+    lg = SlvLog()
+    @test_logs (:warn,) solve(prcMat, copy(prcRhs), GMRESSolver(5, 12, 0.0, 1e-14); log=lg)
+    @test length(lg.hss) == 3
+    @test all(h -> iszero(tril(h, -2)), lg.hss)
 end
 
 # Every refinement step runs its own inner solve, and each leaves a record

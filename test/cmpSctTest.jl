@@ -61,7 +61,7 @@ const sctOne = GlaCmpVol(GlaVol((2, 2, 2), scl16, stdOrg))
     gla = GlaOpr(sctVac, sctChi)
     @test size(sct) == (216, 216) && size(gla) == (216, 216)
     @test isselfoperator(sct) && isselfoperator(gla)
-    @test slv(sct) isa BiCGStabSolver
+    @test slv(sct) isa GCRODRSolver
     @test occursin("composite", sprint(show, sctInv))
     @test occursin("composite", sprint(show, gla))
     @test !occursin("\n", sprint(show, sctInv)) && !occursin("\n", sprint(show, gla))

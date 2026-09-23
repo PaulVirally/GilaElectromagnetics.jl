@@ -714,8 +714,8 @@ Construct an inverse scattering operator from a full Green function operator.
 InvSctOpr(opr::GlaOpr) = InvSctOpr(opr.sctOpr)
 
 """
-    SctOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
-    SctOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    SctOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver())
+    SctOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver())
 
 Construct a scattering operator for self-interactions on a single volume.
 
@@ -727,19 +727,19 @@ Also takes the `frqPhz`, `genPrc`, `qssApx` and `shpCch` keywords of `GlaOprVac`
 - `vol::GlaVol`: The volume to compute the self-interaction for
 - `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
-- `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
+- `slv::GlaSlv=GCRODRSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `SctOpr`: The scattering operator
 """
-SctOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver(), kwargs...) where T<:AbstractFloat =
+SctOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver(), kwargs...) where T<:AbstractFloat =
     SctOpr{T}(vol, vol, sus; useGpu, slv, kwargs...)
-SctOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver(), kwargs...) =
+SctOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver(), kwargs...) =
     SctOpr{dflPrc}(vol, vol, sus; useGpu, slv, kwargs...)
 
 """
-    SctOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
-    SctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    SctOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver())
+    SctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver())
 
 Construct a scattering operator for external interactions between different volumes.
 
@@ -752,20 +752,20 @@ Also takes the `frqPhz`, `genPrc`, `qssApx` and `shpCch` keywords of `GlaOprVac`
 - `srcVol::GlaVol`: The source volume containing the sources
 - `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
-- `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
+- `slv::GlaSlv=GCRODRSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `SctOpr`: The scattering operator
 """
-function SctOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver(), kwargs...) where T<:AbstractFloat
+function SctOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver(), kwargs...) where T<:AbstractFloat
     invSctOpr = InvSctOpr{T}(trgVol, srcVol, sus; useGpu, kwargs...)
     return SctOpr{T}(invSctOpr, slv)
 end
-SctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver(), kwargs...) =
+SctOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver(), kwargs...) =
     SctOpr{dflPrc}(trgVol, srcVol, sus; useGpu, slv, kwargs...)
 
 """
-    SctOpr(opr::GlaOprVac, sus::AbstractArray{<:Number}; slv::GlaSlv=BiCGStabSolver())
+    SctOpr(opr::GlaOprVac, sus::AbstractArray{<:Number}; slv::GlaSlv=GCRODRSolver())
 
 Construct a scattering operator from a vacuum Green function operator.
 
@@ -775,12 +775,12 @@ This constructor creates a scattering operator that describes how electromagneti
 - `opr::GlaOprVac`: The vacuum Green function operator to convert into a scattering operator
 - `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
-- `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
+- `slv::GlaSlv=GCRODRSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `SctOpr`: The scattering operator
 """
-function SctOpr(opr::GlaOprVac{T}, sus::AbstractArray{<:Number}; slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat
+function SctOpr(opr::GlaOprVac{T}, sus::AbstractArray{<:Number}; slv::GlaSlv=GCRODRSolver()) where T<:AbstractFloat
     invSctOpr = InvSctOpr{T}(opr, sus)
     return SctOpr{T}(invSctOpr, slv)
 end
@@ -807,8 +807,8 @@ Construct a scattering operator from a full Green function operator.
 SctOpr(opr::GlaOpr) = opr.sctOpr
 
 """
-    GlaOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
-    GlaOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    GlaOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver())
+    GlaOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver())
 
 Construct a full Green function operator for self-interactions on a single volume.
 
@@ -820,19 +820,19 @@ Also takes the `frqPhz`, `genPrc`, `qssApx` and `shpCch` keywords of `GlaOprVac`
 - `vol::GlaVol`: The volume to compute the self-interaction for
 - `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
-- `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
+- `slv::GlaSlv=GCRODRSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `GlaOpr`: The full Green function operator
 """
-GlaOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver(), kwargs...) where T<:AbstractFloat =
+GlaOpr{T}(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver(), kwargs...) where T<:AbstractFloat =
     GlaOpr{T}(vol, vol, sus; useGpu, slv, kwargs...)
-GlaOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver(), kwargs...) =
+GlaOpr(vol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver(), kwargs...) =
     GlaOpr{dflPrc}(vol, vol, sus; useGpu, slv, kwargs...)
 
 """
-    GlaOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
-    GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver())
+    GlaOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver())
+    GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver())
 
 Construct a full Green function operator for external interactions between different volumes.
 
@@ -845,20 +845,20 @@ Also takes the `frqPhz`, `genPrc`, `qssApx` and `shpCch` keywords of `GlaOprVac`
 - `srcVol::GlaVol`: The source volume containing the sources
 - `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
-- `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
+- `slv::GlaSlv=GCRODRSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `GlaOpr`: The full Green function operator
 """
-function GlaOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver(), kwargs...) where T<:AbstractFloat
+function GlaOpr{T}(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver(), kwargs...) where T<:AbstractFloat
     sctOpr = SctOpr{T}(trgVol, srcVol, sus; useGpu, slv, kwargs...)
     return GlaOpr{T}(sctOpr)
 end
-GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=BiCGStabSolver(), kwargs...) =
+GlaOpr(trgVol::GlaVol, srcVol::GlaVol, sus::AbstractArray{<:Number}; useGpu::Bool=isa(sus, CuArray), slv::GlaSlv=GCRODRSolver(), kwargs...) =
     GlaOpr{dflPrc}(trgVol, srcVol, sus; useGpu, slv, kwargs...)
 
 """
-    GlaOpr(opr::GlaOprVac, sus::AbstractArray{<:Number}; slv::GlaSlv=BiCGStabSolver())
+    GlaOpr(opr::GlaOprVac, sus::AbstractArray{<:Number}; slv::GlaSlv=GCRODRSolver())
 
 Construct a full Green function operator from a vacuum Green function operator.
 
@@ -868,12 +868,12 @@ This constructor creates a full Green function operator that combines the vacuum
 - `opr::GlaOprVac`: The vacuum Green function operator to convert into a full Green function operator
 - `sus::AbstractArray{<:Number}`: The susceptibility tensor, either as a flat vector or a 3-tensor, converted to `Complex{T}` on construction
 - `useGpu::Bool=isa(sus, CuArray)`: Whether to use GPU computation. If true, uses GPU acceleration, otherwise uses CPU
-- `slv::GlaSlv=BiCGStabSolver()`: The solver to use for solving the linear system
+- `slv::GlaSlv=GCRODRSolver()`: The solver to use for solving the linear system
 
 # Returns
 - `GlaOpr`: The full Green function operator
 """
-GlaOpr(opr::GlaOprVac, sus::AbstractArray{<:Number}; slv::GlaSlv=BiCGStabSolver()) = GlaOpr(SctOpr(opr, sus; slv=slv))
+GlaOpr(opr::GlaOprVac, sus::AbstractArray{<:Number}; slv::GlaSlv=GCRODRSolver()) = GlaOpr(SctOpr(opr, sus; slv=slv))
 
 """
     GlaOpr{T}(opr::GlaOpr)
@@ -1145,7 +1145,7 @@ Returns the solver associated with the operator.
 # Returns
 - The solver used by the operator, which is always a `GlaSlv` instance.
 """
-slv(::AbstractGlaVacOpr) = GilaSolvers.BiCGStabSolver() # Default solver
+slv(::AbstractGlaVacOpr) = GilaSolvers.GCRODRSolver() # Default solver
 slv(opr::InvSctOpr) = slv(opr.oprVac)
 slv(opr::SctOpr) = opr.slv
 slv(opr::GlaOpr) = opr.sctOpr.slv

@@ -7,6 +7,8 @@ It includes implementations of GMRES and BiCGStab methods, with support for both
 # Types
 - `GlaSlv`: Abstract base type for all solvers
 - `GMRESSolver`: Generalized Minimal Residual Method solver
+- `GCRODRSolver`: GCRO with deflated restarting, a GMRES that recycles a subspace
+- `RcySpc`: The subspace a `GCRODRSolver` carries between solves
 - `BiCGStabSolver`: BiConjugate Gradient Stabilized Method solver
 - `MixPrcRfn`: Mixed precision iterative refinement, with a pluggable inner solver
 - `SlvLog`: A record of one solve, filled in place by `solve`
@@ -22,7 +24,7 @@ using CUDA
 using ..GilaTypes
 using ..GilaTypes: isgpu, isadjoint
 
-export GMRESSolver, BiCGStabSolver, MixPrcRfn, SlvLog, solve, isvarying
+export GMRESSolver, GCRODRSolver, RcySpc, BiCGStabSolver, MixPrcRfn, SlvLog, solve, isvarying
 export MixedPrecisionRefinement
 
 """
@@ -58,12 +60,13 @@ A record of one `solve`, filled in place when passed as `solve(opr, inp, slv; lo
 - `numItr::Int`: Iterations taken
 - `resRec::Vector{Float64}`: The relative recursive residual the algorithm tracks, before the first step and after each one
 - `resTru::Vector{Float64}`: The true relative residual `‖inp - opr * out‖ / ‖inp‖`, exit value last
-- `hss::Vector{Matrix{ComplexF64}}`: The GMRES Hessenberg matrix per restart cycle, as built
+- `hss::Vector{Matrix{ComplexF64}}`: The GMRES Hessenberg matrix per restart cycle, as built, augmented by the recycled directions for a `GCRODRSolver`
 - `oprApp::Int`: Operator applications made by the solver
 - `pcnApp::Int`: Preconditioner applications made by the solver
 - `oprAppLog::Int`: Operator applications made to fill this record, kept out of `oprApp`
 - `oprAppPcn::Int`: Operator applications made inside `ldiv!`, which only the preconditioner can count: left at zero here
 - `ρ`, `α`, `ω`, `dnm::Vector{ComplexF64}`: BiCGStab's scalars and its `dot(resShd, v)` denominator, per iteration
+- `rcyErr::Vector{Float64}`: `‖CᴴC - I‖` for a `GCRODRSolver`'s recycled subspace, per cycle
 - `prm::NamedTuple`: The settings the solve ran under, resolved and rescaled, and the iterations restarts fell on
 - `inner::Vector{SlvLog}`: One record per inner solve, for a solver that wraps another
 """
@@ -81,6 +84,7 @@ mutable struct SlvLog
     α::Vector{ComplexF64}
     ω::Vector{ComplexF64}
     dnm::Vector{ComplexF64}
+    rcyErr::Vector{Float64}
     prm::NamedTuple
     inner::Vector{SlvLog}
     truSmp::Symbol
@@ -91,8 +95,8 @@ mutable struct SlvLog
         hssSmp in (:all, :first) ||
             throw(ArgumentError("Hessenberg cycles are kept :all or :first, not :$hssSmp."))
         return new(:none, 0, Float64[], Float64[], Matrix{ComplexF64}[], 0, 0, 0, 0,
-            ComplexF64[], ComplexF64[], ComplexF64[], ComplexF64[], NamedTuple(),
-            SlvLog[], truSmp, hssSmp)
+            ComplexF64[], ComplexF64[], ComplexF64[], ComplexF64[], Float64[],
+            NamedTuple(), SlvLog[], truSmp, hssSmp)
     end
 end
 
@@ -537,6 +541,439 @@ function solve(opr, inp::AbstractArray{T}, slv::GMRESSolver; x0 = nothing, log =
 end
 
 """
+    GCRODRSolver
+
+An iterative solver for linear systems of equations that uses GCRO with deflated
+restarting (GCRO-DR). GCRO-DR keeps `rcyDim` directions of the Krylov space
+built in GMRES and reuses them in the following cycle and, through the `rcy`
+argument of `solve`, in a subsequent solve.
+
+# Fields
+- `rstItr::Union{Nothing, Int}`: Iterations in a cycle, `rcyDim` included (default: min(20, length(vec)))
+- `maxItr::Union{Nothing, Int}`: Maximum number of iterations (default: max(5000, length(vec)))
+- `absTol::Union{Nothing, Real}`: Absolute tolerance for convergence (default: 0)
+- `relTol::Union{Nothing, Real}`: Relative tolerance for convergence (default: √ε)
+- `preCon`: Preconditioner, anything with an `ldiv!(out, preCon, inp)` method (default: none)
+- `side::Symbol`: `:left` (default) or `:right`, the side `preCon` is applied on
+- `rcyDim::Int`: Directions carried between cycles, `0` gives plain GMRES
+- `lrgFrc::Float64`: Fraction of `rcyDim` taken from the large end of the spectrum
+
+The recycled pair `(U, C)` satisfies `A * U = C` with `C' * C = I`, `A` being the
+preconditioned operator. The best correction inside `range(U)` therefore costs no
+operator applications, and the cycle's least squares problem decouples into the
+plain GMRES one.
+
+`lrgFrc * rcyDim` of the directions approximate the eigenvectors of largest
+modulus (through ordinary Ritz values) and the rest those of smallest modulus
+(through harmonic Ritz values). Deflating the small end (making `lrgFrc` closer
+to `0`) changes the rate of
+convergence.
+
+There is no `flexible` field: flexible GMRES stores the preconditioned basis,
+which does not satisfy `A * U = C`.
+"""
+struct GCRODRSolver <: GlaSlv
+    rstItr::Union{Nothing, Int} # Iterations in a cycle, the recycled directions included
+    maxItr::Union{Nothing, Int} # Maximum number of iterations
+    absTol::Union{Nothing, Real} # Absolute tolerance
+    relTol::Union{Nothing, Real} # Relative tolerance
+    preCon::Any # Preconditioner
+    side::Symbol # Side the preconditioner is applied on
+    rcyDim::Int # Directions carried between cycles
+    lrgFrc::Float64 # Fraction of rcyDim taken from the large end of the spectrum
+end
+
+"""
+    GCRODRSolver(rstItr = nothing, maxItr = nothing, absTol = nothing, relTol = nothing; preCon = nothing, side = :left, rcyDim = 10, lrgFrc = 0.0)
+
+Create a GCRODRSolver. Unset values are resolved against the right hand side at
+solve time.
+
+# Returns
+- `GCRODRSolver`: A new solver instance
+"""
+function GCRODRSolver(rstItr = nothing, maxItr = nothing, absTol = nothing,
+    relTol = nothing; preCon = nothing, side = :left, rcyDim = 10, lrgFrc = 0.0)
+    side in (:left, :right) ||
+        throw(ArgumentError("A preconditioner is applied on the :left or on the :right. Side :$side is not supported."))
+    0 <= lrgFrc <= 1 ||
+        throw(ArgumentError("lrgFrc ∈ [0, 1] is the fraction of the recycled subspace taken from the large end of the spectrum. Value of $lrgFrc is not supported."))
+    rcyDim >= 0 ||
+        throw(ArgumentError("We require the rcyDim >= 0. Given $rcyDim is not supported."))
+    isnothing(rstItr) || rcyDim < rstItr ||
+        throw(ArgumentError("A cycle of $rstItr iterations carrying $rcyDim recycled directions leaves no Arnoldi step to take."))
+    return GCRODRSolver(rstItr, maxItr, absTol, relTol, preCon, side, rcyDim, lrgFrc)
+end
+
+# Solver settings with the unset ones filled in from the right hand side
+function slvPrm(slv::GCRODRSolver, vec::AbstractArray)
+    rstItr = @something(slv.rstItr, min(20, length(vec)))
+    return (rstItr = rstItr,
+        maxItr = @something(slv.maxItr, max(5000, length(vec))),
+        absTol = @something(slv.absTol, zero(real(eltype(vec)))),
+        relTol = @something(slv.relTol, sqrt(eps(real(eltype(vec))))),
+        # A tiny right hand side must not leave a cycle with zero Arnoldi steps
+        rcyDim = min(slv.rcyDim, rstItr - 1))
+end
+
+"""
+    RcySpc()
+
+The subspace a `GCRODRSolver` recycles, filled in place when passed as
+`solve(opr, inp, slv; rcy = RcySpc())`, and read by the next solve it is passed to.
+
+# Fields
+- `bas`: `U`, the basis of the subspace, or `nothing` before a solve fills it
+- `img`: `C`, equal to `A * U` with orthonormal columns, `A` being the preconditioned operator
+"""
+mutable struct RcySpc
+    bas::Any # U
+    img::Any # C = A * U
+end
+
+RcySpc() = RcySpc(nothing, nothing)
+
+"""
+    solve(opr, inp::AbstractArray{T}, slv::GCRODRSolver; x0 = nothing, log = nothing, rcy = nothing) where T
+
+Solve the linear system `opr * out = inp` using the GCRO-DR method.
+
+# Arguments
+- `opr`: The operator in the linear system, anything supporting `mul!` and `size`
+- `inp::AbstractArray{T}`: The right-hand side vector
+- `slv::GCRODRSolver`: The solver parameters
+- `x0`: An initial guess, or `nothing` (default) to start from zero
+- `log`: A `SlvLog` to fill in place, or `nothing` (default) for no record
+- `rcy`: A `RcySpc` to start from and fill in place, or `nothing` (default) to
+  recycle within this solve only
+
+# Returns
+- `out::AbstractArray{T}`: The solution vector
+
+# Notes
+- A supplied subspace is checked against the operator of this solve before it is
+  trusted, and rebuilt when it does not match
+- `log.hss` holds the augmented matrix `[I B; 0 H]` of the cycle, which is
+  Hessenberg only when `rcyDim` is zero
+"""
+function solve(opr, inp::AbstractArray{T}, slv::GCRODRSolver; x0 = nothing,
+    log = nothing, rcy = nothing) where T
+    (; rstItr, maxItr, absTol, relTol, rcyDim) = slvPrm(slv, inp)
+    preCon = slv.preCon
+    chkVry(preCon)
+    # Every variant agrees when there is nothing to apply
+    sid = isnothing(preCon) ? :none : slv.side
+    dim = size(opr, 1)
+
+    basVec = similar(inp, dim, 1 + rstItr) # Krylov basis vectors
+    #= Every small matrix is held on the CPU in double precision whatever the
+    precision of the operator: at fp32 the basis is orthogonal to only ~1e-6, and
+    there is no reason to let the small algebra inherit that. =#
+    hss = zeros(ComplexF64, 1 + rstItr, rstItr) # Hessenberg matrix
+    bMat = zeros(ComplexF64, rcyDim, rstItr) # B = C' * opr * V
+    gCof = zeros(ComplexF64, rcyDim) # C' * res, the correction taken in range(U)
+    nllSpc = ones(ComplexF64, 1 + rstItr) # Vector in the nullspace of the Hessenberg matrix
+    out = isnothing(x0) ? fill!(similar(inp), zero(T)) : copyto!(similar(inp), x0) # Solution vector
+    outVec = vec(out)
+    buf = similar(outVec) # Work buffer for the restart residual and the cycle update
+    # ldiv! is out of place, so what goes into the preconditioner needs its own buffer
+    pcnBuf = isnothing(preCon) ? nothing : similar(outVec)
+    # U, C, and the buffer a rebuild writes into
+    rcyU, rcyC, rcyAlt = ntuple(_ -> similar(inp, dim, rcyDim), 3)
+    rcyDot = similar(inp, rcyDim) # C' times a vector, on the device
+    nRcy = 0 # Directions of U and C in use
+    rcyUv, rcyCv, rcyDotv = view(rcyU, :, 1:nRcy), view(rcyC, :, 1:nRcy), view(rcyDot, 1:nRcy)
+    rcyApp = 0 # Applications spent on checking and rebuilding the subspace
+
+    # The preconditioned operator: preCon⁻¹ * opr on the left, opr * preCon⁻¹ on the right
+    function oprApp!(dst, src)
+        if sid == :left
+            mul!(pcnBuf, opr, src)
+            ldiv!(dst, preCon, pcnBuf)
+        elseif sid == :none
+            mul!(dst, opr, src)
+        else
+            ldiv!(pcnBuf, preCon, src)
+            mul!(dst, opr, pcnBuf)
+        end
+        isnothing(log) || (log.oprApp += 1)
+        isnothing(log) || sid == :none || (log.pcnApp += 1)
+        return dst
+    end
+    # Small matrices cross to the device in the precision of the operator
+    toDev(sml) = copyto!(similar(inp, T, size(sml)), T.(sml))
+
+    if !isnothing(rcy) && !isnothing(rcy.bas) && rcyDim > 0 &&
+        size(rcy.bas, 1) == dim && eltype(rcy.bas) == T
+        nRcy = min(size(rcy.bas, 2), rcyDim)
+        rcyUv, rcyCv, rcyDotv = view(rcyU, :, 1:nRcy), view(rcyC, :, 1:nRcy), view(rcyDot, 1:nRcy)
+        copyto!(rcyUv, view(rcy.bas, :, 1:nRcy))
+        copyto!(rcyCv, view(rcy.img, :, 1:nRcy))
+        #= A carried C that no longer matches opr * U converges to a confident
+        wrong answer, so the pair is probed rather than fingerprinted. An error of
+        ε in the invariant caps the attainable residual at ~ε, which is what ties
+        the threshold to relTol. The floor is there because a tolerance the
+        arithmetic cannot reach would reject every subspace and rebuild forever:
+        asking fp32 to verify an invariant to 1e-10 costs rcyDim applications a
+        solve and recycles nothing. =#
+        prbTol = max(relTol, eps(real(T))^(3//4))
+        prb = view(basVec, :, 1) # basVec is idle until the first cycle
+        zRnd = toDev(randn(ComplexF64, nRcy))
+        mul!(buf, rcyUv, zRnd)
+        oprApp!(prb, buf)
+        mul!(buf, rcyCv, zRnd)
+        prb .-= buf
+        rcyApp += 1
+        if norm(prb) > prbTol * norm(buf)
+            for i in 1:nRcy
+                oprApp!(view(rcyC, :, i), view(rcyU, :, i))
+            end
+            rcyApp += nRcy
+            #= CholeskyQR2 on opr * U, one Gram matrix on the device and one
+            Cholesky on the host per pass. U / S restores opr * U = C. =#
+            sFac = Matrix{ComplexF64}(I, nRcy, nRcy)
+            for _ in 1:2
+                fac = cholesky!(Hermitian(ComplexF64.(Array(rcyCv' * rcyCv)))).U
+                mul!(view(rcyAlt, :, 1:nRcy), rcyCv, toDev(Matrix(inv(fac))))
+                copyto!(rcyCv, view(rcyAlt, :, 1:nRcy))
+                sFac = fac * sFac
+            end
+            mul!(view(rcyAlt, :, 1:nRcy), rcyUv, toDev(Matrix(inv(UpperTriangular(sFac)))))
+            copyto!(rcyUv, view(rcyAlt, :, 1:nRcy))
+        end
+    end
+
+    # The first basis vector is the initial residual (preconditioned on the left)
+    vk = @view basVec[:, 1]
+    if isnothing(x0)
+        sid == :left ? ldiv!(vk, preCon, vec(inp)) : copyto!(vk, vec(inp)) # b - opr * x with x = 0
+    else
+        mul!(buf, opr, outVec)
+        isnothing(log) || (log.oprApp += 1)
+        if sid == :left
+            pcnBuf .= vec(inp) .- buf
+            ldiv!(vk, preCon, pcnBuf)
+        else
+            vk .= vec(inp) .- buf
+        end
+    end
+    isnothing(log) || sid == :left && (log.pcnApp += 1)
+
+    res = norm(vk) # Residual, before the recycled subspace is projected out of it
+    #= relTol is measured against the right hand side rather than against the
+    initial residual: a good guess shrinks ‖res₀‖, and scaling by it would hold
+    a warm start to a tighter absolute threshold than a cold one. The left
+    preconditioned residual lives in preCon⁻¹'s image, so the anchor does too. =#
+    if isnothing(x0)
+        nrmAnc = res
+    elseif sid == :left
+        ldiv!(pcnBuf, preCon, vec(inp))
+        isnothing(log) || (log.pcnApp += 1)
+        nrmAnc = norm(pcnBuf)
+    else
+        nrmAnc = norm(inp)
+    end
+    absTol = max(absTol, relTol * nrmAnc)
+    iszero(nrmAnc) && (nrmAnc = one(nrmAnc))
+
+    # resRec is relative to what the stopping test is anchored to, resTru to ‖inp‖
+    nrmRhs = isnothing(log) ? NaN : Float64(nrmRel(inp))
+    rstIdx = isnothing(log) ? nothing : Int[] # Iterations a restart fell on
+    isnothing(log) || push!(log.resRec, res / nrmAnc)
+
+    β = res
+    resAcc = 1.0 # Residual accumulator
+    j = 1 # Which step of the cycle we are on
+    mCyc = rstItr # Arnoldi steps this cycle has room for
+    numItr = 0 # Arnoldi steps taken
+    for itr in 1:maxItr
+        if res <= absTol || !isfinite(res)
+            break
+        end
+        numItr = itr
+
+        if j == 1
+            if nRcy > 0
+                #= The optimal correction in range(U) is free, and is folded into
+                the update this cycle makes rather than applied on its own. =#
+                mul!(rcyDotv, rcyCv', vk)
+                view(gCof, 1:nRcy) .= Array(rcyDotv)
+                mul!(vk, rcyCv, rcyDotv, -one(T), one(T))
+            end
+            β = norm(vk)
+            iszero(β) || rmul!(vk, inv(β)) # An exact guess leaves no direction to normalize
+            resAcc = 1.0
+            mCyc = rstItr - nRcy
+        end
+
+        vkp1 = @view basVec[:, j + 1]
+        oprApp!(vkp1, vk)
+        if nRcy > 0
+            bCol = view(bMat, 1:nRcy, j)
+            fill!(bCol, zero(ComplexF64))
+            #= C is rebuilt from the previous C in every cycle, so a loss of
+            orthogonality there compounds where V's is discarded at the restart.
+            One pass is enough for V and not for C. =#
+            for _ in 1:2
+                mul!(rcyDotv, rcyCv', vkp1)
+                mul!(vkp1, rcyCv, rcyDotv, -one(T), one(T))
+                bCol .+= Array(rcyDotv)
+            end
+        end
+
+        # Orthogonalize vₖ₊₁ against previous basis vectors
+        for i in 1:j
+            col = @view basVec[:, i]
+            hij = dot(col, vkp1)
+            hss[i, j] = hij
+            axpy!(-hij, col, vkp1) # vkp1 .-= hij .* col
+        end
+
+        # Normalize vₖ₊₁ and compute the residual
+        hss[j + 1, j] = norm(vkp1)
+        #= A vanishing subdiagonal means span(v₁ … vⱼ) is already invariant
+        under opr, so the least squares solution over it is exact. vⱼ₊₁ is then
+        not a direction at all: it is left as the zero it is rather than
+        normalized into a column of NaNs. =#
+        if iszero(hss[j + 1, j])
+            res = zero(res)
+        else
+            rmul!(vkp1, inv(T(hss[j + 1, j])))
+            nllSpc[j + 1] = -conj(dot(view(nllSpc, 1:j), view(hss, 1:j, j)) / hss[j + 1, j]) # update the nullspace vector
+            resAcc += real(abs2(nllSpc[j + 1]))
+            res = β / sqrt(resAcc)
+        end
+        isnothing(log) || push!(log.resRec, res / nrmAnc)
+
+        # Next iteration
+        j += 1
+        vk = vkp1
+
+        # At the end of cycles (and/or when we have converged/maxed out the iterations), update our solution vector
+        don = (res <= absTol || itr == maxItr) # done or not
+        if don || j == 1 + mCyc
+            stp = j - 1 # Arnoldi steps this cycle took
+            wdt = nRcy + stp # Directions the cycle searched over
+            #= opr * [U V] = [C V₊] * gBar, taken before lstSqrHss overwrites H.
+            Ritz values, harmonic Ritz values and condition estimates all come out
+            of it and none of them come back, so it is the matrix that is kept. =#
+            gBar = zeros(ComplexF64, wdt + 1, wdt)
+            copyto!(view(gBar, 1:nRcy, 1:nRcy), I)
+            view(gBar, 1:nRcy, nRcy+1:wdt) .= view(bMat, 1:nRcy, 1:stp)
+            view(gBar, nRcy+1:wdt+1, nRcy+1:wdt) .= view(hss, 1:stp+1, 1:stp)
+            if !isnothing(log) && (log.hssSmp == :all || isempty(log.hss))
+                push!(log.hss, copy(gBar))
+            end
+
+            #= Cᴴres is zero after the projection and CᴴV is zero throughout, so
+            -B * y annihilates the C component of the residual exactly and the
+            problem left to solve is the plain GMRES one, Hy = βe₁. =#
+            y = zeros(ComplexF64, stp + 1)
+            y[1] = β
+            lstSqrHss(view(hss, 1:stp+1, 1:stp), y) # Note: this mutates `hss`, but it's fine because we don't need it anymore
+            yDv = toDev(view(y, 1:stp))
+            nRcy > 0 && (uDv = toDev(view(gCof, 1:nRcy) .-
+                view(bMat, 1:nRcy, 1:stp) * view(y, 1:stp)))
+
+            # Update the solution vector
+            if sid == :right
+                #= The space on the right is that of opr * precon⁻¹, so what
+                the least squares problem returns is precon applied to the
+                solution update rather than the update itself. Dividing it back
+                once per cycle costs one ldiv! per restart, not one per step. =#
+                mul!(buf, view(basVec, :, 1:stp), yDv)
+                nRcy > 0 && mul!(buf, rcyUv, uDv, one(T), one(T))
+                ldiv!(pcnBuf, preCon, buf)
+                isnothing(log) || (log.pcnApp += 1)
+                outVec .+= pcnBuf
+            else
+                mul!(outVec, view(basVec, :, 1:stp), yDv, one(T), one(T))
+                nRcy > 0 && mul!(outVec, rcyUv, uDv, one(T), one(T))
+            end
+
+            if rcyDim > 0
+                # W₊ᴴW, of which only CᴴU and V₊ᴴU are new: CᴴV is zero by the projection
+                wpw = zeros(ComplexF64, wdt + 1, wdt)
+                copyto!(view(wpw, nRcy+1:wdt, nRcy+1:wdt), I)
+                if nRcy > 0
+                    view(wpw, 1:nRcy, 1:nRcy) .= Array(rcyCv' * rcyUv)
+                    view(wpw, nRcy+1:wdt+1, 1:nRcy) .= Array(view(basVec, :, 1:stp+1)' * rcyUv)
+                end
+                nLrg = min(round(Int, slv.lrgFrc * rcyDim), wdt)
+                nSml = min(rcyDim - nLrg, wdt - nLrg)
+                yCof = zeros(ComplexF64, wdt, nLrg + nSml)
+                if nSml > 0 # Harmonic Ritz vectors, smallest |θ|
+                    egn = eigen(gBar' * gBar, gBar' * wpw)
+                    view(yCof, :, 1:nSml) .=
+                        view(egn.vectors, :, sortperm(egn.values; by = abs)[1:nSml])
+                end
+                if nLrg > 0 # Ordinary Ritz vectors, largest |θ|
+                    www = Matrix{ComplexF64}(I, wdt, wdt) # WᴴW
+                    view(www, nRcy+1:wdt, 1:nRcy) .= view(wpw, nRcy+1:wdt, 1:nRcy)
+                    view(www, 1:nRcy, nRcy+1:wdt) .= view(wpw, nRcy+1:wdt, 1:nRcy)'
+                    nRcy > 0 && (view(www, 1:nRcy, 1:nRcy) .= Array(rcyUv' * rcyUv))
+                    egn = eigen(wpw' * gBar, www)
+                    view(yCof, :, nSml+1:nSml+nLrg) .=
+                        view(egn.vectors, :, sortperm(egn.values; by = abs, rev = true)[1:nLrg])
+                end
+
+                #= The new subspace lives inside the orthonormal [C V₊], so it
+                costs two multiplications and no factorization on the device. The
+                pivoting is what makes the drop tolerance meaningful, and it drops
+                the near duplicates that mixing the two selection rules produces. =#
+                fct = qr(gBar * yCof, ColumnNorm())
+                nNew = count(i -> abs(fct.R[i, i]) >= sqrt(eps(real(T))) * abs(fct.R[1, 1]),
+                    axes(fct.R, 1))
+                qCof = toDev(Matrix(fct.Q)[:, 1:nNew])
+                zCof = toDev(view(yCof, :, fct.p[1:nNew]) /
+                    UpperTriangular(fct.R[1:nNew, 1:nNew]))
+                #= U is formed first, so C can be written over the U it replaces.
+                U is deliberately left unnormalized: opr * U = C with C
+                orthonormal fixes its scaling, and rescaling breaks one or the
+                other. The drop above is the lever on conditioning. =#
+                mul!(view(rcyAlt, :, 1:nNew), view(basVec, :, 1:stp), view(zCof, nRcy+1:wdt, :))
+                nRcy > 0 && mul!(view(rcyAlt, :, 1:nNew), rcyUv, view(zCof, 1:nRcy, :), one(T), one(T))
+                mul!(view(rcyU, :, 1:nNew), view(basVec, :, 1:stp+1), view(qCof, nRcy+1:wdt+1, :))
+                nRcy > 0 && mul!(view(rcyU, :, 1:nNew), rcyCv, view(qCof, 1:nRcy, :), one(T), one(T))
+                rcyU, rcyC, rcyAlt = rcyAlt, rcyU, rcyC
+                nRcy = nNew
+                rcyUv, rcyCv, rcyDotv = view(rcyU, :, 1:nRcy), view(rcyC, :, 1:nRcy), view(rcyDot, 1:nRcy)
+                isnothing(rcy) || (rcy.bas = rcyUv; rcy.img = rcyCv)
+                isnothing(log) || push!(log.rcyErr, norm(Array(rcyCv' * rcyCv) - I))
+            end
+
+            j = 1
+
+            # If we have not reached max_iter or converged, restart
+            if !don
+                vk = @view basVec[:, 1]
+                mul!(buf, opr, outVec)
+                isnothing(log) || (log.oprApp += 1)
+                isnothing(log) || push!(rstIdx, itr)
+                if sid == :left
+                    pcnBuf .= vec(inp) .- buf
+                    isnothing(log) || log.truSmp == :never ||
+                        push!(log.resTru, norm(pcnBuf) / nrmRhs)
+                    ldiv!(vk, preCon, pcnBuf)
+                    isnothing(log) || (log.pcnApp += 1)
+                else
+                    vk .= vec(inp) .- buf
+                    isnothing(log) || log.truSmp == :never ||
+                        push!(log.resTru, norm(vk) / nrmRhs)
+                end
+            end
+        end
+    end
+    isnothing(log) || (log.prm = (rstItr = rstItr, maxItr = maxItr, absTol = absTol,
+        relTol = relTol, side = slv.side, flexible = false, elmTyp = T,
+        arrTyp = Base.typename(typeof(inp)).wrapper, rstIdx = rstIdx,
+        rcyDim = rcyDim, lrgFrc = slv.lrgFrc, rcyApp = rcyApp))
+    status = !isfinite(res) ? :breakdown : (res <= absTol ? :converged : :maxiter)
+    status == :maxiter && @warn "GCRO-DR failed to converge after $maxItr iterations"
+    return logEnd!(log, opr, inp, out, status, numItr)
+end
+
+"""
     MixPrcRfn{Tlo}
 
 Mixed precision iterative refinement (GMRES-IR): the residual and the solution
@@ -632,6 +1069,9 @@ function solve(opr::AbstractGlaOpr{Thi}, inp::AbstractVector{Complex{Thi}},
     out = zero(inp) # Solution vector
     res = copy(inp) # Residual
     buf = similar(inp) # Work buffer for the high precision matrix-vector product
+    #= The inner operator is the same in every refinement step and only the right
+    hand side moves, so a recycled subspace carries across the outer loop. =#
+    rcy = slv.innSlv isa GCRODRSolver ? RcySpc() : nothing
     absTol = max(absTol, relTol * norm(inp))
     nrmRhs = nrmRel(inp)
     isnothing(log) || (log.prm = (maxItr = maxItr, absTol = absTol, relTol = relTol,
@@ -646,7 +1086,9 @@ function solve(opr::AbstractGlaOpr{Thi}, inp::AbstractVector{Complex{Thi}},
         end
         innLog = isnothing(log) ? nothing : SlvLog(; truSmp = log.truSmp, hssSmp = log.hssSmp)
         # Normalized before narrowing, so the inner right hand side is O(1)
-        dirLo = solve(oprLo, Complex{Tlo}.(res ./ nrmRes), slv.innSlv; log = innLog)
+        rhsLo = Complex{Tlo}.(res ./ nrmRes)
+        dirLo = isnothing(rcy) ? solve(oprLo, rhsLo, slv.innSlv; log = innLog) :
+            solve(oprLo, rhsLo, slv.innSlv; log = innLog, rcy)
         isnothing(log) || push!(log.inner, innLog)
         out .+= nrmRes .* dirLo
         mul!(buf, opr, out)
