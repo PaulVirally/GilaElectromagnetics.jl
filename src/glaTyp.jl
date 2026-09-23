@@ -76,7 +76,7 @@ A subtype has to implement:
 - `glaSze(opr)`: The target and source sizes in tensor form
 
 `isoverlappingoperator` defaults to `false` here, `eltype` to `Complex{T}` on
-`AbstractGlaOpr`, and `slv` to a `BiCGStabSolver`. Override any of the three when
+`AbstractGlaOpr`, and `slv` to a `GCRODRSolver`. Override any of the three when
 it does not hold.
 """
 abstract type AbstractGlaVacOpr{T} <: AbstractGlaOpr{T} end

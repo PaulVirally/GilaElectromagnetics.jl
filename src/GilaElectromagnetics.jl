@@ -27,7 +27,7 @@ export GlaKerOpt, CPUKerOpt, GPUKerOpt, GlaVacOprMem, useCpu!, useGpu!
 
 include("glaSlv.jl")
 using .GilaSolvers
-export GMRESSolver, BiCGStabSolver, MixPrcRfn, SlvLog, solve, isvarying
+export GMRESSolver, GCRODRSolver, RcySpc, BiCGStabSolver, MixPrcRfn, SlvLog, solve, isvarying
 export MixedPrecisionRefinement
 
 include("glaOpr.jl")

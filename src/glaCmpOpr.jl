@@ -732,8 +732,8 @@ InvSctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, kwargs...) =
     InvSctOpr{dflPrc}(cvol, sus; useGpu, kwargs...)
 
 """
-    SctOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
-    SctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
+    SctOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=GCRODRSolver())
+    SctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=GCRODRSolver())
 
 Construct the scattering operator `(I - XG₀)⁻¹` over a composite volume.
 
@@ -743,35 +743,35 @@ Also takes the `frqPhz`, `genPrc`, `qssApx` and `shpCch` keywords of `GlaCmpOprV
 - `cvol::GlaCmpVol`: The composite volume
 - `sus`: The susceptibility, in any of the forms `InvSctOpr(::GlaCmpVol, sus)` takes
 - `useGpu::Bool=false`: Whether to build the operator on the GPU
-- `slv::GlaSlv=BiCGStabSolver()`: The solver used for the inverse
+- `slv::GlaSlv=GCRODRSolver()`: The solver used for the inverse
 
 # Returns
 - `SctOpr`: The scattering operator
 """
-SctOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver(), kwargs...) where T<:AbstractFloat =
+SctOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=GCRODRSolver(), kwargs...) where T<:AbstractFloat =
     SctOpr{T}(InvSctOpr{T}(cvol, sus; useGpu, kwargs...), slv)
-SctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver(), kwargs...) =
+SctOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=GCRODRSolver(), kwargs...) =
     SctOpr{dflPrc}(cvol, sus; useGpu, slv, kwargs...)
 
 """
-    SctOpr(opr::GlaCmpOprVac, sus; slv::GlaSlv=BiCGStabSolver())
+    SctOpr(opr::GlaCmpOprVac, sus; slv::GlaSlv=GCRODRSolver())
 
 Construct the scattering operator from a composite vacuum operator.
 
 # Arguments
 - `opr::GlaCmpOprVac`: The composite vacuum operator, which has to be a self operator
 - `sus`: The susceptibility, in any of the forms `InvSctOpr(::GlaCmpVol, sus)` takes
-- `slv::GlaSlv=BiCGStabSolver()`: The solver used for the inverse
+- `slv::GlaSlv=GCRODRSolver()`: The solver used for the inverse
 
 # Returns
 - `SctOpr`: The scattering operator
 """
-SctOpr(opr::GlaCmpOprVac{T}, sus; slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat =
+SctOpr(opr::GlaCmpOprVac{T}, sus; slv::GlaSlv=GCRODRSolver()) where T<:AbstractFloat =
     SctOpr{T}(InvSctOpr{T}(opr, sus), slv)
 
 """
-    GlaOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
-    GlaOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver())
+    GlaOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=GCRODRSolver())
+    GlaOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=GCRODRSolver())
 
 Construct the full Green function operator `G₀(I - XG₀)⁻¹` over a composite volume.
 
@@ -781,30 +781,30 @@ Also takes the `frqPhz`, `genPrc`, `qssApx` and `shpCch` keywords of `GlaCmpOprV
 - `cvol::GlaCmpVol`: The composite volume
 - `sus`: The susceptibility, in any of the forms `InvSctOpr(::GlaCmpVol, sus)` takes
 - `useGpu::Bool=false`: Whether to build the operator on the GPU
-- `slv::GlaSlv=BiCGStabSolver()`: The solver used for the inverse
+- `slv::GlaSlv=GCRODRSolver()`: The solver used for the inverse
 
 # Returns
 - `GlaOpr`: The full Green function operator
 """
-GlaOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver(), kwargs...) where T<:AbstractFloat =
+GlaOpr{T}(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=GCRODRSolver(), kwargs...) where T<:AbstractFloat =
     GlaOpr{T}(SctOpr{T}(cvol, sus; useGpu, slv, kwargs...))
-GlaOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=BiCGStabSolver(), kwargs...) =
+GlaOpr(cvol::GlaCmpVol, sus; useGpu::Bool=false, slv::GlaSlv=GCRODRSolver(), kwargs...) =
     GlaOpr{dflPrc}(cvol, sus; useGpu, slv, kwargs...)
 
 """
-    GlaOpr(opr::GlaCmpOprVac, sus; slv::GlaSlv=BiCGStabSolver())
+    GlaOpr(opr::GlaCmpOprVac, sus; slv::GlaSlv=GCRODRSolver())
 
 Construct the full Green function operator from a composite vacuum operator.
 
 # Arguments
 - `opr::GlaCmpOprVac`: The composite vacuum operator, which has to be a self operator
 - `sus`: The susceptibility, in any of the forms `InvSctOpr(::GlaCmpVol, sus)` takes
-- `slv::GlaSlv=BiCGStabSolver()`: The solver used for the inverse
+- `slv::GlaSlv=GCRODRSolver()`: The solver used for the inverse
 
 # Returns
 - `GlaOpr`: The full Green function operator
 """
-GlaOpr(opr::GlaCmpOprVac{T}, sus; slv::GlaSlv=BiCGStabSolver()) where T<:AbstractFloat =
+GlaOpr(opr::GlaCmpOprVac{T}, sus; slv::GlaSlv=GCRODRSolver()) where T<:AbstractFloat =
     GlaOpr{T}(SctOpr(opr, sus; slv=slv))
 
 #= The tiling a scattering operator reads its input on, checked against the
