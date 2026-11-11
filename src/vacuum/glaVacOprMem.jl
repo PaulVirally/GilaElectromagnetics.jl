@@ -192,7 +192,7 @@ function genEgoFur(egoCrcCmp::Array{<:Complex,6}, truInf::AbstractVector{<:Integ
         for eoItr ∈ 0:7
             extEgoBrn!(egoFur[eoItr + 1], egoFurPrp, eoItr)
         end
-        memCln!(egoFurPrp)
+        finalize(egoFurPrp)
     else
         # one slab and one plan reused for every partition pair
         slbDev = allocate(dev, eltype(egoCrcCmp), size(egoCrcCmp)[1:4])
@@ -208,7 +208,7 @@ function genEgoFur(egoCrcCmp::Array{<:Complex,6}, truInf::AbstractVector{<:Integ
                 extEgoBrn!(view(egoFur[eoItr + 1], :, :, :, :, srcItr, trgItr), slbDev, eoItr)
             end
         end
-        memCln!(slbDev)
+        finalize(slbDev)
     end
     return egoFur
 end

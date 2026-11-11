@@ -39,14 +39,13 @@ function egoBrn!(egoMem::GlaVacOprMem, lvl::Integer, bId::Integer, actVec::Abstr
     # forward FFT; the plans account for a vector that changes size
     if lvl > 0
         egoMem.fftPlnFwd[lvl] * orgVec
-        synchronize(egoMem.cmpInf.dev)
     end
     # split branch
     if lvl < 3
         # check if size of current active vector dimension is compatible 
         if size(orgVec)[lvl + 1] == brnSze[lvl + 1]
             prgVec = similar(orgVec)
-            # split branch, includes phase operation and stream sync
+            # split branch, includes phase operation
             sptBrn!(prgVec, lvl + 1, egoMem.phzInf[lvl+1], orgVec)
             # rename vectors for consistent convention with general branching
             prgVecEve = orgVec 
@@ -59,7 +58,6 @@ function egoBrn!(egoMem::GlaVacOprMem, lvl::Integer, bId::Integer, actVec::Abstr
             # allocate progeny vectors
             prgVecEve = similar(orgVec, prgSze..., 3, parNumSrc)
             prgVecOdd = similar(orgVec, prgSze..., 3, parNumSrc)
-            synchronize(egoMem.cmpInf.dev)
             # memory previously associated with orgVec is freed internally
             sptBrn!(prgVecEve, prgVecOdd, lvl + 1, egoMem.phzInf[lvl+1],
                 egoMem.mixInf, orgVec)
@@ -69,11 +67,10 @@ function egoBrn!(egoMem::GlaVacOprMem, lvl::Integer, bId::Integer, actVec::Abstr
     if lvl < 3
         # the even branch, then the odd one. Sequential: tasks sharing an FFTW plan segfault on its scratch space
         eveVec = egoBrn!(egoMem, lvl + 1, bId, prgVecEve)
-        lvl < 2 && synchronize(egoMem.cmpInf.dev)
         oddVec = egoBrn!(egoMem, lvl + 1, bId + 2^(2 - lvl), prgVecOdd)
         # check if size of vector must change on merge
         if size(eveVec)[lvl + 1] == egoMem.mixInf.trgCel[lvl + 1]
-            # merge branches, includes phase operation and stream sync
+            # merge branches, includes phase operation
 			mrgBrn!(eveVec, lvl + 1, egoMem.phzInf[lvl + 1], oddVec)
             # rename eveVec to match return name used elsewhere
             retVec = eveVec
@@ -86,13 +83,12 @@ function egoBrn!(egoMem::GlaVacOprMem, lvl::Integer, bId::Integer, actVec::Abstr
                 curSze[x], 3)
             # allocate memory for merge
             retVec = similar(eveVec, mrgSze..., 3, parNumTrg)
-            # merge branches, even and odd vectors are freed, stream synced 
+            # merge branches, even and odd vectors are freed
 			mrgBrn!(retVec, lvl + 1, egoMem.phzInf[lvl + 1], eveVec, oddVec)
         end
     else
         retVec = similar(orgVec, brnSze..., 3, parNumTrg)
         fill!(retVec, zero(eltype(retVec)))
-        synchronize(egoMem.cmpInf.dev)
         # multiply by Toeplitz vector, sequentially: every source partition adds into the same target slice
         for trgItr in 1:parNumTrg 
             for srcItr in 1:parNumSrc 
@@ -101,13 +97,11 @@ function egoBrn!(egoMem::GlaVacOprMem, lvl::Integer, bId::Integer, actVec::Abstr
                 selectdim(orgVec, 5, srcItr))
             end
         end
-        # free orgVec
-        memCln!(orgVec) # FIXME: Do we really want to do this, or can we leave it up to the GC
+        # release orgVec ahead of the GC, a no-op on the CPU
+        finalize(orgVec)
     end
     # inverse FFT
     lvl > 0 && egoMem.fftPlnRev[lvl] * retVec
-    # terminate task and return control to previous level 
-    synchronize(egoMem.cmpInf.dev)
     # zero level return
     if lvl == 0
         # check if there are partitions that need to be merged

@@ -10,7 +10,7 @@ function genPrt!(actVec::AbstractArray{<:Complex, 4}, mixInf::GlaExtInf)
     orgVec = similar(actVec, cel..., 3, prod(div))
     permutedims!(reshape(orgVec, cel..., 3, div...),
         reshape(actVec, div[1], cel[1], div[2], cel[2], div[3], cel[3], 3), (2, 4, 6, 7, 1, 3, 5))
-    memCln!(actVec)
+    finalize(actVec)
     return orgVec
 end
 
@@ -46,7 +46,7 @@ merge two branches, eliminating unused coefficients
 function mrgBrn!(orgVec::AbstractArray{<:Complex,5}, dir::Integer, phzVec::AbstractVector{<:Complex}, prgVec::AbstractArray{<:Complex,5})
     orgVec .= (orgVec .+ conj.(_phzDir(phzVec, dir)) .* prgVec) ./ 2
     # free the progeny vector on GPU
-    memCln!(prgVec)
+    finalize(prgVec)
     return nothing
 end
 #=
@@ -61,8 +61,8 @@ function mrgBrn!(mrgVec::AbstractArray{<:Complex,5}, dir::Integer, phzVec::Abstr
     sel(mrgVec, top) .= (sel(eveVec, top) .+ conj.(sel(phz, top)) .* sel(oddVec, top)) ./ 2
     sel(mrgVec, bot .+ length(top)) .= (sel(eveVec, bot) .- conj.(sel(phz, bot)) .* sel(oddVec, bot)) ./ 2
     # free intermediate buffers
-    memCln!(eveVec)
-    memCln!(oddVec)
+    finalize(eveVec)
+    finalize(oddVec)
     return nothing
 end
 #=
@@ -71,19 +71,8 @@ merge partitions and return output vector, the inverse of genPrt!
 function mrgPrt!(mixInf::GlaExtInf, prtVec::AbstractArray{<:Complex, 5})
     div, cel = mixInf.trgDiv, mixInf.trgCel
     mrgVec = similar(prtVec, (div .* cel)..., 3)
-    synchronize(get_backend(prtVec))
     permutedims!(reshape(mrgVec, div[1], cel[1], div[2], cel[2], div[3], cel[3], 3),
         reshape(prtVec, cel..., 3, div...), (5, 1, 6, 2, 7, 3, 4))
-    synchronize(get_backend(prtVec))
-    memCln!(prtVec)
+    finalize(prtVec)
     return mrgVec
-end
-
-# Release a device buffer ahead of the GC, a no-op on the CPU
-function memCln!(vec::AbstractArray)
-    dev = get_backend(vec)
-    synchronize(dev)
-    finalize(vec)
-    synchronize(dev)
-    return nothing
 end
