@@ -80,10 +80,10 @@ makedocs(sitename="GilaElectromagnetics.jl",
          ],
          format = Documenter.HTML(prettyurls = true, mathengine = mth, assets = ["assets/theory.css"]),
          plugins = [CitationBibliography(joinpath(@__DIR__, "src", "refs.bib"); style = :numeric)],
-           repo = Remotes.GitHub("moleskySean", "GilaElectromagnetics.jl")
+           repo = Remotes.GitHub("moleRing", "GilaElectromagnetics.jl")
          )
 
 deploydocs(
-    repo = "github.com/moleskySean/GilaElectromagnetics.jl.git",
+    repo = "github.com/moleRing/GilaElectromagnetics.jl.git",
     devbranch = "main"
 )

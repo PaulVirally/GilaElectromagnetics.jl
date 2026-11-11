@@ -1,10 +1,10 @@
 # GilaElectromagnetics.jl
 
-[GilaElectromagnetics.jl](https://github.com/moleskySean/GilaElectromagnetics.jl)
+[GilaElectromagnetics.jl](https://github.com/moleRing/GilaElectromagnetics.jl)
 is a Julia package that provides a very efficient implementation of the discrete
 three-dimensional electromagnetic Green function. For a technical description of
 the implementation, see the associated
-[paper](https://github.com/moleskySean/GilaElectromagnetics.jl/blob/main/docs/gilaDoc.pdf).
+[paper](https://github.com/moleRing/GilaElectromagnetics.jl/blob/main/docs/gilaDoc.pdf).
 The [Theory](@ref sec-1) section explains what Gila computes and how. The
 public [API reference](./library.md) lists every exported function and type.
 

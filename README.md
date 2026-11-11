@@ -4,10 +4,10 @@
 
 *Green in linear algebra*
 
-[![Build status (Github Actions)](https://github.com/moleskySean/GilaElectromagnetics.jl/workflows/CI/badge.svg)](https://github.com/moleskySean/GilaElectromagnetics.jl/actions)
-[![codecov.io](http://codecov.io/github/moleskySean/GilaElectromagnetics.jl/coverage.svg?branch=main)](http://codecov.io/github/moleskySean/GilaElectromagnetics.jl?branch=main)
-[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://moleskySean.github.io/GilaElectromagnetics.jl/stable)
-[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://moleskySean.github.io/GilaElectromagnetics.jl/dev)
+[![Build status (Github Actions)](https://github.com/moleRing/GilaElectromagnetics.jl/workflows/CI/badge.svg)](https://github.com/moleRing/GilaElectromagnetics.jl/actions)
+[![codecov.io](http://codecov.io/github/moleRing/GilaElectromagnetics.jl/coverage.svg?branch=main)](http://codecov.io/github/moleRing/GilaElectromagnetics.jl?branch=main)
+[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://moleRing.github.io/GilaElectromagnetics.jl/stable)
+[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://moleRing.github.io/GilaElectromagnetics.jl/dev)
 
 GilaElectromagnetics (Gila, for short) computes the action of the discrete
 vacuum Green function of Maxwell's equations in three dimensions, and it does so
@@ -20,7 +20,7 @@ in $O(N\log N)$ time with FFTs. With that in hand, we can also solve the
 scattering problem (in the JVIE formulation) for any linear, non-magnetic
 material, with open or Bloch-periodic boundaries along each axis.
 
-The [documentation](https://moleskysean.github.io/GilaElectromagnetics.jl/stable)
+The [documentation](https://moleRing.github.io/GilaElectromagnetics.jl/stable)
 explains what Gila computes and how (see the Theory section), and has a set of
 tutorials to get you going.
 
