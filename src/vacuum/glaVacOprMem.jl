@@ -66,8 +66,10 @@ function GlaVacOprMem(cmpInf::GlaKerOpt{T}, trgVol::GlaVol, srcVol::GlaVol=trgVo
     totParSrc = prod(mixInf.srcDiv)
 
     # memory for circulant green function vector. The integral kernels want
-    # the 3×3 tensor block contiguous per cell, so the fill keeps this layout
-    egoCrc = Array{ComplexF64}(undef, 3, 3, totCelCrc..., totParSrc, totParTrg)
+    # the 3×3 tensor block contiguous per cell, so the fill keeps this layout;
+    # the nGam derivative kernels sit side by side, 3 × 3nGam
+    nGam = length(drvGam(cmpInf.der))
+    egoCrc = Array{ComplexF64}(undef, 3, 3nGam, totCelCrc..., totParSrc, totParTrg)
     genEgoCrc!(egoCrc, trgVol, srcVol, mixInf, cmpInf; shpCch, blk)
     if !all(isfinite, egoCrc)
         throw(ArgumentError("Computed circulant contains non-numeric values."))
@@ -76,7 +78,7 @@ function GlaVacOprMem(cmpInf::GlaKerOpt{T}, trgVol::GlaVol, srcVol::GlaVol=trgVo
     # transposition)---entries are xx, yy, zz, xy, xz, yz---into a cells-first
     # array so that a single batched plan transforms every component and
     # partition pair
-    egoCrcCmp = Array{ComplexF64}(undef, totCelCrc..., 6, totParSrc, totParTrg)
+    egoCrcCmp = Array{ComplexF64}(undef, totCelCrc..., 6nGam, totParSrc, totParTrg)
     gthEgoCmp!(egoCrcCmp, egoCrc)
     #= The Hermitian and anti-Hermitian parts are the entry by entry real and
     imaginary parts of the kernel, taken before the transform rather than after:
@@ -107,13 +109,13 @@ const egoCmpPos = ((1, 1), (2, 2), (3, 3), (1, 2), (1, 3), (2, 3))
 #=
 Gather the six unique tensor components of the circulant from the
 (3, 3, cells...) fill layout into the cells-first component layout
-(cells..., 6, partition pairs) used by the Fourier stage.
+(cells..., 6nGam, partition pairs) used by the Fourier stage, six per derivative kernel.
 =#
 function gthEgoCmp!(egoCrcCmp::AbstractArray{<:Complex,6}, egoCrc::AbstractArray{<:Complex,7})
-    gthItr = CartesianIndices((size(egoCrc, 5), 6, size(egoCrc, 6), size(egoCrc, 7)))
+    gthItr = CartesianIndices((size(egoCrc, 5), size(egoCrcCmp, 4), size(egoCrc, 6), size(egoCrc, 7)))
     @threads for gthInd ∈ gthItr
         zItr, cmpItr, srcItr, trgItr = Tuple(gthInd)
-        rowItr, colItr = egoCmpPos[cmpItr]
+        rowItr, colItr = egoCmpPos[mod1(cmpItr, 6)] .+ (0, 3 * fld(cmpItr - 1, 6))
         @views egoCrcCmp[:, :, zItr, cmpItr, srcItr, trgItr] .= egoCrc[rowItr, colItr, :, :, zItr, srcItr, trgItr]
     end
     return nothing
@@ -246,7 +248,8 @@ function glaOprPrp(egoFur::AbstractVector{<:AbstractArray{Complex{T}}}, trgVol::
     # the vector goes from source to target size one direction at a time
     plnDir = map(1:3) do dir # 3 here is the number of directions (x, y, z)
         fwdSze = (ntuple(x -> x <= dir ? brnSze[x] : srcCel[x], 3)..., 3, prod(srcDiv))
-        revSze = (ntuple(x -> x > dir ? trgCel[x] : brnSze[x], 3)..., 3, prod(trgDiv))
+        # 3 outputs per kernel of the 6 components each egoFur holds
+        revSze = (ntuple(x -> x > dir ? trgCel[x] : brnSze[x], 3)..., size(first(egoFur), 4) ÷ 2, prod(trgDiv))
         fftPlnGen(fwdSze, revSze, dir, cmpInf)
     end
     fftPlnFwd, fftPlnRev, adjFftPlnFwd, adjFftPlnRev = ntuple(i -> getindex.(plnDir, i), 4)
@@ -311,12 +314,12 @@ The FFT plans are process-local C pointers and mixInf follows from the volumes,
 so glaOprPrp rebuilds both on load. The Bloch lattice is kept, its per-frequency
 BlcSet cache is not. =#
 _memDsk(mem::GlaVacOprMem) = (egoFur = map(fur -> adapt(CPU(), fur), mem.egoFur), frqPhz = mem.cmpInf.frqPhz,
-    qssApx = mem.cmpInf.qssApx, adjMod = mem.cmpInf.adjMod, hrmPrt = mem.cmpInf.hrmPrt, blc = mem.cmpInf.blc,
+    qssApx = mem.cmpInf.qssApx, der = mem.cmpInf.der, ctr = mem.cmpInf.ctr, adjMod = mem.cmpInf.adjMod, hrmPrt = mem.cmpInf.hrmPrt, blc = mem.cmpInf.blc,
     trgVol = mem.trgVol, srcVol = mem.srcVol)
 
 # An operator memory on the CPU from its stored form, at the precision of the stored Fourier data
 function _memLod(dsk)
-    opt = GlaKerOpt{real(eltype(first(dsk.egoFur)))}(; dsk.frqPhz, dsk.qssApx, dsk.adjMod, dsk.hrmPrt, dsk.blc)
+    opt = GlaKerOpt{real(eltype(first(dsk.egoFur)))}(; dsk.frqPhz, dsk.qssApx, dsk.der, dsk.ctr, dsk.adjMod, dsk.hrmPrt, dsk.blc)
     return glaOprPrp(dsk.egoFur, dsk.trgVol, dsk.srcVol, GlaExtInf(dsk.trgVol, dsk.srcVol), opt)
 end
 

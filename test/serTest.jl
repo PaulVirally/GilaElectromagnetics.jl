@@ -27,7 +27,7 @@ const serTen = SusOpr{Float64}(_vol2s, randn(ComplexF64, 3, 3))
 
 @testset "Round trips, $(nameof(rnd))" for rnd in (serRnd, jldRnd)
     @test isoverlappingoperator(serMem)
-    for opr in (serMem, SusOpr{Float64}(_vol2s, _sus2s), serTen, serCmp,
+    for opr in (serMem, SusOpr{Float64}(_vol2s, _sus2s), serTen, serCmp, GlaOprVac{Float64}(_vol2s; der = 1),
         GlaOpr(SctOpr(InvSctOpr(serCmp, 0.5 + 0.05im), BiCGStabSolver())))
         serChk(opr; rnd)
     end

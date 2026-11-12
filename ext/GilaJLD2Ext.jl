@@ -17,6 +17,8 @@ struct MemDsk{T<:AbstractFloat}
     egoFur::Vector{Array{Complex{T}, 6}}
     frqPhz::ComplexF64
     qssApx::Bool
+    der::Int
+    ctr::Bool
     adjMod::Bool
     hrmPrt::Union{Nothing, Symbol}
     blc::Union{Nothing, NamedTuple}

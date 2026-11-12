@@ -8,9 +8,9 @@ const tstGrp = [
     "core" => ["volTest.jl", "cmpVolTest.jl", "fldTest.jl", "cmpOprTest.jl", "cmpSctTest.jl",
         "susTest.jl", "vacTest.jl", "slvTest.jl", "prcnTest.jl", "oprTest.jl", "prcTest.jl",
         "serTest.jl", "mulTest.jl", "linAlgTest.jl", "extOpsTest.jl",
-        "crsSclTest.jl", "cntTest.jl", "prxTest.jl", "physTest.jl"],
+        "crsSclTest.jl", "cntTest.jl", "prxTest.jl", "physTest.jl", "drvOprTest.jl"],
     "gpu" => ["gpuTest.jl"],
-    "integrals" => ["vacuum/momTest.jl", "vacuum/farTest.jl", "vacuum/qssTest.jl", "vacuum/posDefTest.jl"],
+    "integrals" => ["vacuum/momTest.jl", "vacuum/farTest.jl", "vacuum/qssTest.jl", "vacuum/posDefTest.jl", "vacuum/drvTest.jl", "vacuum/drvFarTest.jl"],
     "bloch" => ["blochTest.jl"],
 ]
 issubset(ARGS, [first.(tstGrp); "all"]) || error("The test groups are $(join(first.(tstGrp), ", ")) and all, not $(join(ARGS, ", ")).")

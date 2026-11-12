@@ -1,5 +1,7 @@
 include("integrals/glaVacIntMom.jl") # near-field moments and contact block
 include("integrals/glaVacIntFar.jl") # far-field expansion and block fills
+include("integrals/glaVacIntDrv.jl")
+include("integrals/glaVacIntDrvFar.jl")
 
 # empty the in-memory caches the fills never evict, so creation can be timed cold; the shpCch disk caches stay
 function clrCch!()
@@ -7,10 +9,21 @@ function clrCch!()
     @lock FRQLK (empty!(FRQC); empty!(FRQCX))
     @lock KSRLK empty!(MOMCX)
     @lock momLck empty!(momMem)
+    @lock drvLck empty!(drvMem)
+    @lock FARDRVLK empty!(FARDRV)
     @lock Bloch.GLCK empty!(Bloch.GLC)
     @lock Bloch.MUFK empty!(Bloch.MUF)
     foreach(empty!, Bloch.MOMMC.d)   # per-thread, unlocked by design
     nothing
+end
+
+# K[:, :, j, i] = K^gam_j at the separations Ds: the far route, then the near route where it refuses, both in Double64
+# since the far route evaluated in Float64 lands up to ~80 ulp off
+function drvFil(Ds::AbstractVector{NTuple{3,QI}}, scl::NTuple{3,QI}, frq, der::Int; disk::Bool)
+    egoDrv = drvFar!(Array{ComplexDF64}(undef, 3, 3, length(drvGam(der)), length(Ds)), Ds, scl, frq, der; disk)
+    ner = findall(i -> isnan(egoDrv[1, 1, 1, i]), eachindex(Ds))
+    isempty(ner) || drvNer!(view(egoDrv, :, :, :, ner), Ds[ner], scl, frq, der)
+    return egoDrv
 end
 
 function genEgoCrc!(egoCrc::AbstractArray{<:Complex}, trgVol::GlaVol, srcVol::GlaVol, mixInf::GlaExtInf, cmpInf::GlaKerOpt; shpCch::Bool = false, blk = nothing)
@@ -79,6 +92,10 @@ function genEgoSlf!(egoCrc::AbstractArray{<:Complex,5}, slfVol::GlaVol, cmpInf::
             (st = cmpInf.blcSet = blcSet(slfVol.scl, frq, blc.ax, slfVol.cel, blc.P))
         H, A, _ = blcFil(st, blc.θ)
         egoToe = blcKer(cmpInf.hrmPrt, H, A)
+    elseif cmpInf.ctr
+        # the kernels at the cell centres hold the delta term already: no identity to subtract
+        Ds = vec([ntuple(dir -> QI((itr[dir] - 1) * step(slfVol.grd[dir])), 3) for itr ∈ CartesianIndices(slfVol.cel)])
+        egoToe = reshape(drvFil(Ds, QI.(slfVol.scl), cmpInf.frqPhz, cmpInf.der; disk = shpCch), 3, :, slfVol.cel...)
     elseif cmpInf.qssApx
         egoToe = Array{eltype(egoCrc)}(undef, 3, 3, slfVol.cel...)
         momBlkQss!(egoToe, slfVol, [(Tuple(itr) .- 1) .* stp # the contact offsets
@@ -100,9 +117,10 @@ function genEgoSlf!(egoCrc::AbstractArray{<:Complex,5}, slfVol::GlaVol, cmpInf::
         end
     end
     prd = ntuple(dir -> blc !== nothing && dir in blc.ax, 3)
+    gms = drvGam(cmpInf.der)
     @threads for crtItr ∈ CartesianIndices(axes(egoCrc)[3:5])
         @inbounds egoToeCrc!(view(egoCrc, :, :, crtItr), egoToe, crtItr,
-            div.(size(egoCrc)[3:5], 2), prd)
+            div.(size(egoCrc)[3:5], 2), prd, gms)
     end
     return nothing
 end
@@ -143,6 +161,16 @@ function genEgoExt!(egoCrcExt::AbstractArray{<:Complex,5}, trgVol::GlaVol, srcVo
     sepGrdTrg = sepGrd(trgVol, srcVol, 0)
     sepGrdSrc = sepGrd(trgVol, srcVol, 1)
     _ovrLap(trgVol, srcVol) && throw(ArgumentError("Source and target volumes are overlapping."))
+    if cmpInf.ctr
+        trgVol.scl == srcVol.scl || throw(ArgumentError("Values at the cell centres (ctr = true) need equal cells in both volumes, and these are $(trgVol.scl) and $(srcVol.scl)."))
+        # every target centre is a point observer of every source cell, so no contact averaging
+        itr = filter(posInd -> all(dir -> posInd[dir] != trgVol.cel[dir] + 1, 1:3), CartesianIndices(axes(egoCrcExt)[3:5]))
+        Ds = [ntuple(dir -> QI(grdSep(posInd[dir], trgVol.cel[dir], dir, sepGrdTrg, sepGrdSrc)), 3) for posInd ∈ itr]
+        egoDrv = drvFil(Ds, QI.(srcVol.scl), cmpInf.frqPhz, cmpInf.der; disk = shpCch)
+        fill!(egoCrcExt, zero(eltype(egoCrcExt)))
+        foreach((posInd, q) -> copyto!(view(egoCrcExt, :, :, posInd), view(egoDrv, :, :, :, q)), itr, eachindex(Ds))
+        return nothing
+    end
     itrSpc = CartesianIndices(axes(egoCrcExt)[3:5])
     lat = trgVol.scl == srcVol.scl ? extOff(size(egoCrcExt)[3:5], trgVol.cel, trgVol.scl,
         sepGrdTrg, sepGrdSrc) : nothing
@@ -203,7 +231,7 @@ direction under a coordinate reflection. A periodic axis (prd) is no reflection
 symmetry: its Toeplitz block holds the signed offsets m = -(N-1):(N-1) at m + N.
 =#
 function egoToeCrc!(egoCrc::AbstractArray{<:Complex,2}, egoToe::AbstractArray{<:Complex,5},
-    posInd::CartesianIndex{3}, indSpt::Tuple{Vararg{Integer}}, prd::NTuple{3,Bool} = (false, false, false))
+    posInd::CartesianIndex{3}, indSpt::Tuple{Vararg{Integer}}, prd::NTuple{3,Bool}, gms::Vector{NTuple{3,Int}})
     
     if posInd[1] == (indSpt[1] + 1) || posInd[2] == (indSpt[2] + 1) ||
         posInd[3] == (indSpt[3] + 1)
@@ -211,12 +239,14 @@ function egoToeCrc!(egoCrc::AbstractArray{<:Complex,2}, egoToe::AbstractArray{<:
     else
         # flip field under coordinate reflection
         fi, fj, fk = ntuple(dir -> prd[dir] || posInd[dir] <= indSpt[dir] ? 1.0 : -1.0, 3)
-        # embedding
-        egoCrc .= view(egoToe, :, :, ntuple(dir -> prd[dir] ?
-            mod(posInd[dir] - 1 + indSpt[dir], 2 * indSpt[dir]) : indSel(posInd[dir], indSpt[dir]), 3)...) .*
-            SMatrix{3,3,Float64}(1.0, (fj * fi), (fk * fi),
-            (fi * fj), 1.0, (fk * fj),
-            (fi * fk), (fj * fk), 1.0)
+        # embedding; a derivative along a reflected axis flips the whole 3×3 block of its kernel
+        for (g, gam) in enumerate(gms)
+            view(egoCrc, :, (3g - 2):3g) .= view(egoToe, :, (3g - 2):3g, ntuple(dir -> prd[dir] ?
+                mod(posInd[dir] - 1 + indSpt[dir], 2 * indSpt[dir]) : indSel(posInd[dir], indSpt[dir]), 3)...) .*
+                (prod((fi, fj, fk) .^ gam) * SMatrix{3,3,Float64}(1.0, (fj * fi), (fk * fi),
+                (fi * fj), 1.0, (fk * fj),
+                (fi * fk), (fj * fk), 1.0))
+        end
     end
     return nothing
 end

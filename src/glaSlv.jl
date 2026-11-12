@@ -21,6 +21,10 @@ solver reports stops being the residual of anything. =#
 chkVry(preCon, flx = false) = !flx && isvarying(preCon) &&
     throw(ArgumentError("$(typeof(preCon)) applies a different linear map on every application, and this solver assumes a fixed one: it would converge to a believable wrong answer rather than fail. Solve with `GMRESSolver(; flexible = true)`, precondition with a fixed linear map (a factorization, a diagonal, a fixed number of stationary sweeps), or define `isvarying(::$(typeof(preCon))) = false` if the map really is fixed."))
 
+# Solves, inverse scattering operators and Hermitian parts need an operator from a space to itself
+chkSqr(opr, wht) = size(opr, 1) == size(opr, 2) ||
+    throw(ArgumentError("$wht needs a square operator, and this one maps $(size(opr, 2)) values to $(size(opr, 1))."))
+
 """
     SlvLog(; truSmp = :atrestart, hssSmp = :all)
 
@@ -224,6 +228,7 @@ function solve(opr, inp::AbstractVector{T}, slv::BiCGStabSolver; x0 = nothing,
     (; maxItr, absTol, relTol) = slvPrm(slv, inp)
     preCon = slv.preCon
     chkVry(preCon)
+    chkSqr(opr, "A Krylov solve")
     out = isnothing(x0) ? fill!(similar(inp), zero(T)) : copyto!(similar(inp), x0)
 
     ρPrv = zero(T)
@@ -341,6 +346,7 @@ function solve(opr, inp::AbstractArray{T}, slv::GMRESSolver; x0 = nothing, log =
     (; rstItr, maxItr, absTol, relTol) = slvPrm(slv, inp)
     preCon = slv.preCon
     chkVry(preCon, slv.flexible)
+    chkSqr(opr, "A Krylov solve")
     # Every variant agrees when there is nothing to apply
     sid = isnothing(preCon) ? :none : (slv.flexible ? :flex : slv.side)
 
@@ -634,6 +640,7 @@ function solve(opr, inp::AbstractArray{T}, slv::GCRODRSolver; x0 = nothing,
     (; rstItr, maxItr, absTol, relTol, rcyDim) = slvPrm(slv, inp)
     preCon = slv.preCon
     chkVry(preCon)
+    chkSqr(opr, "A Krylov solve")
     # Every variant agrees when there is nothing to apply
     sid = isnothing(preCon) ? :none : slv.side
     dim = size(opr, 1)

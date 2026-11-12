@@ -101,6 +101,11 @@ on their union and masked, so they must sit on a common grid.
 - `dev::Backend=CPU()`: backend to compute on
 - `frqPhz=1.0+0.0im`: complex frequency phase factor
 - `qssApx::Bool=false`: use the quasistatic kernel
+- `der::Int=0`: order of the field derivatives returned. The operator maps the sources to `(trgCel..., 3, nγ)`,
+  the ∂^γ E for the nγ = (der+1)(der+2)/2 orders γ = (a, b, der - a - b), with a from der down to 0, then b from
+  der - a down to 0.
+- `ctr::Bool=der > 0`: return the values at the target cell centres rather than averaged over the target cells.
+  Only der = 0 has an average. Self volumes and pairs of equal cells only, with no `qssApx` or `blc`
 - `shpCch::Bool=false`: cache the far-field geometry table of each cell shape, see `GlaVacOprMem`.
   The in-memory caches of the far-field and contact fills are never evicted: a process keeps
   20-26 MB per cell shape and one far-field set per shape and frequency of a sweep.
@@ -115,7 +120,7 @@ on their union and masked, so they must sit on a common grid.
 """
 function GlaOprVac{T}(trgVol::GlaVol, srcVol::GlaVol;
     dev::Backend=CPU(), prxWrn::Bool=true, frqPhz=1.0+0.0im,
-    qssApx::Bool=false, shpCch::Bool=false, hrmPrt::Union{Nothing,Symbol}=nothing, blc=nothing, blk=nothing) where T<:AbstractFloat
+    qssApx::Bool=false, der::Int=0, ctr::Bool=der > 0, shpCch::Bool=false, hrmPrt::Union{Nothing,Symbol}=nothing, blc=nothing, blk=nothing) where T<:AbstractFloat
     blc === nothing || trgVol == srcVol || blk !== nothing || throw(ArgumentError("A Bloch lattice is self volume only."))
     innMsk = outMsk = nothing
     if trgVol != srcVol && _ovrLap(trgVol, srcVol)
@@ -127,7 +132,7 @@ function GlaOprVac{T}(trgVol::GlaVol, srcVol::GlaVol;
     end
 
     # Create the memory structure with appropriate GPU/CPU options
-    opt = GlaKerOpt{T}(dev; frqPhz, qssApx, hrmPrt, blc)
+    opt = GlaKerOpt{T}(dev; frqPhz, qssApx, der, ctr, hrmPrt, blc)
     mem = GlaVacOprMem(opt, trgVol, srcVol; shpCch, prxWrn, blk)
     return GlaOprVac{T}(mem, innMsk, outMsk)
 end
@@ -169,7 +174,7 @@ sym(opr::Union{GlaOprVac, GlaCmpOprVac}) = _hrmBld(opr, :sym)
 function _hrmBld(opr::GlaOprVac{T}, hrmPrt::Symbol) where T<:AbstractFloat
     _hrmChk(opr)
     opt = opr.mem.cmpInf
-    return GlaOprVac{T}(opr.mem.srcVol; dev=opt.dev, opt.frqPhz, opt.qssApx, opt.blc, hrmPrt)
+    return GlaOprVac{T}(opr.mem.srcVol; dev=opt.dev, opt.frqPhz, opt.qssApx, opt.ctr, opt.blc, hrmPrt)
 end
 
 # The blocks hold the Bloch periods L in λ, and the constructor takes P in cells of the finest region
@@ -183,6 +188,7 @@ end
 
 function _hrmChk(opr::AbstractGlaVacOpr)
     isselfoperator(opr) || throw(ArgumentError("A Hermitian part needs a self operator, and this one is $(_relKnd(opr))."))
+    chkSqr(opr, "A Hermitian part")
     isadjoint(opr) && throw(ArgumentError("A Hermitian part needs an operator that is not in adjoint mode. Call adjoint! on it to restore it first."))
 end
 
@@ -384,10 +390,13 @@ The `(cel..., 3)` tensor shapes of the output and input of `opr`, like `size` fo
 the tensor form. Over several regions, one shape per region.
 """
 function glaSze(opr::GlaOprVac)
+    der = opr.mem.cmpInf.der
+    # 3 field components, times nγ derivative orders for der ≥ 1
+    out = der == 0 ? (3,) : (3, length(drvGam(der)))
     if isoverlappingoperator(opr)
-        return ((length.(opr.trgMsk)..., 3), (length.(opr.srcMsk)..., 3))
+        return ((length.(opr.trgMsk)..., out...), (length.(opr.srcMsk)..., 3))
     end
-    return ((opr.mem.trgVol.cel..., 3), (opr.mem.srcVol.cel..., 3))
+    return ((opr.mem.trgVol.cel..., out...), (opr.mem.srcVol.cel..., 3))
 end
 
 glaSze(opr::GlaSndOprVac) =
@@ -461,6 +470,7 @@ the original; `adjoint` works on a copy instead. This is the adjoint in the ΔV
 inner product of `GlaFld`, which is the matrix adjoint whenever all cells are the same size.
 """
 function adjoint!(opr::GlaOprVac{T}) where T<:AbstractFloat
+    opr.mem.cmpInf.der == 0 || throw(ArgumentError("An operator of field derivatives (der = $(opr.mem.cmpInf.der)) has no adjoint here: it is not square."))
     # A Hermitian part of a self operator is its own adjoint
     isselfoperator(opr) && opr.mem.cmpInf.hrmPrt !== nothing && return opr
 

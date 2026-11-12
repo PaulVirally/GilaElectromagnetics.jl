@@ -24,13 +24,9 @@ const ENTIJ = ((1, 1), (2, 2), (3, 3), (1, 2), (1, 3), (2, 3))
 wgtA(n::Int, al::S, bt::Int, h::S) where {S} =
     n < 0 ? zero(S) : (iseven(n) ? 2 * al * h^(n + 1) / S(n + 1) : 2 * S(bt) * h^(n + 2) / S(n + 2))
 
-# (v0, v1, v2) per axis: v0[n] = moment of t^n, v1[n] = n v0[n-1], v2[n] = n(n-1) v0[n-2]
-function momTrp(v0::Vector{S}) where {S}
-    dM = length(v0) - 1
-    v1 = S[n < 1 ? zero(S) : S(n) * v0[n] for n in 0:dM]
-    v2 = S[n < 2 ? zero(S) : S(n * (n - 1)) * v0[n - 1] for n in 0:dM]
-    (v0, v1, v2)
-end
+# (v0, v1, .., vJ) per axis: v0[n] = moment of t^n, vj[n] = n!/(n-j)! v0[n-j], the moment of (d/dt)^j t^n
+momTrp(v0::Vector{S}, J::Int = 2) where {S} =
+    (v0, ntuple(j -> S[n < j ? zero(S) : S(prod((n - j + 1):n)) * v0[n - j + 1] for n in 0:(length(v0) - 1)], J)...)
 wgtTrpA(al::S, bt::Int, h::S, dM::Int) where {S} = momTrp(S[wgtA(n, al, bt, h) for n in 0:dM])
 # trapezoid of the pair (sT, sS): a = |sT - sS|/2, b = (sT + sS)/2, w = b - a on |t| <= a and b - |t|
 # on a <= |t| <= b, i.e. the triangle of half-width b minus the triangle of half-width a, so
@@ -143,14 +139,14 @@ mpfZro!(z::BigFloat) = (ccall((:mpfr_set_zero, Base.MPFR.libmpfr), Cvoid,
 # the four registers momAcc works in, at the ambient precision
 momReg() = (BigFloat(), BigFloat(), BigFloat(), BigFloat())
 
-# int_box wgt(d) da db [d^gamma] contracted against the polynomial P.
+# int_box wgt(d) d1^(k1-1) d2^(k2-1) d3^(k3-1) [d^gamma] contracted against the polynomial P, (k1, k2, k3) = knd.
 # ztl is the relative size below which a cancelled sum is an exact zero: it must sit above the
 # rounding noise of the accumulation (n_trm 2^-prc) and below the smallest true value
 # (cancellation^-1 ~ 2^-40), which 2^-(prc-24) does for every prc >= 128 used here.
 # rg is (term, product, acc, abs); the caller must consume the returned sum before the next call
-function momAcc(P::Matrix{BigInt}, W, kk::Int, deg::Int, p1::Int, p2::Int, ztl::BigFloat,
+function momAcc(P::Matrix{BigInt}, W, knd::NTuple{3,Int}, deg::Int, p1::Int, p2::Int, ztl::BigFloat,
                 rg::NTuple{4,BigFloat})
-    k1, k2, k3 = KND[kk]
+    k1, k2, k3 = knd
     nA = size(P, 1)
     t, u, acc, abs_ = rg
     mpfZro!(acc); mpfZro!(abs_)
@@ -229,7 +225,7 @@ function tabWhl(ta::NTuple{3,S}, tb::NTuple{3,S}, lLo::Int, L::Int, nMax::Int, :
             for n in 0:nMax
                 deg = l + 2n
                 for kk in kl
-                    val = T(momAcc(P, W, kk, deg, p1, p2, ztl, rg)) * nc / T(vt)
+                    val = T(momAcc(P, W, KND[kk], deg, p1, p2, ztl, rg)) * nc / T(vt)
                     kk <= 3 ? (Ad[kk, n + 1, jj] = val) :
                         kk == 4 ? (Bd[n + 1, jj] = val) : (Ao[kk - 4][n + 1, jj] = val)
                 end
@@ -267,7 +263,7 @@ function tabOct(s::NTuple{3,S}, lLo::Int, L::Int, nMax::Int, ::Type{T}, ztl::S) 
         for n in 0:nMax
             deg = l + 2n
             for kk in 1:7
-                val = T(momAcc(P, W, kk, deg, p1, p2, ztl, rg)) * nc / T(vt)
+                val = T(momAcc(P, W, KND[kk], deg, p1, p2, ztl, rg)) * nc / T(vt)
                 kk <= 3 ? (Ad[kk, n + 1, jj] = val) :
                     kk == 4 ? (Bd[n + 1, jj] = val) : (Ao[kk - 4][n + 1, jj] = val)
             end

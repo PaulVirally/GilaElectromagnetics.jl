@@ -12,6 +12,7 @@ mutable struct InvSctOpr{T<:AbstractFloat, O<:AbstractGlaVacOpr{T}} <: AbstractG
     one place a precision conversion is allowed. =#
     function InvSctOpr{T}(oprVac::AbstractGlaVacOpr{T}, sus) where T<:AbstractFloat
         isselfoperator(oprVac) || throw(ArgumentError("An inverse scattering operator needs a self operator, and this one is $(_relKnd(oprVac))."))
+        chkSqr(oprVac, "An inverse scattering operator")
         return new{T, typeof(oprVac)}(oprVac, sus isa SusOpr ? sus :
             SusOpr{T}(_srcCvl(oprVac), sus; dev=get_backend(oprVac)))
     end
